@@ -212,7 +212,10 @@ impl GraphemePool {
             idx
         } else {
             let idx = self.slots.len() as u32;
-            assert!(idx <= GraphemeId::MAX_SLOT, "grapheme pool capacity exceeded");
+            assert!(
+                idx <= GraphemeId::MAX_SLOT,
+                "grapheme pool capacity exceeded"
+            );
             idx
         }
     }

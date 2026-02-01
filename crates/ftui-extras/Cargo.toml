@@ -7,3 +7,13 @@ publish = false
 [dependencies]
 ftui-runtime = { path = "../ftui-runtime" }
 ftui-widgets = { path = "../ftui-widgets" }
+ftui-core = { path = "../ftui-core", optional = true }
+base64 = { version = "0.22.1", optional = true }
+image = { version = "0.25.9", default-features = false, features = ["png", "gif", "jpeg"], optional = true }
+tracing = { version = "0.1", optional = true }
+
+[features]
+clipboard = ["dep:base64", "dep:ftui-core"]
+clipboard-fallback = ["clipboard"]
+clipboard-logging = ["clipboard", "dep:tracing"]
+image = ["dep:base64", "dep:ftui-core", "dep:image"]

@@ -24,6 +24,8 @@
 //! - No heap allocation for 99% of cells
 //! - 24 bytes wastes cache, 32 bytes doubles bandwidth
 
+use unicode_width::UnicodeWidthChar;
+
 /// Grapheme ID: reference to an interned string in [`GraphemePool`].
 ///
 /// # Layout
@@ -210,6 +212,22 @@ impl CellContent {
             // For direct chars, assume width 1 (fast path for ASCII)
             // Callers should use unicode-width for accurate measurement
             1
+        }
+    }
+
+    /// Get the display width of this content with Unicode width semantics.
+    ///
+    /// This is the accurate (but slower) width computation for direct chars.
+    #[inline]
+    pub fn width(self) -> usize {
+        if self.is_empty() || self.is_continuation() {
+            0
+        } else if self.is_grapheme() {
+            ((self.0 >> 24) & 0x7F) as usize
+        } else {
+            self.as_char()
+                .and_then(UnicodeWidthChar::width)
+                .unwrap_or(1)
         }
     }
 
@@ -814,6 +832,31 @@ mod tests {
         assert_eq!(c.grapheme_id(), Some(id));
         assert_eq!(c.as_char(), None);
         assert_eq!(c.width_hint(), 2);
+    }
+
+    #[test]
+    fn cell_content_width_for_chars() {
+        let ascii = CellContent::from_char('A');
+        assert_eq!(ascii.width(), 1);
+
+        let wide = CellContent::from_char('日');
+        assert_eq!(wide.width(), 2);
+
+        let emoji = CellContent::from_char('🎉');
+        assert_eq!(emoji.width(), 2);
+    }
+
+    #[test]
+    fn cell_content_width_for_grapheme() {
+        let id = GraphemeId::new(7, 3);
+        let c = CellContent::from_grapheme(id);
+        assert_eq!(c.width(), 3);
+    }
+
+    #[test]
+    fn cell_content_width_empty_is_zero() {
+        assert_eq!(CellContent::EMPTY.width(), 0);
+        assert_eq!(CellContent::CONTINUATION.width(), 0);
     }
 
     #[test]

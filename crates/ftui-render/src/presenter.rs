@@ -40,7 +40,6 @@ use crate::cell::{Cell, CellAttrs, PackedRgba, StyleFlags};
 use crate::diff::BufferDiff;
 use crate::grapheme_pool::GraphemePool;
 use crate::link_registry::LinkRegistry;
-use ftui_core::{debug_span, info_span, trace};
 
 pub use ftui_core::terminal_capabilities::TerminalCapabilities;
 
@@ -86,10 +85,10 @@ pub struct Presenter<W: Write> {
     current_style: Option<CellStyle>,
     /// Current hyperlink ID (None = no link).
     current_link: Option<u32>,
-    /// Current cursor X position (0-indexed).
-    cursor_x: u16,
-    /// Current cursor Y position (0-indexed).
-    cursor_y: u16,
+    /// Current cursor X position (0-indexed). None = unknown.
+    cursor_x: Option<u16>,
+    /// Current cursor Y position (0-indexed). None = unknown.
+    cursor_y: Option<u16>,
     /// Terminal capabilities for conditional output.
     capabilities: TerminalCapabilities,
 }
@@ -101,8 +100,8 @@ impl<W: Write> Presenter<W> {
             writer: BufWriter::with_capacity(BUFFER_CAPACITY, writer),
             current_style: None,
             current_link: None,
-            cursor_x: 0,
-            cursor_y: 0,
+            cursor_x: None,
+            cursor_y: None,
             capabilities,
         }
     }
@@ -133,6 +132,16 @@ impl<W: Write> Presenter<W> {
         pool: Option<&GraphemePool>,
         links: Option<&LinkRegistry>,
     ) -> io::Result<()> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::info_span!(
+            "present",
+            width = buffer.width(),
+            height = buffer.height(),
+            changes = diff.len()
+        );
+        #[cfg(feature = "tracing")]
+        let _guard = _span.enter();
+
         // Begin synchronized output to prevent flicker
         if self.capabilities.sync_output {
             ansi::sync_begin(&mut self.writer)?;
@@ -156,6 +165,8 @@ impl<W: Write> Presenter<W> {
             ansi::sync_end(&mut self.writer)?;
         }
 
+        #[cfg(feature = "tracing")]
+        tracing::trace!("frame presented");
         self.writer.flush()
     }
 
@@ -167,7 +178,16 @@ impl<W: Write> Presenter<W> {
         pool: Option<&GraphemePool>,
         links: Option<&LinkRegistry>,
     ) -> io::Result<()> {
-        for run in diff.runs() {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!("emit_diff");
+        #[cfg(feature = "tracing")]
+        let _guard = _span.enter();
+
+        let runs = diff.runs();
+        #[cfg(feature = "tracing")]
+        tracing::trace!(run_count = runs.len(), "emitting runs");
+
+        for run in runs {
             // Single cursor move per run
             self.move_cursor_to(run.x0, run.y)?;
 
@@ -202,7 +222,9 @@ impl<W: Write> Presenter<W> {
         self.emit_content(cell, pool)?;
 
         // Update cursor position (character output advances cursor)
-        self.cursor_x += cell.width_hint() as u16;
+        if let Some(x) = self.cursor_x {
+            self.cursor_x = Some(x + cell.width_hint() as u16);
+        }
 
         Ok(())
     }
@@ -240,11 +262,7 @@ impl<W: Write> Presenter<W> {
     }
 
     /// Emit hyperlink changes if the cell link differs from current.
-    fn emit_link_changes(
-        &mut self,
-        cell: &Cell,
-        links: Option<&LinkRegistry>,
-    ) -> io::Result<()> {
+    fn emit_link_changes(&mut self, cell: &Cell, links: Option<&LinkRegistry>) -> io::Result<()> {
         let raw_link_id = cell.attrs.link_id();
         let new_link = if raw_link_id == CellAttrs::LINK_ID_NONE {
             None
@@ -262,14 +280,18 @@ impl<W: Write> Presenter<W> {
             ansi::hyperlink_end(&mut self.writer)?;
         }
 
-        // Open new link if present
-        if let (Some(link_id), Some(registry)) = (new_link, links)
+        // Open new link if present and resolvable
+        let actually_opened = if let (Some(link_id), Some(registry)) = (new_link, links)
             && let Some(url) = registry.get(link_id)
         {
             ansi::hyperlink_start(&mut self.writer, url)?;
-        }
+            true
+        } else {
+            false
+        };
 
-        self.current_link = new_link;
+        // Only track as current if we actually opened it
+        self.current_link = if actually_opened { new_link } else { None };
         Ok(())
     }
 
@@ -300,14 +322,14 @@ impl<W: Write> Presenter<W> {
     /// Move cursor to the specified position.
     fn move_cursor_to(&mut self, x: u16, y: u16) -> io::Result<()> {
         // Skip if already at position
-        if self.cursor_x == x && self.cursor_y == y {
+        if self.cursor_x == Some(x) && self.cursor_y == Some(y) {
             return Ok(());
         }
 
         // Use CUP (cursor position) for absolute positioning
         ansi::cup(&mut self.writer, y, x)?;
-        self.cursor_x = x;
-        self.cursor_y = y;
+        self.cursor_x = Some(x);
+        self.cursor_y = Some(y);
         Ok(())
     }
 
@@ -315,8 +337,8 @@ impl<W: Write> Presenter<W> {
     pub fn clear_screen(&mut self) -> io::Result<()> {
         ansi::erase_display(&mut self.writer, ansi::EraseDisplayMode::All)?;
         ansi::cup(&mut self.writer, 0, 0)?;
-        self.cursor_x = 0;
-        self.cursor_y = 0;
+        self.cursor_x = Some(0);
+        self.cursor_y = Some(0);
         self.writer.flush()
     }
 
@@ -351,8 +373,8 @@ impl<W: Write> Presenter<W> {
     pub fn reset(&mut self) {
         self.current_style = None;
         self.current_link = None;
-        self.cursor_x = 0;
-        self.cursor_y = 0;
+        self.cursor_x = None;
+        self.cursor_y = None;
     }
 
     /// Flush any buffered output.
@@ -441,7 +463,11 @@ mod tests {
         let output_str = String::from_utf8_lossy(&output);
         let sgr_count = output_str.matches("\x1b[38;2").count();
         // Should have exactly 1 fg color sequence (style set once, reused for ABC)
-        assert_eq!(sgr_count, 1, "Expected 1 SGR fg sequence, got {}", sgr_count);
+        assert_eq!(
+            sgr_count, 1,
+            "Expected 1 SGR fg sequence, got {}",
+            sgr_count
+        );
     }
 
     #[test]
@@ -465,8 +491,12 @@ mod tests {
         let _cup_count = output_str.matches("\x1b[").filter(|_| true).count();
 
         // Content should be "ABC" somewhere in output
-        assert!(output_str.contains("ABC") ||
-                (output_str.contains('A') && output_str.contains('B') && output_str.contains('C')));
+        assert!(
+            output_str.contains("ABC")
+                || (output_str.contains('A')
+                    && output_str.contains('B')
+                    && output_str.contains('C'))
+        );
     }
 
     #[test]
@@ -480,7 +510,11 @@ mod tests {
 
         // Should have sync begin and end
         assert!(output.starts_with(ansi::SYNC_BEGIN));
-        assert!(output.windows(ansi::SYNC_END.len()).any(|w| w == ansi::SYNC_END));
+        assert!(
+            output
+                .windows(ansi::SYNC_END.len())
+                .any(|w| w == ansi::SYNC_END)
+        );
     }
 
     #[test]
@@ -510,14 +544,14 @@ mod tests {
     #[test]
     fn reset_clears_state() {
         let mut presenter = test_presenter();
-        presenter.cursor_x = 50;
-        presenter.cursor_y = 20;
+        presenter.cursor_x = Some(50);
+        presenter.cursor_y = Some(20);
         presenter.current_style = Some(CellStyle::default());
 
         presenter.reset();
 
-        assert_eq!(presenter.cursor_x, 0);
-        assert_eq!(presenter.cursor_y, 0);
+        assert!(presenter.cursor_x.is_none());
+        assert!(presenter.cursor_y.is_none());
         assert!(presenter.current_style.is_none());
     }
 
@@ -528,14 +562,18 @@ mod tests {
 
         let output = get_output(presenter);
         // CUP is 1-indexed: row 6, col 11
-        assert!(output.windows(b"\x1b[6;11H".len()).any(|w| w == b"\x1b[6;11H"));
+        assert!(
+            output
+                .windows(b"\x1b[6;11H".len())
+                .any(|w| w == b"\x1b[6;11H")
+        );
     }
 
     #[test]
     fn skip_cursor_move_when_already_at_position() {
         let mut presenter = test_presenter();
-        presenter.cursor_x = 5;
-        presenter.cursor_y = 3;
+        presenter.cursor_x = Some(5);
+        presenter.cursor_y = Some(3);
 
         // Move to same position
         presenter.move_cursor_to(5, 3).unwrap();

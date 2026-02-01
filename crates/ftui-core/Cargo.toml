@@ -4,9 +4,20 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+default = []
+# Enable structured logging with tracing
+tracing = ["dep:tracing"]
+# Enable JSON output for production logging
+tracing-json = ["tracing", "dep:tracing-subscriber"]
+
 [dependencies]
 bitflags = "2.10.0"
 crossterm = "0.28"
+
+# Optional tracing support
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"], optional = true }
 
 [dev-dependencies]
 # For spike PTY tests

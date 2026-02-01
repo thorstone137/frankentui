@@ -24,11 +24,9 @@
 //! - Paste content: 1MB max
 
 use crate::event::{
-    ClipboardEvent, ClipboardSource, Event, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent,
-    MouseEventKind, PasteEvent,
+    ClipboardEvent, ClipboardSource, Event, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton,
+    MouseEvent, MouseEventKind, PasteEvent,
 };
-
-// Note: KeyEventKind import removed - we use the default Press kind
 
 /// DoS protection: maximum CSI sequence length.
 const MAX_CSI_LEN: usize = 256;
@@ -325,6 +323,7 @@ impl InputParser {
                 KeyEvent::new(KeyCode::Tab).with_modifiers(Modifiers::SHIFT),
             )),
             b'~' => self.parse_csi_tilde(params),
+            b'u' => self.parse_kitty_keyboard(params),
             _ => None,
         }
     }
@@ -369,15 +368,94 @@ impl InputParser {
             Err(_) => return Modifiers::NONE,
         };
 
-        let modifier_value: u8 = s
+        let modifier_value: u32 = s
             .split(';')
             .nth(1)
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
 
+        Self::modifiers_from_xterm(modifier_value)
+    }
+
+    /// Parse Kitty keyboard protocol CSI u sequences.
+    ///
+    /// Format: `CSI unicode-key-code:alt-keys ; modifiers:event-type ; text-as-codepoints u`
+    fn parse_kitty_keyboard(&self, params: &[u8]) -> Option<Event> {
+        let s = std::str::from_utf8(params).ok()?;
+        if s.is_empty() {
+            return None;
+        }
+
+        let mut parts = s.split(';');
+        let key_part = parts.next().unwrap_or("");
+        let key_code_str = key_part.split(':').next().unwrap_or("");
+        let key_code: u32 = key_code_str.parse().ok()?;
+
+        let mod_part = parts.next().unwrap_or("");
+        let (modifiers, kind) = Self::kitty_modifiers_and_kind(mod_part);
+
+        let code = Self::kitty_keycode_to_keycode(key_code)?;
+        Some(Event::Key(
+            KeyEvent::new(code)
+                .with_modifiers(modifiers)
+                .with_kind(kind),
+        ))
+    }
+
+    fn kitty_modifiers_and_kind(mod_part: &str) -> (Modifiers, KeyEventKind) {
+        if mod_part.is_empty() {
+            return (Modifiers::NONE, KeyEventKind::Press);
+        }
+
+        let mut parts = mod_part.split(':');
+        let mod_value: u32 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let kind_value: u32 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(1);
+
+        let modifiers = Self::modifiers_from_xterm(mod_value);
+        let kind = match kind_value {
+            2 => KeyEventKind::Repeat,
+            3 => KeyEventKind::Release,
+            _ => KeyEventKind::Press,
+        };
+
+        (modifiers, kind)
+    }
+
+    fn kitty_keycode_to_keycode(key_code: u32) -> Option<KeyCode> {
+        match key_code {
+            // Standard ASCII keys
+            9 => Some(KeyCode::Tab),
+            13 => Some(KeyCode::Enter),
+            27 => Some(KeyCode::Escape),
+            8 | 127 => Some(KeyCode::Backspace),
+            // Kitty keyboard protocol extended keys (CSI u)
+            57_344 => Some(KeyCode::Escape),
+            57_345 => Some(KeyCode::Enter),
+            57_346 => Some(KeyCode::Tab),
+            57_347 => Some(KeyCode::Backspace),
+            57_348 => Some(KeyCode::Insert),
+            57_349 => Some(KeyCode::Delete),
+            57_350 => Some(KeyCode::Left),
+            57_351 => Some(KeyCode::Right),
+            57_352 => Some(KeyCode::Up),
+            57_353 => Some(KeyCode::Down),
+            57_354 => Some(KeyCode::PageUp),
+            57_355 => Some(KeyCode::PageDown),
+            57_356 => Some(KeyCode::Home),
+            57_357 => Some(KeyCode::End),
+            // F1-F24 (57_364-57_387)
+            57_364..=57_387 => Some(KeyCode::F((key_code - 57_364 + 1) as u8)),
+            // Reserved/unhandled Kitty keycodes return None
+            57_358..=57_363 | 57_388..=63_743 => None,
+            // Unicode codepoints
+            _ => char::from_u32(key_code).map(KeyCode::Char),
+        }
+    }
+
+    fn modifiers_from_xterm(value: u32) -> Modifiers {
         // xterm modifier encoding: value = 1 + modifier_bits
-        // Shift=1, Alt=2, Ctrl=4
-        let bits = modifier_value.saturating_sub(1);
+        // Shift=1, Alt=2, Ctrl=4, Super=8
+        let bits = value.saturating_sub(1);
         let mut mods = Modifiers::NONE;
         if bits & 1 != 0 {
             mods |= Modifiers::SHIFT;
@@ -387,6 +465,9 @@ impl InputParser {
         }
         if bits & 4 != 0 {
             mods |= Modifiers::CTRL;
+        }
+        if bits & 8 != 0 {
+            mods |= Modifiers::SUPER;
         }
         mods
     }
@@ -787,6 +868,46 @@ mod tests {
         assert!(matches!(
             events.first(),
             Some(Event::Key(k)) if k.code == KeyCode::Up && k.modifiers.contains(Modifiers::CTRL)
+        ));
+    }
+
+    #[test]
+    fn kitty_keyboard_basic_char() {
+        let mut parser = InputParser::new();
+
+        let events = parser.parse(b"\x1b[97u");
+        assert!(matches!(
+            events.first(),
+            Some(Event::Key(k))
+                if k.code == KeyCode::Char('a')
+                    && k.modifiers == Modifiers::NONE
+                    && k.kind == KeyEventKind::Press
+        ));
+    }
+
+    #[test]
+    fn kitty_keyboard_with_modifiers_and_kind() {
+        let mut parser = InputParser::new();
+
+        // Ctrl+repeat for 'a' (modifiers=5, event_type=2)
+        let events = parser.parse(b"\x1b[97;5:2u");
+        assert!(matches!(
+            events.first(),
+            Some(Event::Key(k))
+                if k.code == KeyCode::Char('a')
+                    && k.modifiers.contains(Modifiers::CTRL)
+                    && k.kind == KeyEventKind::Repeat
+        ));
+    }
+
+    #[test]
+    fn kitty_keyboard_function_key() {
+        let mut parser = InputParser::new();
+
+        let events = parser.parse(b"\x1b[57364;1u");
+        assert!(matches!(
+            events.first(),
+            Some(Event::Key(k)) if k.code == KeyCode::F(1)
         ));
     }
 

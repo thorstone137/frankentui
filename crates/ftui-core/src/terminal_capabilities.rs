@@ -37,6 +37,17 @@ const MODERN_TERMINALS: &[&str] = &[
     "Contour",
 ];
 
+/// Terminals known to implement the Kitty keyboard protocol.
+const KITTY_KEYBOARD_TERMINALS: &[&str] = &[
+    "iTerm.app",
+    "WezTerm",
+    "Alacritty",
+    "Ghostty",
+    "Rio",
+    "kitty",
+    "foot",
+];
+
 /// Terminal programs that support synchronized output (DEC 2026).
 const SYNC_OUTPUT_TERMINALS: &[&str] = &["WezTerm", "Alacritty", "Ghostty", "kitty", "Contour"];
 
@@ -145,8 +156,11 @@ impl TerminalCapabilities {
         // Scroll region support (broadly available except dumb)
         let scroll_region = !is_dumb;
 
-        // Kitty keyboard protocol
-        let kitty_keyboard = is_kitty;
+        // Kitty keyboard protocol (kitty + other compatible terminals)
+        let kitty_keyboard = is_kitty
+            || KITTY_KEYBOARD_TERMINALS
+                .iter()
+                .any(|t| term_program.contains(t) || term.contains(&t.to_lowercase()));
 
         // Focus events (available in most modern terminals)
         let focus_events = !is_dumb && (is_modern_terminal || is_kitty);

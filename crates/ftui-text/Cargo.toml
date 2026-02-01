@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+default = []
+thread_local_cache = []
+
 [dependencies]
 ftui-layout = { path = "../ftui-layout" }
 ftui-style = { path = "../ftui-style" }
@@ -11,6 +15,8 @@ unicode-width = "0.2"
 unicode-segmentation = "1.11"
 smallvec = "1.13"
 tracing = "0.1"
+lru = "0.12"
+rustc-hash = "2"
 
 [dev-dependencies]
 proptest = "1"

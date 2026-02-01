@@ -58,6 +58,7 @@ impl ChangeRun {
     /// Create a new change run.
     #[inline]
     pub const fn new(y: u16, x0: u16, x1: u16) -> Self {
+        debug_assert!(x0 <= x1);
         Self { y, x0, x1 }
     }
 
@@ -86,7 +87,9 @@ pub struct BufferDiff {
 impl BufferDiff {
     /// Create an empty diff.
     pub fn new() -> Self {
-        Self { changes: Vec::new() }
+        Self {
+            changes: Vec::new(),
+        }
     }
 
     /// Create a diff with pre-allocated capacity.
@@ -105,6 +108,12 @@ impl BufferDiff {
     ///
     /// Debug-asserts that both buffers have identical dimensions.
     pub fn compute(old: &Buffer, new: &Buffer) -> Self {
+        #[cfg(feature = "tracing")]
+        let _span =
+            tracing::debug_span!("diff_compute", width = old.width(), height = old.height());
+        #[cfg(feature = "tracing")]
+        let _guard = _span.enter();
+
         debug_assert_eq!(old.width(), new.width(), "buffer widths must match");
         debug_assert_eq!(old.height(), new.height(), "buffer heights must match");
 
@@ -125,6 +134,9 @@ impl BufferDiff {
                 }
             }
         }
+
+        #[cfg(feature = "tracing")]
+        tracing::trace!(changes = changes.len(), "diff computed");
 
         Self { changes }
     }
@@ -152,14 +164,18 @@ impl BufferDiff {
     /// Consecutive x positions on the same row are coalesced into a single run.
     /// This enables efficient cursor positioning in the presenter.
     pub fn runs(&self) -> Vec<ChangeRun> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!("diff_runs", changes = self.changes.len());
+        #[cfg(feature = "tracing")]
+        let _guard = _span.enter();
+
         if self.changes.is_empty() {
             return Vec::new();
         }
 
         // Changes are already sorted by (y, x) from row-major scan
-        // but we sort anyway for correctness if someone constructs manually
-        let mut sorted = self.changes.clone();
-        sorted.sort_by_key(|(x, y)| (*y, *x));
+        // so we don't need to sort again.
+        let sorted = &self.changes;
 
         let mut runs = Vec::new();
         let mut i = 0;
@@ -181,6 +197,9 @@ impl BufferDiff {
 
             runs.push(ChangeRun::new(y, x0, x1));
         }
+
+        #[cfg(feature = "tracing")]
+        tracing::trace!(run_count = runs.len(), "runs coalesced");
 
         runs
     }

@@ -39,7 +39,12 @@ impl Rect {
     /// Create a new rectangle.
     #[inline]
     pub const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Create a rectangle from origin with given size.
@@ -316,9 +321,7 @@ impl Buffer {
     /// If the intersection is empty, no cells will be drawn.
     pub fn push_scissor(&mut self, rect: Rect) {
         let current = self.current_scissor();
-        let intersected = current
-            .intersection(&rect)
-            .unwrap_or(Rect::new(0, 0, 0, 0));
+        let intersected = current.intersection(&rect).unwrap_or(Rect::new(0, 0, 0, 0));
         self.scissor_stack.push(intersected);
     }
 
@@ -398,9 +401,7 @@ impl Buffer {
 
     /// Check if two buffers have identical content.
     pub fn content_eq(&self, other: &Buffer) -> bool {
-        self.width == other.width
-            && self.height == other.height
-            && self.cells == other.cells
+        self.width == other.width && self.height == other.height && self.cells == other.cells
     }
 }
 
@@ -427,9 +428,9 @@ mod tests {
     #[test]
     fn rect_contains() {
         let r = Rect::new(5, 5, 10, 10);
-        assert!(r.contains(5, 5));   // Top-left corner
+        assert!(r.contains(5, 5)); // Top-left corner
         assert!(r.contains(14, 14)); // Bottom-right inside
-        assert!(!r.contains(4, 5));  // Left of rect
+        assert!(!r.contains(4, 5)); // Left of rect
         assert!(!r.contains(15, 5)); // Right of rect (exclusive)
         assert!(!r.contains(5, 15)); // Below rect (exclusive)
     }
