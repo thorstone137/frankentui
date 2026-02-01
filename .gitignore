@@ -7,3 +7,6 @@
 # Rust build artifacts
 /target/
 Cargo.lock
+
+# Proptest regression files (generated)
+**/proptest-regressions/
