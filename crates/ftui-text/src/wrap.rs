@@ -977,6 +977,188 @@ mod tests {
         // Zero width returns original text
         assert_eq!(lines, vec!["hello"]);
     }
+
+    // ==========================================================================
+    // Additional coverage tests for width measurement
+    // ==========================================================================
+
+    #[test]
+    fn wrap_mode_default() {
+        let mode = WrapMode::default();
+        assert_eq!(mode, WrapMode::Word);
+    }
+
+    #[test]
+    fn wrap_options_default() {
+        let opts = WrapOptions::default();
+        assert_eq!(opts.width, 80);
+        assert_eq!(opts.mode, WrapMode::Word);
+        assert!(!opts.preserve_indent);
+        assert!(opts.trim_trailing);
+    }
+
+    #[test]
+    fn display_width_emoji_skin_tone() {
+        let width = display_width("👍🏻");
+        assert!(width >= 1);
+    }
+
+    #[test]
+    fn display_width_flag_emoji() {
+        let width = display_width("🇺🇸");
+        assert!(width >= 1);
+    }
+
+    #[test]
+    fn display_width_zwj_family() {
+        let width = display_width("👨‍👩‍👧");
+        assert!(width >= 1);
+    }
+
+    #[test]
+    fn display_width_multiple_combining() {
+        // e + combining acute + combining diaeresis = still 1 cell
+        let width = display_width("e\u{0301}\u{0308}");
+        assert_eq!(width, 1);
+    }
+
+    #[test]
+    fn ascii_width_printable_range() {
+        // Test entire printable ASCII range (0x20-0x7E)
+        let printable: String = (0x20u8..=0x7Eu8).map(|b| b as char).collect();
+        assert_eq!(ascii_width(&printable), Some(printable.len()));
+    }
+
+    #[test]
+    fn ascii_width_newline_returns_none() {
+        // Newline is a control character
+        assert!(ascii_width("hello\nworld").is_none());
+    }
+
+    #[test]
+    fn ascii_width_tab_returns_none() {
+        // Tab is a control character
+        assert!(ascii_width("hello\tworld").is_none());
+    }
+
+    #[test]
+    fn ascii_width_del_returns_none() {
+        // DEL (0x7F) is a control character
+        assert!(ascii_width("hello\x7Fworld").is_none());
+    }
+
+    #[test]
+    fn has_wide_chars_cjk_mixed() {
+        assert!(has_wide_chars("abc你def"));
+        assert!(has_wide_chars("你"));
+        assert!(!has_wide_chars("abc"));
+    }
+
+    #[test]
+    fn has_wide_chars_emoji() {
+        assert!(has_wide_chars("😀"));
+        assert!(has_wide_chars("hello😀"));
+    }
+
+    #[test]
+    fn grapheme_count_empty() {
+        assert_eq!(grapheme_count(""), 0);
+    }
+
+    #[test]
+    fn grapheme_count_regional_indicators() {
+        // US flag = 2 regional indicators = 1 grapheme
+        assert_eq!(grapheme_count("🇺🇸"), 1);
+    }
+
+    #[test]
+    fn word_boundaries_no_spaces() {
+        let breaks: Vec<usize> = word_boundaries("helloworld").collect();
+        assert!(breaks.is_empty());
+    }
+
+    #[test]
+    fn word_boundaries_only_spaces() {
+        let breaks: Vec<usize> = word_boundaries("   ").collect();
+        assert!(!breaks.is_empty());
+    }
+
+    #[test]
+    fn word_segments_empty() {
+        let segs: Vec<&str> = word_segments("").collect();
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn word_segments_single_word() {
+        let segs: Vec<&str> = word_segments("hello").collect();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0], "hello");
+    }
+
+    #[test]
+    fn truncate_to_width_empty() {
+        let result = truncate_to_width("", 10);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn truncate_to_width_zero_width() {
+        let result = truncate_to_width("hello", 0);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_exact_fit() {
+        // String exactly fits without needing truncation
+        let result = truncate_with_ellipsis("hello", 5, "...");
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_empty_ellipsis() {
+        let result = truncate_with_ellipsis("hello world", 5, "");
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn truncate_to_width_with_info_empty() {
+        let (text, width) = truncate_to_width_with_info("", 10);
+        assert_eq!(text, "");
+        assert_eq!(width, 0);
+    }
+
+    #[test]
+    fn truncate_to_width_with_info_zero_width() {
+        let (text, width) = truncate_to_width_with_info("hello", 0);
+        assert_eq!(text, "");
+        assert_eq!(width, 0);
+    }
+
+    #[test]
+    fn truncate_to_width_wide_char_boundary() {
+        // Try to truncate at width 3 where a CJK char (width 2) would split
+        let (text, width) = truncate_to_width_with_info("a你好", 2);
+        // "a" is 1 cell, "你" is 2 cells, so only "a" fits in width 2
+        assert_eq!(text, "a");
+        assert_eq!(width, 1);
+    }
+
+    #[test]
+    fn wrap_mode_none() {
+        let lines = wrap_text("hello world", 5, WrapMode::None);
+        assert_eq!(lines, vec!["hello world"]);
+    }
+
+    #[test]
+    fn wrap_long_word_no_char_fallback() {
+        // WordChar mode handles long words by falling back to char wrap
+        let lines = wrap_text("supercalifragilistic", 10, WrapMode::WordChar);
+        // Should wrap even the long word
+        for line in &lines {
+            assert!(line.width() <= 10);
+        }
+    }
 }
 
 #[cfg(test)]

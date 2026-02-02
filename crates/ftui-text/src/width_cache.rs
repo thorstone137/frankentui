@@ -530,6 +530,208 @@ mod tests {
         // Should be 1 cell (the combining char doesn't add width)
         assert_eq!(width, 1);
     }
+
+    // ==========================================================================
+    // Additional coverage tests
+    // ==========================================================================
+
+    #[test]
+    fn default_cache() {
+        let cache = WidthCache::default();
+        assert!(cache.is_empty());
+        assert_eq!(cache.capacity(), DEFAULT_CACHE_CAPACITY);
+    }
+
+    #[test]
+    fn cache_stats_debug() {
+        let stats = CacheStats {
+            hits: 10,
+            misses: 5,
+            size: 15,
+            capacity: 100,
+        };
+        let debug = format!("{:?}", stats);
+        assert!(debug.contains("CacheStats"));
+        assert!(debug.contains("10")); // hits
+    }
+
+    #[test]
+    fn cache_stats_default() {
+        let stats = CacheStats::default();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.size, 0);
+        assert_eq!(stats.capacity, 0);
+    }
+
+    #[test]
+    fn cache_stats_equality() {
+        let stats1 = CacheStats {
+            hits: 10,
+            misses: 5,
+            size: 15,
+            capacity: 100,
+        };
+        let stats2 = stats1; // Copy
+        assert_eq!(stats1, stats2);
+    }
+
+    #[test]
+    fn clear_after_preload() {
+        let mut cache = WidthCache::new(100);
+        cache.preload_many(["hello", "world", "test"]);
+        assert_eq!(cache.len(), 3);
+
+        cache.clear();
+        assert!(cache.is_empty());
+        assert!(!cache.contains("hello"));
+    }
+
+    #[test]
+    fn preload_existing_is_noop() {
+        let mut cache = WidthCache::new(100);
+        cache.get_or_compute("hello"); // First access
+        let len_before = cache.len();
+
+        cache.preload("hello"); // Already exists
+        assert_eq!(cache.len(), len_before);
+    }
+
+    #[test]
+    fn minimum_capacity_is_one() {
+        let cache = WidthCache::new(0);
+        assert_eq!(cache.capacity(), 1);
+    }
+
+    #[test]
+    fn width_cache_debug() {
+        let cache = WidthCache::new(10);
+        let debug = format!("{:?}", cache);
+        assert!(debug.contains("WidthCache"));
+    }
+
+    #[test]
+    fn emoji_zwj_sequence() {
+        let mut cache = WidthCache::new(100);
+        // Family emoji (ZWJ sequence)
+        let width = cache.get_or_compute("👨‍👩‍👧");
+        // Width varies by implementation, just ensure it doesn't panic
+        assert!(width >= 1);
+    }
+
+    #[test]
+    fn emoji_with_skin_tone() {
+        let mut cache = WidthCache::new(100);
+        let width = cache.get_or_compute("👍🏻");
+        assert!(width >= 1);
+    }
+
+    #[test]
+    fn flag_emoji() {
+        let mut cache = WidthCache::new(100);
+        // US flag emoji (regional indicators)
+        let width = cache.get_or_compute("🇺🇸");
+        assert!(width >= 1);
+    }
+
+    #[test]
+    fn mixed_width_strings() {
+        let mut cache = WidthCache::new(100);
+        // Mixed ASCII and CJK
+        let width = cache.get_or_compute("Hello你好World");
+        assert_eq!(width, 14); // 10 ASCII + 4 CJK
+    }
+
+    #[test]
+    fn stats_size_reflects_cache_len() {
+        let mut cache = WidthCache::new(100);
+        cache.get_or_compute("a");
+        cache.get_or_compute("b");
+        cache.get_or_compute("c");
+
+        let stats = cache.stats();
+        assert_eq!(stats.size, cache.len());
+        assert_eq!(stats.size, 3);
+    }
+
+    #[test]
+    fn stats_capacity_matches() {
+        let cache = WidthCache::new(42);
+        let stats = cache.stats();
+        assert_eq!(stats.capacity, 42);
+    }
+
+    #[test]
+    fn resize_to_zero_becomes_one() {
+        let mut cache = WidthCache::new(100);
+        cache.resize(0);
+        assert_eq!(cache.capacity(), 1);
+    }
+
+    #[test]
+    fn get_updates_lru_order() {
+        let mut cache = WidthCache::new(2);
+
+        cache.get_or_compute("a");
+        cache.get_or_compute("b");
+
+        // Access "a" via get() - should update LRU order
+        let _ = cache.get("a");
+
+        // Add "c" - should evict "b" (now oldest)
+        cache.get_or_compute("c");
+
+        assert!(cache.contains("a"));
+        assert!(!cache.contains("b"));
+        assert!(cache.contains("c"));
+    }
+
+    #[test]
+    fn contains_does_not_modify_stats() {
+        let mut cache = WidthCache::new(100);
+        cache.get_or_compute("hello");
+
+        let stats_before = cache.stats();
+        let _ = cache.contains("hello");
+        let _ = cache.contains("missing");
+        let stats_after = cache.stats();
+
+        assert_eq!(stats_before.hits, stats_after.hits);
+        assert_eq!(stats_before.misses, stats_after.misses);
+    }
+
+    #[test]
+    fn peek_returns_none_for_missing() {
+        let cache = WidthCache::new(100);
+        assert!(cache.peek("missing").is_none());
+    }
+
+    #[test]
+    fn custom_compute_called_once() {
+        let mut cache = WidthCache::new(100);
+        let mut call_count = 0;
+
+        cache.get_or_compute_with("test", |_| {
+            call_count += 1;
+            10
+        });
+
+        cache.get_or_compute_with("test", |_| {
+            call_count += 1;
+            20 // This shouldn't be called
+        });
+
+        assert_eq!(call_count, 1);
+        assert_eq!(cache.peek("test"), Some(10));
+    }
+
+    #[test]
+    fn whitespace_strings() {
+        let mut cache = WidthCache::new(100);
+        assert_eq!(cache.get_or_compute("   "), 3); // 3 spaces
+        assert_eq!(cache.get_or_compute("\t"), 1); // Tab is 1 cell typically
+        assert_eq!(cache.get_or_compute("\n"), 1); // Newline
+    }
 }
 
 #[cfg(test)]
