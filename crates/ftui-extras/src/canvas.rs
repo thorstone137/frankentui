@@ -287,7 +287,11 @@ impl Painter {
                     cell.fg = c;
                 }
 
-                buf.set(area.x + cx as u16, area.y + cy as u16, cell);
+                buf.set(
+                    area.x.saturating_add(cx as u16),
+                    area.y.saturating_add(cy as u16),
+                    cell,
+                );
             }
         }
     }

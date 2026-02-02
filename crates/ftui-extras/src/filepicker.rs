@@ -330,7 +330,7 @@ impl FilePicker {
 
         for row in 0..entry_area_height {
             let idx = self.scroll_offset + row;
-            let y = area.y + 1 + row as u16;
+            let y = area.y.saturating_add(1).saturating_add(row as u16);
 
             if let Some(&orig_idx) = self.filtered_indices.get(idx) {
                 let entry = &self.entries[orig_idx];

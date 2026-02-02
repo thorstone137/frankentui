@@ -181,7 +181,9 @@ impl Widget for Rule<'_> {
                 let title_block_width = display_width + 2; // pad + title + pad
                 let title_block_x = match self.title_alignment {
                     Alignment::Left => area.x,
-                    Alignment::Center => area.x + (width.saturating_sub(title_block_width)) / 2,
+                    Alignment::Center => area
+                        .x
+                        .saturating_add((width.saturating_sub(title_block_width)) / 2),
                     Alignment::Right => area.right().saturating_sub(title_block_width),
                 };
 

@@ -174,7 +174,7 @@ impl<'a, W> Panel<'a, W> {
             }
         }
         if self.borders.contains(Borders::BOTTOM) {
-            let y = area.bottom() - 1;
+            let y = area.bottom().saturating_sub(1);
             for x in area.x..area.right() {
                 buf.set(x, y, self.border_cell(set.horizontal));
             }
@@ -250,10 +250,11 @@ impl<'a, W> Panel<'a, W> {
         let display_width = UnicodeWidthStr::width(text.as_ref()).min(available_width);
 
         let x = match alignment {
-            Alignment::Left => area.x + 1,
-            Alignment::Center => {
-                area.x + 1 + ((available_width.saturating_sub(display_width)) / 2) as u16
-            }
+            Alignment::Left => area.x.saturating_add(1),
+            Alignment::Center => area
+                .x
+                .saturating_add(1)
+                .saturating_add(((available_width.saturating_sub(display_width)) / 2) as u16),
             Alignment::Right => area
                 .right()
                 .saturating_sub(1)
@@ -281,17 +282,18 @@ impl<'a, W> Panel<'a, W> {
         let display_width = UnicodeWidthStr::width(text.as_ref()).min(available_width);
 
         let x = match alignment {
-            Alignment::Left => area.x + 1,
-            Alignment::Center => {
-                area.x + 1 + ((available_width.saturating_sub(display_width)) / 2) as u16
-            }
+            Alignment::Left => area.x.saturating_add(1),
+            Alignment::Center => area
+                .x
+                .saturating_add(1)
+                .saturating_add(((available_width.saturating_sub(display_width)) / 2) as u16),
             Alignment::Right => area
                 .right()
                 .saturating_sub(1)
                 .saturating_sub(display_width as u16),
         };
 
-        let y = area.bottom() - 1;
+        let y = area.bottom().saturating_sub(1);
         let max_x = area.right().saturating_sub(1);
         draw_text_span(frame, x, y, text.as_ref(), style, max_x);
     }

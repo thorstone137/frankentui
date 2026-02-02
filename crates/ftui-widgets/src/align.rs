@@ -93,14 +93,14 @@ impl<W> Align<W> {
 
         let x = match self.horizontal {
             Alignment::Left => area.x,
-            Alignment::Center => area.x + (area.width.saturating_sub(w)) / 2,
-            Alignment::Right => area.x + area.width.saturating_sub(w),
+            Alignment::Center => area.x.saturating_add((area.width.saturating_sub(w)) / 2),
+            Alignment::Right => area.x.saturating_add(area.width.saturating_sub(w)),
         };
 
         let y = match self.vertical {
             VerticalAlignment::Top => area.y,
-            VerticalAlignment::Middle => area.y + (area.height.saturating_sub(h)) / 2,
-            VerticalAlignment::Bottom => area.y + area.height.saturating_sub(h),
+            VerticalAlignment::Middle => area.y.saturating_add((area.height.saturating_sub(h)) / 2),
+            VerticalAlignment::Bottom => area.y.saturating_add(area.height.saturating_sub(h)),
         };
 
         Rect::new(x, y, w, h)

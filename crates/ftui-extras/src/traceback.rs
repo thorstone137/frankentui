@@ -274,7 +274,7 @@ impl Traceback {
                     if is_error_line {
                         draw_styled_char(
                             &mut frame.buffer,
-                            area.x + 1,
+                            area.x.saturating_add(1),
                             y,
                             '❱',
                             self.style.indicator,

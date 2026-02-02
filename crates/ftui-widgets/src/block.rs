@@ -224,10 +224,11 @@ impl<'a> Block<'a> {
             let display_width = title_width.min(available_width);
 
             let _x = match self.title_alignment {
-                Alignment::Left => area.x + 1,
-                Alignment::Center => {
-                    area.x + 1 + ((available_width.saturating_sub(display_width)) / 2) as u16
-                }
+                Alignment::Left => area.x.saturating_add(1),
+                Alignment::Center => area
+                    .x
+                    .saturating_add(1)
+                    .saturating_add(((available_width.saturating_sub(display_width)) / 2) as u16),
                 Alignment::Right => area
                     .right()
                     .saturating_sub(1)
@@ -261,10 +262,11 @@ impl<'a> Block<'a> {
             let display_width = title_width.min(available_width);
 
             let x = match self.title_alignment {
-                Alignment::Left => area.x + 1,
-                Alignment::Center => {
-                    area.x + 1 + ((available_width.saturating_sub(display_width)) / 2) as u16
-                }
+                Alignment::Left => area.x.saturating_add(1),
+                Alignment::Center => area
+                    .x
+                    .saturating_add(1)
+                    .saturating_add(((available_width.saturating_sub(display_width)) / 2) as u16),
                 Alignment::Right => area
                     .right()
                     .saturating_sub(1)
@@ -338,12 +340,10 @@ impl Widget for Block<'_> {
                     let title_width = unicode_width::UnicodeWidthStr::width(title);
                     let display_width = title_width.min(available_width);
                     let x = match self.title_alignment {
-                        Alignment::Left => area.x + 1,
-                        Alignment::Center => {
-                            area.x
-                                + 1
-                                + ((available_width.saturating_sub(display_width)) / 2) as u16
-                        }
+                        Alignment::Left => area.x.saturating_add(1),
+                        Alignment::Center => area.x.saturating_add(1).saturating_add(
+                            ((available_width.saturating_sub(display_width)) / 2) as u16,
+                        ),
                         Alignment::Right => area
                             .right()
                             .saturating_sub(1)

@@ -333,7 +333,7 @@ impl Widget for JsonView {
                 break;
             }
 
-            let y = area.y + row_idx as u16;
+            let y = area.y.saturating_add(row_idx as u16);
             let mut x = area.x;
 
             for token in tokens {

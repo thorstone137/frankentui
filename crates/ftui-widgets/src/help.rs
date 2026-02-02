@@ -294,7 +294,7 @@ impl Help {
                 break;
             }
 
-            let y = area.y + row;
+            let y = area.y.saturating_add(row);
             let mut x = area.x;
 
             if deg.apply_styling() {

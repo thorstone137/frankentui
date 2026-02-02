@@ -132,8 +132,8 @@ mod tests {
 
     impl Widget for Dot {
         fn render(&self, area: Rect, frame: &mut Frame) {
-            let x = area.x + self.dx;
-            let y = area.y + self.dy;
+            let x = area.x.saturating_add(self.dx);
+            let y = area.y.saturating_add(self.dy);
             if x < area.right() && y < area.bottom() {
                 frame.buffer.set(x, y, Cell::from_char(self.ch));
             }

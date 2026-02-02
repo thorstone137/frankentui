@@ -120,11 +120,11 @@ impl Widget for Sparkline<'_> {
         let range = max - min;
 
         // Render on the last row of the area.
-        let y = area.y + area.height - 1;
+        let y = area.bottom().saturating_sub(1);
         let width = area.width as usize;
 
         for (i, &value) in self.data.iter().enumerate().take(width) {
-            let x = area.x + i as u16;
+            let x = area.x.saturating_add(i as u16);
 
             let normalized = if range > 0.0 {
                 ((value - min) / range).clamp(0.0, 1.0)
@@ -310,7 +310,7 @@ impl BarChart<'_> {
             return;
         }
 
-        let label_y = area.y + area.height - 1;
+        let label_y = area.bottom().saturating_sub(1);
         let mut x_cursor = area.x;
 
         for (gi, group) in self.groups.iter().enumerate() {
@@ -322,7 +322,7 @@ impl BarChart<'_> {
             match self.mode {
                 BarMode::Grouped => {
                     // Baseline y: bottom row of the chart area (above label row).
-                    let base_y = (area.y + area.height).saturating_sub(2);
+                    let base_y = area.bottom().saturating_sub(2);
                     for (si, &val) in group.values.iter().enumerate() {
                         if si > 0 {
                             x_cursor += self.bar_gap;
@@ -339,7 +339,7 @@ impl BarChart<'_> {
                                 break;
                             }
                             for dx in 0..self.bar_width {
-                                let x = x_cursor + dx;
+                                let x = x_cursor.saturating_add(dx);
                                 if x < area.right() {
                                     let mut cell = Cell::from_char('█');
                                     cell.fg = color;
@@ -354,7 +354,7 @@ impl BarChart<'_> {
                             if y >= area.y {
                                 let ch = BAR_CHARS[frac_idx];
                                 for dx in 0..self.bar_width {
-                                    let x = x_cursor + dx;
+                                    let x = x_cursor.saturating_add(dx);
                                     if x < area.right() {
                                         let mut cell = Cell::from_char(ch);
                                         cell.fg = color;
@@ -369,7 +369,7 @@ impl BarChart<'_> {
                 }
                 BarMode::Stacked => {
                     // Baseline y: bottom row of the chart area (above label row).
-                    let base_y = (area.y + area.height).saturating_sub(2);
+                    let base_y = area.bottom().saturating_sub(2);
                     // Use cumulative heights to avoid fractional gaps.
                     let mut cumulative = 0.0_f64;
                     for (si, &val) in group.values.iter().enumerate() {
@@ -385,7 +385,7 @@ impl BarChart<'_> {
                                 break;
                             }
                             for dx in 0..self.bar_width {
-                                let x = x_cursor + dx;
+                                let x = x_cursor.saturating_add(dx);
                                 if x < area.right() {
                                     let mut cell = Cell::from_char('█');
                                     cell.fg = color;
@@ -400,7 +400,7 @@ impl BarChart<'_> {
 
             // Group label (truncated to bar group width).
             let group_width = x_cursor.saturating_sub(group_start_x);
-            let label_x = group_start_x + group_width.saturating_sub(1) / 2;
+            let label_x = group_start_x.saturating_add(group_width.saturating_sub(1) / 2);
             if let Some(ch) = group.label.chars().next()
                 && label_x < area.right()
                 && label_y < area.bottom()
@@ -437,12 +437,12 @@ impl BarChart<'_> {
                         let color = self.get_color(si);
 
                         for dy in 0..self.bar_width {
-                            let y = y_cursor + dy;
+                            let y = y_cursor.saturating_add(dy);
                             if y >= area.bottom() {
                                 break;
                             }
                             for dx in 0..bar_len {
-                                let x = area.x + label_width + dx;
+                                let x = area.x.saturating_add(label_width).saturating_add(dx);
                                 if x < area.right() {
                                     let mut cell = Cell::from_char('█');
                                     cell.fg = color;
@@ -461,12 +461,16 @@ impl BarChart<'_> {
                         let color = self.get_color(si);
 
                         for dy in 0..self.bar_width {
-                            let y = y_cursor + dy;
+                            let y = y_cursor.saturating_add(dy);
                             if y >= area.bottom() {
                                 break;
                             }
                             for dx in 0..bar_len {
-                                let x = area.x + label_width + left_col + dx;
+                                let x = area
+                                    .x
+                                    .saturating_add(label_width)
+                                    .saturating_add(left_col)
+                                    .saturating_add(dx);
                                 if x < area.right() {
                                     let mut cell = Cell::from_char('█');
                                     cell.fg = color;
@@ -626,7 +630,7 @@ impl Widget for LineChart<'_> {
         let x_axis_height: u16 = if self.x_labels.is_empty() { 1 } else { 2 };
 
         let chart_area = Rect::new(
-            area.x + y_axis_width,
+            area.x.saturating_add(y_axis_width),
             area.y,
             area.width.saturating_sub(y_axis_width),
             area.height.saturating_sub(x_axis_height),
@@ -733,8 +737,9 @@ impl Widget for LineChart<'_> {
                 };
                 let max_len = y_axis_width.saturating_sub(1) as usize;
                 let label_width = unicode_width::UnicodeWidthStr::width(*label).min(max_len);
-                let start_x =
-                    area.x + (y_axis_width.saturating_sub(1)).saturating_sub(label_width as u16);
+                let start_x = area.x.saturating_add(
+                    (y_axis_width.saturating_sub(1)).saturating_sub(label_width as u16),
+                );
                 let mut col = 0u16;
                 for ch in label.chars() {
                     let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
@@ -743,27 +748,28 @@ impl Widget for LineChart<'_> {
                     }
                     let mut cell = Cell::from_char(ch);
                     style_cell(&mut cell, self.style);
-                    frame.buffer.set(start_x + col, y, cell);
+                    frame.buffer.set(start_x.saturating_add(col), y, cell);
                     col += ch_width as u16;
                 }
             }
         }
 
         // X labels.
-        if !self.x_labels.is_empty() && axis_y + 1 < area.bottom() {
-            let text_y = axis_y + 1;
+        if !self.x_labels.is_empty() && axis_y.saturating_add(1) < area.bottom() {
+            let text_y = axis_y.saturating_add(1);
             let n = self.x_labels.len();
             for (i, label) in self.x_labels.iter().enumerate() {
                 let x = if n == 1 {
                     chart_area.x
                 } else {
-                    chart_area.x
-                        + (i as u32 * chart_area.width.saturating_sub(1) as u32
-                            / (n as u32 - 1).max(1)) as u16
+                    chart_area.x.saturating_add(
+                        (i as u32 * chart_area.width.saturating_sub(1) as u32
+                            / (n as u32 - 1).max(1)) as u16,
+                    )
                 };
                 let mut col = 0u16;
                 for ch in label.chars() {
-                    let lx = x + col;
+                    let lx = x.saturating_add(col);
                     let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                     if lx >= area.right() {
                         break;
@@ -784,11 +790,11 @@ impl Widget for LineChart<'_> {
                 .map(|s| unicode_width::UnicodeWidthStr::width(s.name))
                 .max()
                 .unwrap_or(0);
-            let legend_width = max_name as u16 + 3; // "■ name"
+            let legend_width = (max_name as u16).saturating_add(3); // "■ name"
             let legend_x = chart_area.right().saturating_sub(legend_width);
 
             for (i, series) in self.series.iter().enumerate() {
-                let y = chart_area.y + i as u16;
+                let y = chart_area.y.saturating_add(i as u16);
                 if y >= chart_area.bottom() {
                     break;
                 }
@@ -798,7 +804,7 @@ impl Widget for LineChart<'_> {
 
                 let mut col = 0u16;
                 for ch in series.name.chars() {
-                    let x = legend_x + 2 + col;
+                    let x = legend_x.saturating_add(2).saturating_add(col);
                     let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                     if x >= area.right() {
                         break;

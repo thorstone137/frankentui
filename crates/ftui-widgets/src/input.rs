@@ -618,7 +618,9 @@ impl Widget for TextInput {
                 crate::apply_style(&mut cell, placeholder_style);
                 let rel_x = visual_x.saturating_sub(effective_scroll);
                 if rel_x < viewport_width {
-                    frame.buffer.set(area.x + rel_x as u16, y, cell);
+                    frame
+                        .buffer
+                        .set(area.x.saturating_add(rel_x as u16), y, cell);
                 }
                 visual_x += w;
             }
@@ -657,7 +659,9 @@ impl Widget for TextInput {
 
                 let rel_x = visual_x.saturating_sub(effective_scroll);
                 if rel_x < viewport_width {
-                    frame.buffer.set(area.x + rel_x as u16, y, cell);
+                    frame
+                        .buffer
+                        .set(area.x.saturating_add(rel_x as u16), y, cell);
                 }
                 visual_x += w;
             }
@@ -667,7 +671,7 @@ impl Widget for TextInput {
             // Set cursor style at cursor position
             let cursor_rel_x = cursor_visual_pos.saturating_sub(effective_scroll);
             if cursor_rel_x < viewport_width {
-                let cursor_screen_x = area.x + cursor_rel_x as u16;
+                let cursor_screen_x = area.x.saturating_add(cursor_rel_x as u16);
                 if let Some(cell) = frame.buffer.get_mut(cursor_screen_x, y) {
                     if !deg.apply_styling() {
                         // At NoStyling, just use reverse video for cursor

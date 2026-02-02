@@ -896,7 +896,7 @@ impl RenderItem for String {
         for (i, ch) in self.chars().take(max_chars).enumerate() {
             frame
                 .buffer
-                .set(area.x + i as u16, area.y, Cell::from_char(ch));
+                .set(area.x.saturating_add(i as u16), area.y, Cell::from_char(ch));
         }
     }
 }
@@ -910,7 +910,7 @@ impl RenderItem for &str {
         for (i, ch) in self.chars().take(max_chars).enumerate() {
             frame
                 .buffer
-                .set(area.x + i as u16, area.y, Cell::from_char(ch));
+                .set(area.x.saturating_add(i as u16), area.y, Cell::from_char(ch));
         }
     }
 }

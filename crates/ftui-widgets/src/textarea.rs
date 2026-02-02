@@ -656,7 +656,7 @@ impl Widget for TextArea {
         // Render visible lines
         for row in 0..vp_height {
             let line_idx = scroll_top + row;
-            let y = area.y + row as u16;
+            let y = area.y.saturating_add(row as u16);
 
             if line_idx >= self.editor.line_count() {
                 break;
@@ -749,9 +749,9 @@ impl Widget for TextArea {
         if self.focused {
             let cursor_row = cursor.line.saturating_sub(scroll_top);
             if cursor_row < vp_height {
-                let cursor_screen_x =
-                    cursor.visual_col.saturating_sub(scroll_left) as u16 + text_area_x;
-                let cursor_screen_y = area.y + cursor_row as u16;
+                let cursor_screen_x = (cursor.visual_col.saturating_sub(scroll_left) as u16)
+                    .saturating_add(text_area_x);
+                let cursor_screen_y = area.y.saturating_add(cursor_row as u16);
                 if cursor_screen_x < area.right() && cursor_screen_y < area.bottom() {
                     frame.set_cursor(Some((cursor_screen_x, cursor_screen_y)));
                 }

@@ -421,7 +421,12 @@ impl Shakespeare {
             }
 
             let line = self.lines[line_idx];
-            let line_area = Rect::new(text_area.x, text_area.y + row as u16, text_area.width, 1);
+            let line_area = Rect::new(
+                text_area.x,
+                text_area.y.saturating_add(row as u16),
+                text_area.width,
+                1,
+            );
 
             // Determine style: highlight if it's a search match
             let is_current_match = has_query

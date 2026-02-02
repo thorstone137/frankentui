@@ -690,7 +690,7 @@ impl StatefulWidget for Form {
             .skip(state.scroll)
             .take(visible_rows)
         {
-            let y = area.y + (i - state.scroll) as u16;
+            let y = area.y.saturating_add((i - state.scroll) as u16);
             let is_focused = i == state.focused;
 
             // Find error for this field
@@ -951,7 +951,7 @@ impl StatefulWidget for ConfirmDialog {
 
         // Draw buttons on last row
         let btn_y = if area.height > 1 {
-            area.y + area.height - 1
+            area.bottom().saturating_sub(1)
         } else {
             area.y
         };

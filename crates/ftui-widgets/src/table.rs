@@ -370,7 +370,7 @@ fn render_row(row: &Row, col_rects: &[Rect], frame: &mut Frame, y: u16, style: S
                 x = crate::draw_text_span_with_link(
                     frame,
                     x,
-                    cell_area.y + line_idx as u16,
+                    cell_area.y.saturating_add(line_idx as u16),
                     &span.content,
                     span_style,
                     cell_area.right(),
