@@ -426,7 +426,10 @@ mod normalization_tests {
         // Case-insensitive search finds "Strasse" (literal match in haystack)
         // Note: ß does NOT fold to ss with to_lowercase(); this tests the literal match
         let results = search_case_insensitive("Straße Strasse", "strasse");
-        assert!(!results.is_empty(), "Should find literal case-insensitive match");
+        assert!(
+            !results.is_empty(),
+            "Should find literal case-insensitive match"
+        );
     }
 
     #[test]

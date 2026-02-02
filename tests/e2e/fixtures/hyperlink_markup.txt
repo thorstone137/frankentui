@@ -1,0 +1,3 @@
+Plain text without links
+[link=https://example.com]Click here[/link] to visit Example
+This line has [link=https://github.com]GitHub[/link] and [link=https://rust-lang.org]Rust[/link] links

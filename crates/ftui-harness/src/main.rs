@@ -23,12 +23,15 @@
 //! - Escape: Clear input
 
 use std::cell::RefCell;
-use std::time::Duration;
+use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 
 use ftui_core::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseEvent, MouseEventKind, PasteEvent,
 };
 use ftui_core::geometry::Rect;
+use ftui_core::input_parser::InputParser;
+use ftui_core::terminal_session::{SessionOptions, TerminalSession};
 use ftui_layout::{Constraint, Flex, Grid, GridArea};
 use ftui_render::frame::Frame;
 use ftui_runtime::{Cmd, Every, Model, Program, ProgramConfig, ScreenMode, Subscription};
@@ -317,6 +320,62 @@ fn format_modifiers(mods: Modifiers) -> String {
         parts.push("super");
     }
     parts.join("+")
+}
+
+fn parse_exit_after() -> Option<Duration> {
+    std::env::var("FTUI_HARNESS_EXIT_AFTER_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|ms| {
+            if ms == 0 {
+                None
+            } else {
+                Some(Duration::from_millis(ms))
+            }
+        })
+}
+
+fn run_input_trace(exit_after: Option<Duration>) -> io::Result<()> {
+    let session = TerminalSession::new(SessionOptions {
+        kitty_keyboard: true,
+        ..Default::default()
+    })?;
+    let mut parser = InputParser::new();
+    let start = Instant::now();
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout();
+    let mut buf = [0u8; 4096];
+    let poll_timeout = Duration::from_millis(50);
+
+    loop {
+        if let Some(limit) = exit_after
+            && start.elapsed() >= limit
+        {
+            break;
+        }
+
+        if !session.poll_event(poll_timeout)? {
+            continue;
+        }
+
+        let n = stdin.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        for event in parser.parse(&buf[..n]) {
+            if let Event::Key(key) = event {
+                let mods = format_modifiers(key.modifiers);
+                writeln!(
+                    stdout,
+                    "Key: code={:?} kind={:?} mods={}",
+                    key.code, key.kind, mods
+                )?;
+            }
+        }
+        stdout.flush()?;
+    }
+
+    Ok(())
 }
 
 impl Model for AgentHarness {
@@ -662,6 +721,14 @@ impl AgentHarness {
 }
 
 fn main() -> std::io::Result<()> {
+    let input_mode = std::env::var("FTUI_HARNESS_INPUT_MODE")
+        .unwrap_or_else(|_| "runtime".to_string())
+        .to_ascii_lowercase();
+
+    if input_mode == "parser" || input_mode == "input-parser" || input_mode == "input_parser" {
+        return run_input_trace(parse_exit_after());
+    }
+
     let ui_height = std::env::var("FTUI_HARNESS_UI_HEIGHT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())

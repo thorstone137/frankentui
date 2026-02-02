@@ -1006,7 +1006,10 @@ mod tests {
     #[test]
     fn detect_dark_mode_with_invalid_number() {
         let result = Theme::detect_dark_mode_from_colorfgbg(Some("0;abc"));
-        assert!(result, "COLORFGBG with invalid number should default to dark");
+        assert!(
+            result,
+            "COLORFGBG with invalid number should default to dark"
+        );
     }
 
     #[test]
@@ -1028,10 +1031,7 @@ mod tests {
         // Create a theme with adaptive colors
         let theme = Theme {
             text: AdaptiveColor::adaptive(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255)),
-            background: AdaptiveColor::adaptive(
-                Color::rgb(255, 255, 255),
-                Color::rgb(0, 0, 0),
-            ),
+            background: AdaptiveColor::adaptive(Color::rgb(255, 255, 255), Color::rgb(0, 0, 0)),
             ..themes::dark()
         };
         let dark_resolved = theme.resolve(true);
@@ -1063,7 +1063,10 @@ mod tests {
         // Dracula primary is purple
         let primary = dracula.primary.resolve(true);
         if let Color::Rgb(rgb) = primary {
-            assert!(rgb.r > 100 && rgb.b > 200, "Dracula primary should be purple");
+            assert!(
+                rgb.r > 100 && rgb.b > 200,
+                "Dracula primary should be purple"
+            );
         }
     }
 
@@ -1091,10 +1094,7 @@ mod tests {
 
     #[test]
     fn builder_accepts_adaptive_color_directly() {
-        let adaptive = AdaptiveColor::adaptive(
-            Color::rgb(0, 0, 0),
-            Color::rgb(255, 255, 255),
-        );
+        let adaptive = AdaptiveColor::adaptive(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255));
         let theme = Theme::builder().text(adaptive).build();
         assert!(theme.text.is_adaptive());
     }

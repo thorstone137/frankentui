@@ -1014,6 +1014,324 @@ mod tests {
         line3.push(Segment::text("x"));
         assert!(!line3.is_empty());
     }
+
+    // ==========================================================================
+    // Cow<str> ownership behavior tests
+    // ==========================================================================
+
+    #[test]
+    fn cow_borrowed_from_static_str() {
+        let seg = Segment::text("static string");
+        // Cow should be Borrowed for static strings
+        assert!(matches!(seg.text, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn cow_owned_from_string() {
+        let owned = String::from("owned string");
+        let seg = Segment::text(owned);
+        // Cow should be Owned for String
+        assert!(matches!(seg.text, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn cow_borrowed_reference() {
+        let s = String::from("reference");
+        let seg = Segment::text(&s[..]);
+        // Cow should be Borrowed when created from &str
+        assert!(matches!(seg.text, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn into_owned_converts_borrowed_to_owned() {
+        let seg = Segment::text("borrowed");
+        assert!(matches!(seg.text, Cow::Borrowed(_)));
+
+        let owned = seg.into_owned();
+        // After into_owned, text should be Owned
+        assert!(matches!(owned.text, Cow::Owned(_)));
+        assert_eq!(owned.as_str(), "borrowed");
+    }
+
+    #[test]
+    fn clone_borrowed_segment_stays_borrowed() {
+        let seg = Segment::text("static");
+        let cloned = seg.clone();
+        // Clone of borrowed should still be borrowed
+        assert!(matches!(cloned.text, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn clone_owned_segment_allocates() {
+        let owned = String::from("owned");
+        let seg = Segment::text(owned);
+        let cloned = seg.clone();
+        // Clone of owned allocates
+        assert!(matches!(cloned.text, Cow::Owned(_)));
+        assert_eq!(cloned.as_str(), "owned");
+    }
+
+    // ==========================================================================
+    // Default trait tests
+    // ==========================================================================
+
+    #[test]
+    fn segment_default_is_empty() {
+        let seg = Segment::default();
+        assert!(seg.is_empty());
+        assert_eq!(seg.as_str(), "");
+        assert!(seg.style.is_none());
+        assert!(seg.control.is_none());
+    }
+
+    #[test]
+    fn segment_line_default_is_empty() {
+        let line = SegmentLine::default();
+        assert!(line.is_empty());
+        assert_eq!(line.len(), 0);
+    }
+
+    #[test]
+    fn segment_lines_default_is_empty() {
+        let lines = SegmentLines::default();
+        assert!(lines.is_empty());
+        assert_eq!(lines.len(), 0);
+    }
+
+    // ==========================================================================
+    // Debug trait tests
+    // ==========================================================================
+
+    #[test]
+    fn segment_debug_impl() {
+        let seg = Segment::text("hello");
+        let debug = format!("{:?}", seg);
+        assert!(debug.contains("Segment"));
+        assert!(debug.contains("hello"));
+    }
+
+    #[test]
+    fn control_code_debug_impl() {
+        let code = ControlCode::LineFeed;
+        let debug = format!("{:?}", code);
+        assert!(debug.contains("LineFeed"));
+    }
+
+    #[test]
+    fn segment_line_debug_impl() {
+        let line = SegmentLine::from_segment(Segment::text("test"));
+        let debug = format!("{:?}", line);
+        assert!(debug.contains("SegmentLine"));
+    }
+
+    // ==========================================================================
+    // SegmentLine additional tests
+    // ==========================================================================
+
+    #[test]
+    fn segment_line_into_owned() {
+        let s = String::from("test");
+        let mut line = SegmentLine::new();
+        line.push(Segment::text(&s[..]));
+
+        let owned = line.into_owned();
+        drop(s); // Original dropped
+        assert_eq!(owned.to_plain_text(), "test");
+    }
+
+    #[test]
+    fn segment_line_segments_mut() {
+        let mut line = SegmentLine::from_segment(Segment::text("hello"));
+        line.segments_mut().push(Segment::text(" world"));
+        assert_eq!(line.to_plain_text(), "hello world");
+    }
+
+    #[test]
+    fn segment_line_iter() {
+        let line = SegmentLine::from_segments(vec![Segment::text("a"), Segment::text("b")]);
+        let collected: Vec<_> = line.iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn segment_line_into_iter_ref() {
+        let line = SegmentLine::from_segments(vec![Segment::text("x"), Segment::text("y")]);
+        let mut count = 0;
+        for _seg in &line {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+    }
+
+    // ==========================================================================
+    // SegmentLines additional tests
+    // ==========================================================================
+
+    #[test]
+    fn segment_lines_into_owned() {
+        let s = String::from("line one");
+        let mut lines = SegmentLines::new();
+        let mut line = SegmentLine::new();
+        line.push(Segment::text(&s[..]));
+        lines.push(line);
+
+        let owned = lines.into_owned();
+        drop(s);
+        assert_eq!(owned.lines()[0].to_plain_text(), "line one");
+    }
+
+    #[test]
+    fn segment_lines_iter() {
+        let mut lines = SegmentLines::new();
+        lines.push(SegmentLine::from_segment(Segment::text("a")));
+        lines.push(SegmentLine::from_segment(Segment::text("b")));
+
+        let collected: Vec<_> = lines.iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn segment_lines_max_width() {
+        let mut lines = SegmentLines::new();
+        lines.push(SegmentLine::from_segment(Segment::text("short")));
+        lines.push(SegmentLine::from_segment(Segment::text("longer line here")));
+        lines.push(SegmentLine::from_segment(Segment::text("med")));
+
+        assert_eq!(lines.max_width(), 16);
+    }
+
+    #[test]
+    fn segment_lines_max_width_empty() {
+        let lines = SegmentLines::new();
+        assert_eq!(lines.max_width(), 0);
+    }
+
+    // ==========================================================================
+    // Segment builder tests
+    // ==========================================================================
+
+    #[test]
+    fn segment_with_style_applies_style() {
+        let style = Style::new().bold();
+        let seg = Segment::text("hello").with_style(style);
+        assert_eq!(seg.style, Some(style));
+    }
+
+    #[test]
+    fn segment_with_multiple_controls() {
+        let seg = Segment::text("x")
+            .with_control(ControlCode::Bell)
+            .with_control(ControlCode::Tab);
+        let codes = seg.control.unwrap();
+        assert_eq!(codes.len(), 2);
+    }
+
+    // ==========================================================================
+    // cell_length_with custom function tests
+    // ==========================================================================
+
+    #[test]
+    fn cell_length_with_custom_width() {
+        let seg = Segment::text("hello");
+        // Custom width function: double each char
+        let width = seg.cell_length_with(|s| s.len() * 2);
+        assert_eq!(width, 10);
+    }
+
+    #[test]
+    fn cell_length_with_on_control_is_zero() {
+        let seg = Segment::control(ControlCode::Bell);
+        let width = seg.cell_length_with(|_| 100);
+        assert_eq!(width, 0);
+    }
+
+    // ==========================================================================
+    // Control code hash/equality tests
+    // ==========================================================================
+
+    #[test]
+    fn control_code_equality() {
+        assert_eq!(ControlCode::LineFeed, ControlCode::LineFeed);
+        assert_ne!(ControlCode::LineFeed, ControlCode::CarriageReturn);
+    }
+
+    #[test]
+    fn control_code_hash_consistency() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(ControlCode::LineFeed);
+        set.insert(ControlCode::CarriageReturn);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&ControlCode::LineFeed));
+    }
+
+    // ==========================================================================
+    // Edge cases
+    // ==========================================================================
+
+    #[test]
+    fn split_at_cell_exact_boundary() {
+        let seg = Segment::text("abcde");
+        let (left, right) = seg.split_at_cell(5);
+        assert_eq!(left.as_str(), "abcde");
+        assert_eq!(right.as_str(), "");
+    }
+
+    #[test]
+    fn segment_line_split_at_zero() {
+        let line = SegmentLine::from_segment(Segment::text("hello"));
+        let (left, right) = line.split_at_cell(0);
+        assert!(left.is_empty());
+        assert_eq!(right.to_plain_text(), "hello");
+    }
+
+    #[test]
+    fn segment_line_split_at_end() {
+        let line = SegmentLine::from_segment(Segment::text("hello"));
+        let (left, right) = line.split_at_cell(100);
+        assert_eq!(left.to_plain_text(), "hello");
+        assert!(right.is_empty());
+    }
+
+    #[test]
+    fn join_lines_single_line() {
+        let mut lines = SegmentLines::new();
+        lines.push(SegmentLine::from_segment(Segment::text("only")));
+        let joined = join_lines(&lines);
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].as_str(), "only");
+    }
+
+    #[test]
+    fn join_lines_empty() {
+        let lines = SegmentLines::new();
+        let joined = join_lines(&lines);
+        assert!(joined.is_empty());
+    }
+
+    #[test]
+    fn split_into_lines_multiple_newlines() {
+        let segments = vec![
+            Segment::text("a"),
+            Segment::newline(),
+            Segment::newline(),
+            Segment::text("b"),
+        ];
+        let lines = split_into_lines(segments);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines.lines()[0].to_plain_text(), "a");
+        assert!(lines.lines()[1].is_empty());
+        assert_eq!(lines.lines()[2].to_plain_text(), "b");
+    }
+
+    #[test]
+    fn split_into_lines_trailing_newline() {
+        let segments = vec![Segment::text("hello"), Segment::newline()];
+        let lines = split_into_lines(segments);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines.lines()[0].to_plain_text(), "hello");
+        assert!(lines.lines()[1].is_empty());
+    }
 }
 
 #[cfg(test)]

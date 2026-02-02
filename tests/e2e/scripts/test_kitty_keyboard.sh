@@ -71,6 +71,7 @@ kitty_basic_char() {
     # CSI 97 u => 'a'
     PTY_SEND=$'\x1b[97u' \
     PTY_SEND_DELAY_MS=300 \
+    FTUI_HARNESS_INPUT_MODE=parser \
     FTUI_HARNESS_LOG_KEYS=1 \
     FTUI_HARNESS_EXIT_AFTER_MS=1500 \
     PTY_TIMEOUT=4 \
@@ -88,6 +89,7 @@ kitty_ctrl_char() {
     # CSI 97 ; 5 u => Ctrl+a
     PTY_SEND=$'\x1b[97;5u' \
     PTY_SEND_DELAY_MS=300 \
+    FTUI_HARNESS_INPUT_MODE=parser \
     FTUI_HARNESS_LOG_KEYS=1 \
     FTUI_HARNESS_EXIT_AFTER_MS=1500 \
     PTY_TIMEOUT=4 \
@@ -105,6 +107,7 @@ kitty_repeat_kind() {
     # CSI 98 ; 1:2 u => 'b' repeat
     PTY_SEND=$'\x1b[98;1:2u' \
     PTY_SEND_DELAY_MS=300 \
+    FTUI_HARNESS_INPUT_MODE=parser \
     FTUI_HARNESS_LOG_KEYS=1 \
     FTUI_HARNESS_EXIT_AFTER_MS=1500 \
     PTY_TIMEOUT=4 \
@@ -122,6 +125,7 @@ kitty_release_kind() {
     # CSI 99 ; 1:3 u => 'c' release
     PTY_SEND=$'\x1b[99;1:3u' \
     PTY_SEND_DELAY_MS=300 \
+    FTUI_HARNESS_INPUT_MODE=parser \
     FTUI_HARNESS_LOG_KEYS=1 \
     FTUI_HARNESS_EXIT_AFTER_MS=1500 \
     PTY_TIMEOUT=4 \
@@ -139,6 +143,7 @@ kitty_function_key() {
     # CSI 57364 u => F1
     PTY_SEND=$'\x1b[57364u' \
     PTY_SEND_DELAY_MS=300 \
+    FTUI_HARNESS_INPUT_MODE=parser \
     FTUI_HARNESS_LOG_KEYS=1 \
     FTUI_HARNESS_EXIT_AFTER_MS=1500 \
     PTY_TIMEOUT=4 \
@@ -156,6 +161,7 @@ kitty_navigation_key() {
     # CSI 57351 u => Right arrow
     PTY_SEND=$'\x1b[57351u' \
     PTY_SEND_DELAY_MS=300 \
+    FTUI_HARNESS_INPUT_MODE=parser \
     FTUI_HARNESS_LOG_KEYS=1 \
     FTUI_HARNESS_EXIT_AFTER_MS=1500 \
     PTY_TIMEOUT=4 \

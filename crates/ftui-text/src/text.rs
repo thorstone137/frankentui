@@ -1018,6 +1018,340 @@ mod tests {
         drop(s); // Original string dropped
         assert_eq!(line.to_plain_text(), "hello"); // Still works
     }
+
+    // ==========================================================================
+    // Cow<str> ownership behavior tests
+    // ==========================================================================
+
+    #[test]
+    fn span_cow_borrowed_from_static() {
+        let span = Span::raw("static");
+        assert!(matches!(span.content, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn span_cow_owned_from_string() {
+        let span = Span::raw(String::from("owned"));
+        assert!(matches!(span.content, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn span_into_owned_converts_borrowed() {
+        let span = Span::raw("borrowed");
+        assert!(matches!(span.content, Cow::Borrowed(_)));
+
+        let owned = span.into_owned();
+        assert!(matches!(owned.content, Cow::Owned(_)));
+        assert_eq!(owned.as_str(), "borrowed");
+    }
+
+    #[test]
+    fn span_with_link_into_owned() {
+        let span = Span::raw("text").link("https://example.com");
+        let owned = span.into_owned();
+        assert!(owned.link.is_some());
+        assert!(matches!(owned.link.as_ref().unwrap(), Cow::Owned(_)));
+    }
+
+    // ==========================================================================
+    // Span additional tests
+    // ==========================================================================
+
+    #[test]
+    fn span_link_method() {
+        let span = Span::raw("click me").link("https://example.com");
+        assert_eq!(span.link.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn span_measurement() {
+        let span = Span::raw("hello");
+        let m = span.measurement();
+        assert_eq!(m.minimum, 5);
+        assert_eq!(m.maximum, 5);
+    }
+
+    #[test]
+    fn span_is_empty() {
+        assert!(Span::raw("").is_empty());
+        assert!(!Span::raw("x").is_empty());
+    }
+
+    #[test]
+    fn span_default_is_empty() {
+        let span = Span::default();
+        assert!(span.is_empty());
+        assert!(span.style.is_none());
+        assert!(span.link.is_none());
+    }
+
+    #[test]
+    fn span_with_style() {
+        let style = Style::new().bold();
+        let span = Span::raw("text").with_style(style);
+        assert_eq!(span.style, Some(style));
+    }
+
+    #[test]
+    fn span_from_segment() {
+        let style = Style::new().italic();
+        let seg = Segment::styled("hello", style);
+        let span: Span = seg.into();
+        assert_eq!(span.as_str(), "hello");
+        assert_eq!(span.style, Some(style));
+    }
+
+    #[test]
+    fn span_debug_impl() {
+        let span = Span::raw("test");
+        let debug = format!("{:?}", span);
+        assert!(debug.contains("Span"));
+        assert!(debug.contains("test"));
+    }
+
+    // ==========================================================================
+    // Line additional tests
+    // ==========================================================================
+
+    #[test]
+    fn line_measurement() {
+        let line = Line::raw("hello world");
+        let m = line.measurement();
+        assert_eq!(m.minimum, 11);
+        assert_eq!(m.maximum, 11);
+    }
+
+    #[test]
+    fn line_iter() {
+        let line = Line::from_spans([Span::raw("a"), Span::raw("b"), Span::raw("c")]);
+        let collected: Vec<_> = line.iter().collect();
+        assert_eq!(collected.len(), 3);
+    }
+
+    #[test]
+    fn line_into_segments() {
+        let style = Style::new().bold();
+        let line = Line::from_spans([Span::raw("hello"), Span::styled(" world", style)]);
+        let segments = line.into_segments();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].style, None);
+        assert_eq!(segments[1].style, Some(style));
+    }
+
+    #[test]
+    fn line_into_segment_line() {
+        let line = Line::raw("test");
+        let seg_line = line.into_segment_line();
+        assert_eq!(seg_line.to_plain_text(), "test");
+    }
+
+    #[test]
+    fn line_with_span_builder() {
+        let line = Line::raw("hello ").with_span(Span::raw("world"));
+        assert_eq!(line.to_plain_text(), "hello world");
+    }
+
+    #[test]
+    fn line_from_span() {
+        let span = Span::styled("test", Style::new().bold());
+        let line: Line = span.into();
+        assert_eq!(line.to_plain_text(), "test");
+    }
+
+    #[test]
+    fn line_debug_impl() {
+        let line = Line::raw("test");
+        let debug = format!("{:?}", line);
+        assert!(debug.contains("Line"));
+    }
+
+    #[test]
+    fn line_default_is_empty() {
+        let line = Line::default();
+        assert!(line.is_empty());
+    }
+
+    // ==========================================================================
+    // Text additional tests
+    // ==========================================================================
+
+    #[test]
+    fn text_style_returns_first_span_style() {
+        let style = Style::new().bold();
+        let text = Text::styled("hello", style);
+        assert_eq!(text.style(), Some(style));
+    }
+
+    #[test]
+    fn text_style_returns_none_for_empty() {
+        let text = Text::new();
+        assert!(text.style().is_none());
+    }
+
+    #[test]
+    fn text_style_returns_none_for_unstyled() {
+        let text = Text::raw("plain");
+        assert!(text.style().is_none());
+    }
+
+    #[test]
+    fn text_with_line_builder() {
+        let text = Text::raw("line 1").with_line(Line::raw("line 2"));
+        assert_eq!(text.height(), 2);
+    }
+
+    #[test]
+    fn text_with_span_builder() {
+        let text = Text::raw("hello ").with_span(Span::raw("world"));
+        assert_eq!(text.to_plain_text(), "hello world");
+    }
+
+    #[test]
+    fn text_with_base_style_builder() {
+        let text = Text::raw("test").with_base_style(Style::new().bold());
+        assert!(
+            text.lines()[0].spans()[0]
+                .style
+                .unwrap()
+                .has_attr(StyleFlags::BOLD)
+        );
+    }
+
+    #[test]
+    fn text_height_as_u16() {
+        let text = Text::raw("a\nb\nc");
+        assert_eq!(text.height_as_u16(), 3);
+    }
+
+    #[test]
+    fn text_height_as_u16_saturates() {
+        // Create text with more than u16::MAX lines would saturate
+        // Just verify the method exists and works for normal cases
+        let text = Text::new();
+        assert_eq!(text.height_as_u16(), 0);
+    }
+
+    #[test]
+    fn text_measurement() {
+        let text = Text::raw("short\nlonger line");
+        let m = text.measurement();
+        assert_eq!(m.minimum, 11); // "longer line"
+        assert_eq!(m.maximum, 11);
+    }
+
+    #[test]
+    fn text_from_segments_with_newlines() {
+        let segments = vec![
+            Segment::text("line 1"),
+            Segment::newline(),
+            Segment::text("line 2"),
+        ];
+        let text = Text::from_segments(segments);
+        assert_eq!(text.height(), 2);
+        assert_eq!(text.lines()[0].to_plain_text(), "line 1");
+        assert_eq!(text.lines()[1].to_plain_text(), "line 2");
+    }
+
+    #[test]
+    fn text_converts_to_segment_lines_multiline() {
+        let text = Text::raw("a\nb");
+        let seg_lines = text.into_segment_lines();
+        assert_eq!(seg_lines.len(), 2);
+    }
+
+    #[test]
+    fn text_iter() {
+        let text = Text::from_lines([Line::raw("a"), Line::raw("b")]);
+        let collected: Vec<_> = text.iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn text_debug_impl() {
+        let text = Text::raw("test");
+        let debug = format!("{:?}", text);
+        assert!(debug.contains("Text"));
+    }
+
+    #[test]
+    fn text_default_is_empty() {
+        let text = Text::default();
+        assert!(text.is_empty());
+    }
+
+    // ==========================================================================
+    // Truncation edge cases
+    // ==========================================================================
+
+    #[test]
+    fn truncate_ellipsis_wider_than_max() {
+        let mut text = Text::raw("ab");
+        text.truncate(2, Some("...")); // ellipsis is 3 wide, max is 2
+        // Should truncate without ellipsis since ellipsis doesn't fit
+        assert!(text.width() <= 2);
+    }
+
+    #[test]
+    fn truncate_exact_width_no_change() {
+        let mut text = Text::raw("hello");
+        text.truncate(5, Some("..."));
+        assert_eq!(text.to_plain_text(), "hello"); // Exact fit, no truncation needed
+    }
+
+    #[test]
+    fn truncate_multiple_spans() {
+        let text = Text::from_spans([
+            Span::raw("hello "),
+            Span::styled("world", Style::new().bold()),
+        ]);
+        let truncated = text.truncated(8, None);
+        assert_eq!(truncated.to_plain_text(), "hello wo");
+    }
+
+    #[test]
+    fn truncate_preserves_link() {
+        let mut text =
+            Text::from_spans([Span::raw("click ").link("https://a.com"), Span::raw("here")]);
+        text.truncate(6, None);
+        // Link should be preserved on first span
+        assert!(text.lines()[0].spans()[0].link.is_some());
+    }
+
+    // ==========================================================================
+    // Push span on empty text
+    // ==========================================================================
+
+    #[test]
+    fn push_span_on_empty_creates_line() {
+        let mut text = Text::new();
+        text.push_span(Span::raw("hello"));
+        assert_eq!(text.height(), 1);
+        assert_eq!(text.to_plain_text(), "hello");
+    }
+
+    // ==========================================================================
+    // From iterator tests
+    // ==========================================================================
+
+    #[test]
+    fn text_ref_into_iter() {
+        let text = Text::from_lines([Line::raw("a"), Line::raw("b")]);
+        let mut count = 0;
+        for _line in &text {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn line_ref_into_iter() {
+        let line = Line::from_spans([Span::raw("a"), Span::raw("b")]);
+        let mut count = 0;
+        for _span in &line {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+    }
 }
 
 #[cfg(test)]

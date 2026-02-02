@@ -779,8 +779,21 @@ mod tests {
         let text = parse_markup("[link=https://example.com]Click here[/link]").unwrap();
         assert_eq!(text.to_plain_text(), "Click here");
         // Link text should be underlined
-        let style = text.lines()[0].spans()[0].style.unwrap();
+        let span = &text.lines()[0].spans()[0];
+        let style = span.style.unwrap();
         assert!(style.has_attr(StyleFlags::UNDERLINE));
+        // Link URL should be set on the span
+        assert_eq!(span.link.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn parse_link_preserves_url_after_close() {
+        // Text after link close should NOT have the link
+        let text = parse_markup("[link=https://a.com]Link[/link] Normal").unwrap();
+        let spans = text.lines()[0].spans();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].link.as_deref(), Some("https://a.com"));
+        assert_eq!(spans[1].link, None);
     }
 
     #[test]

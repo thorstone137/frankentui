@@ -18,5 +18,6 @@ ftui-text = { path = "../ftui-text", features = ["markup"] }
 ftui-layout = { path = "../ftui-layout" }
 ftui-extras = { path = "../ftui-extras", features = ["pty-capture"], optional = true }
 portable-pty = { version = "0.8.1", optional = true }
+crossterm = "0.28"
 
 [dev-dependencies]

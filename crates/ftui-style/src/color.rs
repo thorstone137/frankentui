@@ -859,7 +859,11 @@ mod downgrade_edge_cases {
         // r=100, g=100, b=99 is NOT grayscale (not all equal)
         let idx = rgb_to_256(100, 100, 99);
         // Should be in cube range (16-231), not grayscale (232-255)
-        assert!((16..=231).contains(&idx), "Non-gray {} should use cube", idx);
+        assert!(
+            (16..=231).contains(&idx),
+            "Non-gray {} should use cube",
+            idx
+        );
     }
 
     // =========================================================================
@@ -1028,7 +1032,11 @@ mod downgrade_edge_cases {
         let b_luma = Rgb::new(0, 0, 255).luminance_u8();
 
         // Red: 0.2126 * 255 = 54.2
-        assert!((50..=58).contains(&r_luma), "Red luma {} not near 54", r_luma);
+        assert!(
+            (50..=58).contains(&r_luma),
+            "Red luma {} not near 54",
+            r_luma
+        );
         // Green: 0.7152 * 255 = 182.4
         assert!(
             (178..=186).contains(&g_luma),
@@ -1036,7 +1044,11 @@ mod downgrade_edge_cases {
             g_luma
         );
         // Blue: 0.0722 * 255 = 18.4
-        assert!((15..=22).contains(&b_luma), "Blue luma {} not near 18", b_luma);
+        assert!(
+            (15..=22).contains(&b_luma),
+            "Blue luma {} not near 18",
+            b_luma
+        );
 
         // Combined should match
         let all = Rgb::new(255, 255, 255).luminance_u8();
