@@ -745,3 +745,313 @@ mod tests {
         assert_eq!(cache.stats().capacity, 1);
     }
 }
+
+#[cfg(test)]
+mod downgrade_edge_cases {
+    //! Tests for color downgrade edge cases and boundary conditions.
+    //!
+    //! These tests verify correct behavior at palette boundaries,
+    //! grayscale thresholds, and the sequential downgrade pipeline.
+
+    use super::*;
+
+    // =========================================================================
+    // Sequential downgrade verification
+    // =========================================================================
+
+    #[test]
+    fn sequential_downgrade_truecolor_to_mono() {
+        // Verify the full downgrade pipeline: RGB -> 256 -> 16 -> Mono
+        let white = Color::rgb(255, 255, 255);
+        let black = Color::rgb(0, 0, 0);
+
+        // White through all stages
+        let w256 = white.downgrade(ColorProfile::Ansi256);
+        assert!(matches!(w256, Color::Ansi256(231))); // Pure white in cube
+        let w16 = w256.downgrade(ColorProfile::Ansi16);
+        assert!(matches!(w16, Color::Ansi16(Ansi16::BrightWhite)));
+        let wmono = w16.downgrade(ColorProfile::Mono);
+        assert_eq!(wmono, Color::Mono(MonoColor::White));
+
+        // Black through all stages
+        let b256 = black.downgrade(ColorProfile::Ansi256);
+        assert!(matches!(b256, Color::Ansi256(16))); // Pure black
+        let b16 = b256.downgrade(ColorProfile::Ansi16);
+        assert!(matches!(b16, Color::Ansi16(Ansi16::Black)));
+        let bmono = b16.downgrade(ColorProfile::Mono);
+        assert_eq!(bmono, Color::Mono(MonoColor::Black));
+    }
+
+    #[test]
+    fn sequential_downgrade_preserves_intent() {
+        // Red should stay "reddish" through the pipeline
+        let red = Color::rgb(255, 0, 0);
+
+        let r256 = red.downgrade(ColorProfile::Ansi256);
+        let Color::Ansi256(idx) = r256 else {
+            panic!("Expected Ansi256");
+        };
+        assert_eq!(idx, 196); // Pure red in 256-color
+
+        let r16 = r256.downgrade(ColorProfile::Ansi16);
+        let Color::Ansi16(ansi) = r16 else {
+            panic!("Expected Ansi16");
+        };
+        // Should map to BrightRed (not some other color)
+        assert_eq!(ansi, Ansi16::BrightRed);
+    }
+
+    // =========================================================================
+    // rgb_to_256 edge cases
+    // =========================================================================
+
+    #[test]
+    fn rgb_to_256_grayscale_boundaries() {
+        // Test exact boundary values for grayscale detection
+        // r < 8 -> 16 (black)
+        assert_eq!(rgb_to_256(0, 0, 0), 16);
+        assert_eq!(rgb_to_256(7, 7, 7), 16);
+
+        // r >= 8 -> grayscale ramp starts
+        assert_eq!(rgb_to_256(8, 8, 8), 232);
+
+        // r > 248 -> 231 (white in cube)
+        assert_eq!(rgb_to_256(249, 249, 249), 231);
+        assert_eq!(rgb_to_256(255, 255, 255), 231);
+
+        // r = 248 is still in grayscale ramp
+        assert_eq!(rgb_to_256(248, 248, 248), 255);
+    }
+
+    #[test]
+    fn rgb_to_256_grayscale_ramp_coverage() {
+        // Grayscale ramp 232-255 covers values 8-238
+        // Each step is 10 units: 8, 18, 28, ..., 238
+        for i in 0..24 {
+            let gray_val = 8 + i * 10;
+            let idx = rgb_to_256(gray_val, gray_val, gray_val);
+            assert!(
+                (232..=255).contains(&idx),
+                "Gray {} mapped to {} (expected 232-255)",
+                gray_val,
+                idx
+            );
+        }
+    }
+
+    #[test]
+    fn rgb_to_256_cube_corners() {
+        // Test all 8 corners of the 6x6x6 RGB cube
+        assert_eq!(rgb_to_256(0, 0, 0), 16); // Handled as grayscale
+        assert_eq!(rgb_to_256(255, 0, 0), 196); // Red corner
+        assert_eq!(rgb_to_256(0, 255, 0), 46); // Green corner
+        assert_eq!(rgb_to_256(0, 0, 255), 21); // Blue corner
+        assert_eq!(rgb_to_256(255, 255, 0), 226); // Yellow corner
+        assert_eq!(rgb_to_256(255, 0, 255), 201); // Magenta corner
+        assert_eq!(rgb_to_256(0, 255, 255), 51); // Cyan corner
+        // White handled as grayscale, maps to 231
+        assert_eq!(rgb_to_256(255, 255, 255), 231);
+    }
+
+    #[test]
+    fn rgb_to_256_non_gray_avoids_grayscale() {
+        // When channels differ, should use cube even if values are gray-ish
+        // r=100, g=100, b=99 is NOT grayscale (not all equal)
+        let idx = rgb_to_256(100, 100, 99);
+        // Should be in cube range (16-231), not grayscale (232-255)
+        assert!((16..=231).contains(&idx), "Non-gray {} should use cube", idx);
+    }
+
+    // =========================================================================
+    // cube_index edge cases
+    // =========================================================================
+
+    #[test]
+    fn cube_index_boundaries() {
+        // cube_index uses thresholds: 0-47->0, 48-114->1, 115+->computed
+        // Test the boundary values
+        assert_eq!(cube_index(0), 0);
+        assert_eq!(cube_index(47), 0);
+        assert_eq!(cube_index(48), 1);
+        assert_eq!(cube_index(114), 1);
+        assert_eq!(cube_index(115), 2);
+        assert_eq!(cube_index(155), 3);
+        assert_eq!(cube_index(195), 4);
+        assert_eq!(cube_index(235), 5);
+        assert_eq!(cube_index(255), 5);
+    }
+
+    // =========================================================================
+    // ansi256_to_rgb edge cases
+    // =========================================================================
+
+    #[test]
+    fn ansi256_to_rgb_full_range() {
+        // Every index should produce valid RGB (this is a sanity check)
+        for i in 0..=255 {
+            let rgb = ansi256_to_rgb(i);
+            // Verify the values are reasonable (non-panic)
+            let _ = (rgb.r, rgb.g, rgb.b);
+        }
+    }
+
+    #[test]
+    fn ansi256_to_rgb_grayscale_range() {
+        // Indices 232-255 should produce grayscale (r=g=b)
+        for i in 232..=255 {
+            let rgb = ansi256_to_rgb(i);
+            assert_eq!(rgb.r, rgb.g);
+            assert_eq!(rgb.g, rgb.b);
+        }
+    }
+
+    #[test]
+    fn ansi256_to_rgb_first_16_are_palette() {
+        // Indices 0-15 should use the 16-color palette
+        for i in 0..16 {
+            let rgb = ansi256_to_rgb(i);
+            assert_eq!(rgb, ANSI16_PALETTE[i as usize]);
+        }
+    }
+
+    // =========================================================================
+    // rgb_to_ansi16 edge cases
+    // =========================================================================
+
+    #[test]
+    fn rgb_to_ansi16_pure_primaries() {
+        // Pure primaries should map to their bright variants
+        assert_eq!(rgb_to_ansi16(255, 0, 0), Ansi16::BrightRed);
+        assert_eq!(rgb_to_ansi16(0, 255, 0), Ansi16::BrightGreen);
+        // Blue maps to regular Blue because the bright blue in palette is different
+        assert_eq!(rgb_to_ansi16(0, 0, 255), Ansi16::Blue);
+    }
+
+    #[test]
+    fn rgb_to_ansi16_grays() {
+        // Dark gray should map to BrightBlack (127,127,127)
+        assert_eq!(rgb_to_ansi16(127, 127, 127), Ansi16::BrightBlack);
+        // Mid gray closer to White (229,229,229)
+        assert_eq!(rgb_to_ansi16(200, 200, 200), Ansi16::White);
+    }
+
+    #[test]
+    fn rgb_to_ansi16_extremes() {
+        // Pure black and white
+        assert_eq!(rgb_to_ansi16(0, 0, 0), Ansi16::Black);
+        assert_eq!(rgb_to_ansi16(255, 255, 255), Ansi16::BrightWhite);
+    }
+
+    // =========================================================================
+    // rgb_to_mono edge cases
+    // =========================================================================
+
+    #[test]
+    fn rgb_to_mono_luminance_boundary() {
+        // Luminance threshold is 128
+        // Test values near the boundary
+        assert_eq!(rgb_to_mono(128, 128, 128), MonoColor::White);
+        assert_eq!(rgb_to_mono(127, 127, 127), MonoColor::Black);
+
+        // Test with weighted luminance (green has highest weight)
+        // Green at ~180 should give luminance ~128 (0.7152 * 180 = 128.7)
+        assert_eq!(rgb_to_mono(0, 180, 0), MonoColor::White);
+        assert_eq!(rgb_to_mono(0, 178, 0), MonoColor::Black);
+    }
+
+    #[test]
+    fn rgb_to_mono_color_saturation_irrelevant() {
+        // Mono cares only about luminance, not saturation
+        // Pure red (luma = 0.2126 * 255 = 54) -> black
+        assert_eq!(rgb_to_mono(255, 0, 0), MonoColor::Black);
+        // Pure green (luma = 0.7152 * 255 = 182) -> white
+        assert_eq!(rgb_to_mono(0, 255, 0), MonoColor::White);
+        // Pure blue (luma = 0.0722 * 255 = 18) -> black
+        assert_eq!(rgb_to_mono(0, 0, 255), MonoColor::Black);
+    }
+
+    // =========================================================================
+    // Color downgrade stability tests
+    // =========================================================================
+
+    #[test]
+    fn downgrade_at_same_level_is_identity() {
+        // Downgrading to the same level should not change the color
+        let ansi16 = Color::Ansi16(Ansi16::Red);
+        assert_eq!(ansi16.downgrade(ColorProfile::Ansi16), ansi16);
+
+        let ansi256 = Color::Ansi256(100);
+        assert_eq!(ansi256.downgrade(ColorProfile::Ansi256), ansi256);
+
+        let mono = Color::Mono(MonoColor::Black);
+        assert_eq!(mono.downgrade(ColorProfile::Mono), mono);
+
+        let rgb = Color::rgb(1, 2, 3);
+        assert_eq!(rgb.downgrade(ColorProfile::TrueColor), rgb);
+    }
+
+    #[test]
+    fn downgrade_ansi16_passes_through_ansi256() {
+        // Ansi16 should not change when downgraded to Ansi256
+        // (it's already "lower fidelity")
+        let color = Color::Ansi16(Ansi16::Cyan);
+        assert_eq!(color.downgrade(ColorProfile::Ansi256), color);
+    }
+
+    #[test]
+    fn downgrade_mono_passes_through_all() {
+        // Mono should never change
+        let black = Color::Mono(MonoColor::Black);
+        let white = Color::Mono(MonoColor::White);
+
+        assert_eq!(black.downgrade(ColorProfile::TrueColor), black);
+        assert_eq!(black.downgrade(ColorProfile::Ansi256), black);
+        assert_eq!(black.downgrade(ColorProfile::Ansi16), black);
+        assert_eq!(black.downgrade(ColorProfile::Mono), black);
+
+        assert_eq!(white.downgrade(ColorProfile::TrueColor), white);
+        assert_eq!(white.downgrade(ColorProfile::Ansi256), white);
+        assert_eq!(white.downgrade(ColorProfile::Ansi16), white);
+        assert_eq!(white.downgrade(ColorProfile::Mono), white);
+    }
+
+    // =========================================================================
+    // Luminance edge cases
+    // =========================================================================
+
+    #[test]
+    fn luminance_formula_correctness() {
+        // BT.709: 0.2126 R + 0.7152 G + 0.0722 B
+        // Pure channels
+        let r_luma = Rgb::new(255, 0, 0).luminance_u8();
+        let g_luma = Rgb::new(0, 255, 0).luminance_u8();
+        let b_luma = Rgb::new(0, 0, 255).luminance_u8();
+
+        // Red: 0.2126 * 255 = 54.2
+        assert!((50..=58).contains(&r_luma), "Red luma {} not near 54", r_luma);
+        // Green: 0.7152 * 255 = 182.4
+        assert!(
+            (178..=186).contains(&g_luma),
+            "Green luma {} not near 182",
+            g_luma
+        );
+        // Blue: 0.0722 * 255 = 18.4
+        assert!((15..=22).contains(&b_luma), "Blue luma {} not near 18", b_luma);
+
+        // Combined should match
+        let all = Rgb::new(255, 255, 255).luminance_u8();
+        assert_eq!(all, 255);
+    }
+
+    #[test]
+    fn luminance_mid_values() {
+        // Test some mid-range values
+        let mid_gray = Rgb::new(128, 128, 128).luminance_u8();
+        // Should be approximately 128
+        assert!(
+            (126..=130).contains(&mid_gray),
+            "Mid gray luma {} not near 128",
+            mid_gray
+        );
+    }
+}
