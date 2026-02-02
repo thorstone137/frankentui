@@ -41,7 +41,7 @@ use ftui_style::Style;
 use ftui_text::{Text, WrapMode, WrapOptions, display_width, wrap_with_options};
 
 use crate::virtualized::Virtualized;
-use crate::{StatefulWidget, draw_text_span};
+use crate::{StatefulWidget, draw_text_span, draw_text_span_with_link};
 
 /// Line wrapping mode for log lines.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -613,7 +613,15 @@ impl LogViewer {
                 let span_style = span
                     .style
                     .map_or(base_style, |style| style.merge(&base_style));
-                cursor_x = draw_text_span(frame, cursor_x, y, span.as_str(), span_style, max_x);
+                cursor_x = draw_text_span_with_link(
+                    frame,
+                    cursor_x,
+                    y,
+                    span.as_str(),
+                    span_style,
+                    max_x,
+                    span.link.as_deref(),
+                );
             }
         } else {
             draw_text_span(frame, x, y, fallback, base_style, max_x);

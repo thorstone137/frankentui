@@ -288,12 +288,19 @@ impl MarkupParser {
         Ok(Text::from_spans(spans))
     }
 
-    /// Create a span with the current style.
+    /// Create a span with the current style and link.
     fn make_span(&self, text: String) -> Span<'static> {
-        if self.current_style.is_empty() {
+        let span = if self.current_style.is_empty() {
             Span::raw(text)
         } else {
             Span::styled(text, self.current_style)
+        };
+
+        // Attach link if present
+        if let Some(url) = &self.current_link {
+            span.link(url.clone())
+        } else {
+            span
         }
     }
 

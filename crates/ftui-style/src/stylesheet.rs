@@ -528,4 +528,189 @@ mod tests {
             handle.join().unwrap();
         }
     }
+
+    #[test]
+    fn stylesheet_thread_safe_writes() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let sheet = Arc::new(StyleSheet::new());
+
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let sheet = Arc::clone(&sheet);
+                thread::spawn(move || {
+                    for j in 0..25 {
+                        let name = format!("style_{}_{}", i, j);
+                        sheet.define(&name, Style::new().bold());
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Should have 100 styles (4 threads * 25 each)
+        assert_eq!(sheet.len(), 100);
+    }
+
+    #[test]
+    fn compose_empty_list_returns_default() {
+        let sheet = StyleSheet::new();
+        sheet.define("test", Style::new().bold());
+
+        let composed = sheet.compose(&[]);
+        assert!(composed.is_empty());
+    }
+
+    #[test]
+    fn compose_strict_empty_list_returns_some_default() {
+        let sheet = StyleSheet::new();
+        sheet.define("test", Style::new().bold());
+
+        let result = sheet.compose_strict(&[]);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn extend_self_is_noop() {
+        let sheet = StyleSheet::new();
+        sheet.define("test", Style::new().bold());
+
+        // Extending self should not panic or change anything
+        sheet.extend(&sheet);
+
+        assert_eq!(sheet.len(), 1);
+        assert!(sheet.contains("test"));
+    }
+
+    #[test]
+    fn stylesheet_default_is_empty() {
+        let sheet = StyleSheet::default();
+        assert!(sheet.is_empty());
+    }
+
+    #[test]
+    fn define_with_empty_name() {
+        let sheet = StyleSheet::new();
+        sheet.define("", Style::new().bold());
+
+        assert!(sheet.contains(""));
+        assert!(sheet.get("").unwrap().has_attr(StyleFlags::BOLD));
+    }
+
+    #[test]
+    fn style_id_as_ref_str() {
+        let id = StyleId::new("test");
+        let s: &str = id.as_ref();
+        assert_eq!(s, "test");
+    }
+
+    #[test]
+    fn style_id_clone() {
+        let id1 = StyleId::new("test");
+        let id2 = id1.clone();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn style_id_debug_impl() {
+        let id = StyleId::new("test");
+        let debug = format!("{:?}", id);
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn stylesheet_debug_impl() {
+        let sheet = StyleSheet::new();
+        sheet.define("test", Style::new());
+        let debug = format!("{:?}", sheet);
+        assert!(debug.contains("StyleSheet"));
+    }
+
+    #[test]
+    fn with_defaults_error_style_is_red() {
+        let sheet = StyleSheet::with_defaults();
+        let error = sheet.get("error").unwrap();
+        if let Some(fg) = error.fg {
+            // Red component should be high
+            assert!(fg.r() > 200, "error style should have red foreground");
+        }
+    }
+
+    #[test]
+    fn with_defaults_link_style_is_underlined() {
+        let sheet = StyleSheet::with_defaults();
+        let link = sheet.get("link").unwrap();
+        assert!(
+            link.has_attr(StyleFlags::UNDERLINE),
+            "link style should be underlined"
+        );
+    }
+
+    #[test]
+    fn with_defaults_muted_style_is_dim() {
+        let sheet = StyleSheet::with_defaults();
+        let muted = sheet.get("muted").unwrap();
+        assert!(muted.has_attr(StyleFlags::DIM), "muted style should be dim");
+    }
+
+    #[test]
+    fn with_defaults_highlight_has_background() {
+        let sheet = StyleSheet::with_defaults();
+        let highlight = sheet.get("highlight").unwrap();
+        assert!(
+            highlight.bg.is_some(),
+            "highlight style should have background"
+        );
+    }
+
+    #[test]
+    fn compose_three_styles_in_order() {
+        let sheet = StyleSheet::new();
+        sheet.define("base", Style::new().fg(PackedRgba::WHITE));
+        sheet.define("bold", Style::new().bold());
+        sheet.define("red", Style::new().fg(PackedRgba::rgb(255, 0, 0)));
+
+        // red should override base's fg, bold should add attribute
+        let composed = sheet.compose(&["base", "bold", "red"]);
+
+        assert_eq!(composed.fg, Some(PackedRgba::rgb(255, 0, 0)));
+        assert!(composed.has_attr(StyleFlags::BOLD));
+    }
+
+    #[test]
+    fn get_or_default_returns_defined_style() {
+        let sheet = StyleSheet::new();
+        let style = Style::new().bold();
+        sheet.define("test", style);
+
+        let retrieved = sheet.get_or_default("test");
+        assert!(retrieved.has_attr(StyleFlags::BOLD));
+    }
+
+    #[test]
+    fn names_returns_empty_for_empty_sheet() {
+        let sheet = StyleSheet::new();
+        let names = sheet.names();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn style_id_hash_consistency() {
+        use std::collections::HashSet;
+
+        let id1 = StyleId::new("test");
+        let id2 = StyleId::new("test");
+        let id3 = StyleId::new("other");
+
+        let mut set = HashSet::new();
+        set.insert(id1.clone());
+
+        assert!(set.contains(&id2));
+        assert!(!set.contains(&id3));
+    }
 }

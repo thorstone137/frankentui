@@ -977,4 +977,168 @@ mod tests {
         let result = Theme::detect_dark_mode_from_colorfgbg(None);
         assert!(result, "missing COLORFGBG should default to dark");
     }
+
+    #[test]
+    fn detect_dark_mode_with_empty_string() {
+        let result = Theme::detect_dark_mode_from_colorfgbg(Some(""));
+        assert!(result, "empty COLORFGBG should default to dark");
+    }
+
+    #[test]
+    fn detect_dark_mode_with_no_semicolon() {
+        let result = Theme::detect_dark_mode_from_colorfgbg(Some("0"));
+        assert!(result, "COLORFGBG without semicolon should default to dark");
+    }
+
+    #[test]
+    fn detect_dark_mode_with_multiple_semicolons() {
+        // Some terminals use "fg;bg;..." format
+        let result = Theme::detect_dark_mode_from_colorfgbg(Some("0;0;extra"));
+        assert!(result, "COLORFGBG with extra parts should use last as bg");
+    }
+
+    #[test]
+    fn detect_dark_mode_with_whitespace() {
+        let result = Theme::detect_dark_mode_from_colorfgbg(Some("0; 15 "));
+        assert!(!result, "COLORFGBG with whitespace should parse correctly");
+    }
+
+    #[test]
+    fn detect_dark_mode_with_invalid_number() {
+        let result = Theme::detect_dark_mode_from_colorfgbg(Some("0;abc"));
+        assert!(result, "COLORFGBG with invalid number should default to dark");
+    }
+
+    #[test]
+    fn theme_clone_produces_equal_theme() {
+        let theme = themes::nord();
+        let cloned = theme.clone();
+        assert_eq!(theme, cloned);
+    }
+
+    #[test]
+    fn theme_equality_different_themes() {
+        let dark = themes::dark();
+        let light = themes::light();
+        assert_ne!(dark, light);
+    }
+
+    #[test]
+    fn resolved_theme_different_modes_differ() {
+        // Create a theme with adaptive colors
+        let theme = Theme {
+            text: AdaptiveColor::adaptive(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255)),
+            background: AdaptiveColor::adaptive(
+                Color::rgb(255, 255, 255),
+                Color::rgb(0, 0, 0),
+            ),
+            ..themes::dark()
+        };
+        let dark_resolved = theme.resolve(true);
+        let light_resolved = theme.resolve(false);
+        assert_ne!(dark_resolved, light_resolved);
+    }
+
+    #[test]
+    fn resolved_theme_equality_same_mode() {
+        let theme = themes::dark();
+        let resolved1 = theme.resolve(true);
+        let resolved2 = theme.resolve(true);
+        assert_eq!(resolved1, resolved2);
+    }
+
+    #[test]
+    fn preset_nord_has_characteristic_colors() {
+        let nord = themes::nord();
+        // Nord8 frost blue is the primary color
+        let primary = nord.primary.resolve(true);
+        if let Color::Rgb(rgb) = primary {
+            assert!(rgb.b > rgb.r, "Nord primary should be bluish");
+        }
+    }
+
+    #[test]
+    fn preset_dracula_has_characteristic_colors() {
+        let dracula = themes::dracula();
+        // Dracula primary is purple
+        let primary = dracula.primary.resolve(true);
+        if let Color::Rgb(rgb) = primary {
+            assert!(rgb.r > 100 && rgb.b > 200, "Dracula primary should be purple");
+        }
+    }
+
+    #[test]
+    fn preset_monokai_has_characteristic_colors() {
+        let monokai = themes::monokai();
+        // Monokai primary is cyan
+        let primary = monokai.primary.resolve(true);
+        if let Color::Rgb(rgb) = primary {
+            assert!(rgb.g > 200 && rgb.b > 200, "Monokai primary should be cyan");
+        }
+    }
+
+    #[test]
+    fn preset_solarized_dark_and_light_share_accent_colors() {
+        let sol_dark = themes::solarized_dark();
+        let sol_light = themes::solarized_light();
+        // Solarized uses same accent colors in both modes
+        assert_eq!(
+            sol_dark.primary.resolve(true),
+            sol_light.primary.resolve(true),
+            "Solarized dark and light should share primary accent"
+        );
+    }
+
+    #[test]
+    fn builder_accepts_adaptive_color_directly() {
+        let adaptive = AdaptiveColor::adaptive(
+            Color::rgb(0, 0, 0),
+            Color::rgb(255, 255, 255),
+        );
+        let theme = Theme::builder().text(adaptive).build();
+        assert!(theme.text.is_adaptive());
+    }
+
+    #[test]
+    fn all_presets_have_distinct_error_colors_from_info() {
+        for (name, theme) in [
+            ("dark", themes::dark()),
+            ("light", themes::light()),
+            ("nord", themes::nord()),
+            ("dracula", themes::dracula()),
+            ("solarized_dark", themes::solarized_dark()),
+            ("monokai", themes::monokai()),
+        ] {
+            let error = theme.error.resolve(true);
+            let info = theme.info.resolve(true);
+            assert_ne!(
+                error, info,
+                "{name} should have distinct error and info colors"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_color_debug_impl() {
+        let fixed = AdaptiveColor::fixed(Color::rgb(255, 0, 0));
+        let adaptive = AdaptiveColor::adaptive(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255));
+        // Just verify Debug doesn't panic
+        let _ = format!("{:?}", fixed);
+        let _ = format!("{:?}", adaptive);
+    }
+
+    #[test]
+    fn theme_debug_impl() {
+        let theme = themes::dark();
+        // Just verify Debug doesn't panic and contains something useful
+        let debug = format!("{:?}", theme);
+        assert!(debug.contains("Theme"));
+    }
+
+    #[test]
+    fn resolved_theme_debug_impl() {
+        let resolved = themes::dark().resolve(true);
+        let debug = format!("{:?}", resolved);
+        assert!(debug.contains("ResolvedTheme"));
+    }
 }
