@@ -157,15 +157,15 @@ impl InputParser {
                 None
             }
             // NUL - Ctrl+Space or Ctrl+@
-            0x00 => Some(Event::Key(
-                KeyEvent::new(KeyCode::Char(' ')).with_modifiers(Modifiers::CTRL),
-            )),
+            0x00 => Some(Event::Key(KeyEvent::new(KeyCode::Null))),
+            // Backspace alternate (Ctrl+H)
+            0x08 => Some(Event::Key(KeyEvent::new(KeyCode::Backspace))),
             // Tab (Ctrl+I) - check before generic Ctrl range
             0x09 => Some(Event::Key(KeyEvent::new(KeyCode::Tab))),
             // Enter (Ctrl+M) - check before generic Ctrl range
             0x0D => Some(Event::Key(KeyEvent::new(KeyCode::Enter))),
             // Other Ctrl+A through Ctrl+Z (0x01-0x1A excluding Tab and Enter)
-            0x01..=0x08 | 0x0A..=0x0C | 0x0E..=0x1A => {
+            0x01..=0x07 | 0x0A..=0x0C | 0x0E..=0x1A => {
                 let c = (byte + b'a' - 1) as char;
                 Some(Event::Key(
                     KeyEvent::new(KeyCode::Char(c)).with_modifiers(Modifiers::CTRL),
@@ -379,7 +379,7 @@ impl InputParser {
             b'H' => Some(Event::Key(self.key_with_modifiers(KeyCode::Home, params))),
             b'F' => Some(Event::Key(self.key_with_modifiers(KeyCode::End, params))),
             b'Z' => Some(Event::Key(
-                KeyEvent::new(KeyCode::Tab).with_modifiers(Modifiers::SHIFT),
+                self.key_with_modifiers(KeyCode::BackTab, params),
             )),
             b'~' => self.parse_csi_tilde(params),
             b'u' => self.parse_kitty_keyboard(params),
@@ -554,14 +554,21 @@ impl InputParser {
         let kind = if final_byte == b'M' {
             if button_code & 64 != 0 {
                 // Scroll event: bit 6 (64) is set
-                // bits 0-1 determine direction: 0=up, 1=down
-                if button_code & 1 != 0 {
-                    MouseEventKind::ScrollDown
-                } else {
-                    MouseEventKind::ScrollUp
+                // bits 0-1 determine direction: 0=up, 1=down, 2=left, 3=right
+                match button_code & 3 {
+                    0 => MouseEventKind::ScrollUp,
+                    1 => MouseEventKind::ScrollDown,
+                    2 => MouseEventKind::ScrollLeft,
+                    _ => MouseEventKind::ScrollRight,
                 }
             } else if button_code & 32 != 0 {
-                MouseEventKind::Moved
+                // Motion event (bit 5 set)
+                // bits 0-1: 0=left, 1=middle, 2=right, 3=no button (moved)
+                if button_code & 3 == 3 {
+                    MouseEventKind::Moved
+                } else {
+                    MouseEventKind::Drag(button)
+                }
             } else {
                 MouseEventKind::Down(button)
             }
@@ -629,10 +636,9 @@ impl InputParser {
 
     /// Process OSC start.
     fn process_osc(&mut self, byte: u8) -> Option<Event> {
-        // Robustness: ESC restarts sequence
+        // Handle ESC as potential ST terminator (ESC \) - don't add to buffer
         if byte == 0x1B {
             self.state = ParserState::OscEscape;
-            self.buffer.push(byte);
             return None;
         }
 
@@ -1124,6 +1130,42 @@ mod tests {
     }
 
     #[test]
+    fn mouse_sgr_scroll_left() {
+        let mut parser = InputParser::new();
+
+        // Scroll left: button code 66
+        let events = parser.parse(b"\x1b[<66;5;5M");
+        assert!(matches!(
+            events.first(),
+            Some(Event::Mouse(m)) if matches!(m.kind, MouseEventKind::ScrollLeft)
+        ));
+    }
+
+    #[test]
+    fn mouse_sgr_scroll_right() {
+        let mut parser = InputParser::new();
+
+        // Scroll right: button code 67
+        let events = parser.parse(b"\x1b[<67;5;5M");
+        assert!(matches!(
+            events.first(),
+            Some(Event::Mouse(m)) if matches!(m.kind, MouseEventKind::ScrollRight)
+        ));
+    }
+
+    #[test]
+    fn mouse_sgr_drag_left() {
+        let mut parser = InputParser::new();
+
+        // Drag with left button: button code 32
+        let events = parser.parse(b"\x1b[<32;10;20M");
+        assert!(matches!(
+            events.first(),
+            Some(Event::Mouse(m)) if matches!(m.kind, MouseEventKind::Drag(MouseButton::Left))
+        ));
+    }
+
+    #[test]
     fn utf8_characters() {
         let mut parser = InputParser::new();
 
@@ -1360,7 +1402,7 @@ mod tests {
         let events = parser.parse(b"\x1b[Z");
         assert!(matches!(
             events.first(),
-            Some(Event::Key(k)) if k.code == KeyCode::Tab && k.modifiers.contains(Modifiers::SHIFT)
+            Some(Event::Key(k)) if k.code == KeyCode::BackTab
         ));
     }
 
@@ -1486,10 +1528,10 @@ mod tests {
     }
 
     #[test]
-    fn mouse_sgr_drag() {
+    fn mouse_sgr_moved() {
         let mut parser = InputParser::new();
-        // Mouse move/drag: button code 32 (bit 5 set)
-        let events = parser.parse(b"\x1b[<32;10;20M");
+        // Mouse move (no button): button code 35 (32 | 3, bit 5 set + bits 0-1 = 3)
+        let events = parser.parse(b"\x1b[<35;10;20M");
         assert!(matches!(
             events.first(),
             Some(Event::Mouse(m)) if matches!(m.kind, MouseEventKind::Moved)
@@ -1711,19 +1753,19 @@ mod tests {
     // ── Control keys ─────────────────────────────────────────────────
 
     #[test]
-    fn ctrl_space_is_ctrl_space() {
+    fn ctrl_space_is_null() {
         let mut parser = InputParser::new();
         let events = parser.parse(&[0x00]);
         assert!(matches!(
             events.first(),
-            Some(Event::Key(k)) if k.code == KeyCode::Char(' ') && k.modifiers.contains(Modifiers::CTRL)
+            Some(Event::Key(k)) if k.code == KeyCode::Null
         ));
     }
 
     #[test]
     fn all_ctrl_letter_keys() {
         let mut parser = InputParser::new();
-        // Ctrl+A (0x01) through Ctrl+Z (0x1A), skipping Tab (0x09) and Enter (0x0D)
+        // Ctrl+A (0x01) through Ctrl+Z (0x1A), skipping Backspace (0x08), Tab (0x09), and Enter (0x0D)
         for byte in 0x01..=0x1Au8 {
             let events = parser.parse(&[byte]);
             assert_eq!(
@@ -1733,6 +1775,7 @@ mod tests {
                 (byte + b'a' - 1) as char
             );
             match byte {
+                0x08 => assert!(matches!(events[0], Event::Key(k) if k.code == KeyCode::Backspace)),
                 0x09 => assert!(matches!(events[0], Event::Key(k) if k.code == KeyCode::Tab)),
                 0x0D => assert!(matches!(events[0], Event::Key(k) if k.code == KeyCode::Enter)),
                 _ => {
