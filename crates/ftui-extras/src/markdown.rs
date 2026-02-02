@@ -343,38 +343,71 @@ fn complete_fragment(text: &str) -> String {
     }
 
     // Check for unclosed link - look for [ without matching ]()
+    // State machine: track whether we're in [text] or (url) part
+    #[derive(Clone, Copy, PartialEq)]
+    enum LinkState {
+        None,
+        InBracket,    // Inside [...]
+        AfterBracket, // Saw ], waiting for (
+        InParen,      // Inside (...)
+    }
+    let mut state = LinkState::None;
     let mut bracket_depth = 0i32;
-    let mut in_link = false;
+    let mut paren_depth = 0i32;
+
     for c in text.chars() {
-        match c {
-            '[' => {
-                bracket_depth += 1;
-                in_link = true;
+        match (state, c) {
+            (LinkState::None, '[') => {
+                state = LinkState::InBracket;
+                bracket_depth = 1;
             }
-            ']' => {
+            (LinkState::InBracket, '[') => {
+                bracket_depth += 1;
+            }
+            (LinkState::InBracket, ']') => {
                 bracket_depth -= 1;
-                if bracket_depth < 0 {
-                    bracket_depth = 0;
+                if bracket_depth == 0 {
+                    state = LinkState::AfterBracket;
                 }
             }
-            '(' if in_link && bracket_depth == 0 => {
-                bracket_depth += 1;
+            (LinkState::AfterBracket, '(') => {
+                state = LinkState::InParen;
+                paren_depth = 1;
             }
-            ')' if in_link => {
-                bracket_depth -= 1;
-                if bracket_depth <= 0 {
-                    in_link = false;
-                    bracket_depth = 0;
+            (LinkState::AfterBracket, '[') => {
+                // New link started
+                state = LinkState::InBracket;
+                bracket_depth = 1;
+            }
+            (LinkState::AfterBracket, _) => {
+                // Not a link, reset
+                state = LinkState::None;
+            }
+            (LinkState::InParen, '(') => {
+                paren_depth += 1;
+            }
+            (LinkState::InParen, ')') => {
+                paren_depth -= 1;
+                if paren_depth == 0 {
+                    state = LinkState::None;
                 }
             }
             _ => {}
         }
     }
-    if bracket_depth > 0 && in_link {
-        // Unclosed link - add a simple closure
-        result.push_str("](...)");
-    } else if bracket_depth > 0 {
-        result.push(']');
+
+    // Close unclosed constructs based on final state
+    match state {
+        LinkState::InBracket => {
+            result.push_str("](...)");
+        }
+        LinkState::AfterBracket => {
+            result.push_str("(...)");
+        }
+        LinkState::InParen => {
+            result.push(')');
+        }
+        LinkState::None => {}
     }
 
     result
@@ -1394,10 +1427,8 @@ impl<'t> RenderState<'t> {
             // Extract summary text if present
             if let Some(end_pos) = html_lower.find("</summary>") {
                 let content = &html[9..end_pos];
-                self.current_spans.push(Span::styled(
-                    content.trim().to_string(),
-                    self.theme.strong,
-                ));
+                self.current_spans
+                    .push(Span::styled(content.trim().to_string(), self.theme.strong));
                 self.flush_line();
             }
             return;
@@ -1414,10 +1445,8 @@ impl<'t> RenderState<'t> {
                 if let Some(alt_end) = after_alt.find('"') {
                     let alt_text = &after_alt[..alt_end];
                     if !alt_text.is_empty() {
-                        self.current_spans.push(Span::styled(
-                            format!("[{alt_text}]"),
-                            self.theme.emphasis,
-                        ));
+                        self.current_spans
+                            .push(Span::styled(format!("[{alt_text}]"), self.theme.emphasis));
                         return;
                     }
                 }
@@ -1582,10 +1611,37 @@ impl<'t> RenderState<'t> {
             // Show language label for syntax-highlighted languages
             // (actual highlighting would require syntect, but we can at least show the language)
             let common_langs = [
-                "rust", "python", "javascript", "typescript", "go", "java", "c", "cpp",
-                "ruby", "php", "swift", "kotlin", "scala", "haskell", "elixir", "clojure",
-                "bash", "sh", "zsh", "fish", "powershell", "sql", "html", "css", "scss",
-                "json", "yaml", "toml", "xml", "markdown", "md",
+                "rust",
+                "python",
+                "javascript",
+                "typescript",
+                "go",
+                "java",
+                "c",
+                "cpp",
+                "ruby",
+                "php",
+                "swift",
+                "kotlin",
+                "scala",
+                "haskell",
+                "elixir",
+                "clojure",
+                "bash",
+                "sh",
+                "zsh",
+                "fish",
+                "powershell",
+                "sql",
+                "html",
+                "css",
+                "scss",
+                "json",
+                "yaml",
+                "toml",
+                "xml",
+                "markdown",
+                "md",
             ];
             if common_langs.contains(&lang_lower.as_str()) {
                 self.lines.push(Line::styled(
@@ -2553,7 +2609,7 @@ The end.
     #[test]
     fn streaming_unclosed_display_math() {
         let text = render_streaming("$$\\sum_i", &MarkdownTheme::default());
-        let content = plain(&text);
+        let _content = plain(&text);
         // Should contain something - the exact rendering depends on unicodeit
         assert!(text.height() > 0);
     }
@@ -2602,6 +2658,27 @@ The end.
 
         assert!(md.height() > 1);
         assert_eq!(plain_result.height(), 1);
+    }
+
+    #[test]
+    fn streaming_unclosed_link_bracket() {
+        // Unclosed [text should close with ](...)
+        let text = render_streaming("See [the docs", &MarkdownTheme::default());
+        assert!(text.height() > 0);
+    }
+
+    #[test]
+    fn streaming_unclosed_link_after_bracket() {
+        // [text] without ( should close with (...)
+        let text = render_streaming("See [docs]", &MarkdownTheme::default());
+        assert!(text.height() > 0);
+    }
+
+    #[test]
+    fn streaming_unclosed_link_paren() {
+        // [text](url without closing ) should close with )
+        let text = render_streaming("See [docs](https://example.com", &MarkdownTheme::default());
+        assert!(text.height() > 0);
     }
 
     #[test]
@@ -2714,14 +2791,14 @@ impl ResponseError for ApiError {
     fn realistic_streaming_fragments() {
         // Test partial fragments that might occur during LLM streaming
         let fragments = [
-            "# Building a",                              // Partial heading
-            "# Building a CLI\n\n```rust",               // Partial code block
-            "# Building\n\n- [x] Done\n- [ ",            // Partial task list
-            "The formula $E = mc",                       // Partial math
-            "| Col1 | Col2 |\n|---",                     // Partial table
-            "> [!WARNING]\n> This is",                   // Partial admonition
-            "See the [docs](https://exam",               // Partial link
-            "Use **bold** and ~~strike",                 // Partial strikethrough
+            "# Building a",                             // Partial heading
+            "# Building a CLI\n\n```rust",              // Partial code block
+            "# Building\n\n- [x] Done\n- [ ",           // Partial task list
+            "The formula $E = mc",                      // Partial math
+            "| Col1 | Col2 |\n|---",                    // Partial table
+            "> [!WARNING]\n> This is",                  // Partial admonition
+            "See the [docs](https://exam",              // Partial link
+            "Use **bold** and ~~strike",                // Partial strikethrough
             "Footnote[^1]\n\n[^1]: The actual content", // Partial footnote
         ];
 
@@ -2817,7 +2894,8 @@ The time complexity is **O(2^n)** which can be improved with memoization."#;
         let theme = MarkdownTheme::default();
 
         // Should detect and render as markdown
-        let md_response = "## Summary\n\nHere are the key points:\n\n- Point **one**\n- Point *two*";
+        let md_response =
+            "## Summary\n\nHere are the key points:\n\n- Point **one**\n- Point *two*";
         let text = auto_render(md_response, &theme);
         assert!(text.height() > 3); // Multiple lines from parsing
 
