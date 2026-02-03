@@ -712,7 +712,10 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         }
 
         // Initialize
-        let cmd = self.model.init();
+        let cmd = {
+            let _span = info_span!("ftui.program.init").entered();
+            self.model.init()
+        };
         self.execute_cmd(cmd)?;
 
         // Reconcile initial subscriptions
@@ -752,7 +755,20 @@ impl<M: Model, W: Write + Send> Program<M, W> {
             // Check for tick - deliver to model so periodic logic can run
             if self.should_tick() {
                 let msg = M::Message::from(Event::Tick);
-                let cmd = self.model.update(msg);
+                let cmd = {
+                    let _span = debug_span!(
+                        "ftui.program.update",
+                        msg_type = "Tick",
+                        duration_us = tracing::field::Empty,
+                        cmd_type = tracing::field::Empty
+                    )
+                    .entered();
+                    let start = Instant::now();
+                    let cmd = self.model.update(msg);
+                    tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
+                    tracing::Span::current().record("cmd_type", cmd.type_name());
+                    cmd
+                };
                 self.mark_dirty();
                 self.execute_cmd(cmd)?;
                 self.reconcile_subscriptions();
@@ -873,7 +889,20 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         };
 
         let msg = M::Message::from(event);
-        let cmd = self.model.update(msg);
+        let cmd = {
+            let _span = debug_span!(
+                "ftui.program.update",
+                msg_type = "event",
+                duration_us = tracing::field::Empty,
+                cmd_type = tracing::field::Empty
+            )
+            .entered();
+            let start = Instant::now();
+            let cmd = self.model.update(msg);
+            tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
+            tracing::Span::current().record("cmd_type", cmd.type_name());
+            cmd
+        };
         self.mark_dirty();
         self.execute_cmd(cmd)?;
         self.reconcile_subscriptions();
@@ -882,15 +911,42 @@ impl<M: Model, W: Write + Send> Program<M, W> {
 
     /// Reconcile the model's declared subscriptions with running ones.
     fn reconcile_subscriptions(&mut self) {
+        let _span = debug_span!(
+            "ftui.program.subscriptions",
+            active_count = tracing::field::Empty,
+            started = tracing::field::Empty,
+            stopped = tracing::field::Empty
+        )
+        .entered();
         let subs = self.model.subscriptions();
+        let before_count = self.subscriptions.active_count();
         self.subscriptions.reconcile(subs);
+        let after_count = self.subscriptions.active_count();
+        let current = tracing::Span::current();
+        current.record("active_count", after_count);
+        // started/stopped would require tracking in SubscriptionManager
+        current.record("started", after_count.saturating_sub(before_count));
+        current.record("stopped", before_count.saturating_sub(after_count));
     }
 
     /// Process pending messages from subscriptions.
     fn process_subscription_messages(&mut self) -> io::Result<()> {
         let messages = self.subscriptions.drain_messages();
         for msg in messages {
-            let cmd = self.model.update(msg);
+            let cmd = {
+                let _span = debug_span!(
+                    "ftui.program.update",
+                    msg_type = "subscription",
+                    duration_us = tracing::field::Empty,
+                    cmd_type = tracing::field::Empty
+                )
+                .entered();
+                let start = Instant::now();
+                let cmd = self.model.update(msg);
+                tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
+                tracing::Span::current().record("cmd_type", cmd.type_name());
+                cmd
+            };
             self.mark_dirty();
             self.execute_cmd(cmd)?;
         }
@@ -903,7 +959,20 @@ impl<M: Model, W: Write + Send> Program<M, W> {
     /// Process results from background tasks.
     fn process_task_results(&mut self) -> io::Result<()> {
         while let Ok(msg) = self.task_receiver.try_recv() {
-            let cmd = self.model.update(msg);
+            let cmd = {
+                let _span = debug_span!(
+                    "ftui.program.update",
+                    msg_type = "task",
+                    duration_us = tracing::field::Empty,
+                    cmd_type = tracing::field::Empty
+                )
+                .entered();
+                let start = Instant::now();
+                let cmd = self.model.update(msg);
+                tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
+                tracing::Span::current().record("cmd_type", cmd.type_name());
+                cmd
+            };
             self.mark_dirty();
             self.execute_cmd(cmd)?;
         }
@@ -1021,8 +1090,13 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         }
 
         let frame_height = self.writer.render_height_hint().max(1);
-        let _frame_span =
-            info_span!("render_frame", width = self.width, height = frame_height).entered();
+        let _frame_span = info_span!(
+            "ftui.render.frame",
+            width = self.width,
+            height = frame_height,
+            duration_us = tracing::field::Empty
+        )
+        .entered();
         let buffer = self.render_buffer(frame_height);
         let render_elapsed = render_start.elapsed();
 
@@ -1044,7 +1118,7 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         if !self.budget.exhausted() {
             let present_start = Instant::now();
             {
-                let _present_span = debug_span!("frame_present").entered();
+                let _present_span = debug_span!("ftui.render.present").entered();
                 self.writer.present_ui_owned(buffer)?;
             }
             let present_elapsed = present_start.elapsed();
@@ -1078,8 +1152,16 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         frame.set_degradation(self.budget.degradation());
         frame.set_links(links);
 
-        let _view_span = debug_span!("model_view").entered();
+        let view_start = Instant::now();
+        let _view_span = debug_span!(
+            "ftui.program.view",
+            duration_us = tracing::field::Empty,
+            widget_count = tracing::field::Empty
+        )
+        .entered();
         self.model.view(&mut frame);
+        tracing::Span::current().record("duration_us", view_start.elapsed().as_micros() as u64);
+        // widget_count would require tracking in Frame
 
         frame.buffer
     }
@@ -1089,8 +1171,15 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         let mut frame = Frame::new(self.width, frame_height, pool);
         frame.set_degradation(self.budget.degradation());
 
-        let _view_span = debug_span!("model_view").entered();
+        let view_start = Instant::now();
+        let _view_span = debug_span!(
+            "ftui.program.view",
+            duration_us = tracing::field::Empty,
+            widget_count = tracing::field::Empty
+        )
+        .entered();
         self.model.view(&mut frame);
+        tracing::Span::current().record("duration_us", view_start.elapsed().as_micros() as u64);
 
         frame.buffer
     }
