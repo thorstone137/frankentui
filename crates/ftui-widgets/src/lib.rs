@@ -165,6 +165,8 @@ pub mod timer;
 /// Toast widget for transient notifications.
 pub mod toast;
 pub mod tree;
+/// Undo support for widgets.
+pub mod undo_support;
 pub mod virtualized;
 
 pub use align::{Align, VerticalAlignment};
@@ -191,7 +193,9 @@ pub use virtualized::{
 
 // Toast notification widget
 pub use toast::{
-    Toast, ToastConfig, ToastContent, ToastIcon, ToastId, ToastPosition, ToastState, ToastStyle,
+    Toast, ToastAnimationConfig, ToastAnimationPhase, ToastAnimationState, ToastConfig,
+    ToastContent, ToastEasing, ToastEntranceAnimation, ToastExitAnimation, ToastIcon, ToastId,
+    ToastPosition, ToastState, ToastStyle,
 };
 
 // Notification queue manager
@@ -208,6 +212,13 @@ pub use measure_cache::{CacheStats, MeasureCache, WidgetId};
 // UI Inspector for debugging
 pub use inspector::{
     HitInfo, InspectorMode, InspectorOverlay, InspectorState, InspectorStyle, WidgetInfo,
+};
+
+// Undo support for widgets
+pub use undo_support::{
+    ListOperation, ListUndoExt, SelectionOperation, TableOperation, TableUndoExt,
+    TextEditOperation, TextInputUndoExt, TreeOperation, TreeUndoExt, UndoSupport, UndoWidgetId,
+    WidgetTextEditCmd,
 };
 
 use ftui_core::geometry::Rect;

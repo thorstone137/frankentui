@@ -146,6 +146,431 @@ pub enum ToastStyle {
     Neutral,
 }
 
+// ============================================================================
+// Animation Types
+// ============================================================================
+
+/// Animation phase for toast lifecycle.
+///
+/// Toasts progress through these phases: Entering → Visible → Exiting → Hidden.
+/// The animation system tracks progress within each phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToastAnimationPhase {
+    /// Toast is animating in (slide/fade entrance).
+    Entering,
+    /// Toast is fully visible (no animation).
+    #[default]
+    Visible,
+    /// Toast is animating out (slide/fade exit).
+    Exiting,
+    /// Toast has completed exit animation.
+    Hidden,
+}
+
+/// Entrance animation type.
+///
+/// Determines how the toast appears on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToastEntranceAnimation {
+    /// Slide in from the top edge.
+    SlideFromTop,
+    /// Slide in from the right edge.
+    #[default]
+    SlideFromRight,
+    /// Slide in from the bottom edge.
+    SlideFromBottom,
+    /// Slide in from the left edge.
+    SlideFromLeft,
+    /// Fade in (opacity transition).
+    FadeIn,
+    /// No animation (instant appear).
+    None,
+}
+
+impl ToastEntranceAnimation {
+    /// Get the initial offset for this entrance animation.
+    ///
+    /// Returns (dx, dy) offset in cells from the final position.
+    pub fn initial_offset(self, toast_width: u16, toast_height: u16) -> (i16, i16) {
+        match self {
+            Self::SlideFromTop => (0, -(toast_height as i16)),
+            Self::SlideFromRight => (toast_width as i16, 0),
+            Self::SlideFromBottom => (0, toast_height as i16),
+            Self::SlideFromLeft => (-(toast_width as i16), 0),
+            Self::FadeIn | Self::None => (0, 0),
+        }
+    }
+
+    /// Calculate the offset at a given progress (0.0 to 1.0).
+    ///
+    /// Progress of 0.0 = initial offset, 1.0 = no offset.
+    pub fn offset_at_progress(
+        self,
+        progress: f64,
+        toast_width: u16,
+        toast_height: u16,
+    ) -> (i16, i16) {
+        let (dx, dy) = self.initial_offset(toast_width, toast_height);
+        let inv_progress = 1.0 - progress.clamp(0.0, 1.0);
+        (
+            (dx as f64 * inv_progress).round() as i16,
+            (dy as f64 * inv_progress).round() as i16,
+        )
+    }
+
+    /// Check if this animation affects position (vs. just opacity).
+    pub fn affects_position(self) -> bool {
+        !matches!(self, Self::FadeIn | Self::None)
+    }
+}
+
+/// Exit animation type.
+///
+/// Determines how the toast disappears from screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToastExitAnimation {
+    /// Fade out (opacity transition).
+    #[default]
+    FadeOut,
+    /// Slide out in the reverse of entrance direction.
+    SlideOut,
+    /// Slide out to the specified edge.
+    SlideToTop,
+    SlideToRight,
+    SlideToBottom,
+    SlideToLeft,
+    /// No animation (instant disappear).
+    None,
+}
+
+impl ToastExitAnimation {
+    /// Get the final offset for this exit animation.
+    ///
+    /// Returns (dx, dy) offset in cells from the starting position.
+    pub fn final_offset(
+        self,
+        toast_width: u16,
+        toast_height: u16,
+        entrance: ToastEntranceAnimation,
+    ) -> (i16, i16) {
+        match self {
+            Self::SlideOut => {
+                // Reverse of entrance direction
+                let (dx, dy) = entrance.initial_offset(toast_width, toast_height);
+                (-dx, -dy)
+            }
+            Self::SlideToTop => (0, -(toast_height as i16)),
+            Self::SlideToRight => (toast_width as i16, 0),
+            Self::SlideToBottom => (0, toast_height as i16),
+            Self::SlideToLeft => (-(toast_width as i16), 0),
+            Self::FadeOut | Self::None => (0, 0),
+        }
+    }
+
+    /// Calculate the offset at a given progress (0.0 to 1.0).
+    ///
+    /// Progress of 0.0 = no offset, 1.0 = final offset.
+    pub fn offset_at_progress(
+        self,
+        progress: f64,
+        toast_width: u16,
+        toast_height: u16,
+        entrance: ToastEntranceAnimation,
+    ) -> (i16, i16) {
+        let (dx, dy) = self.final_offset(toast_width, toast_height, entrance);
+        let p = progress.clamp(0.0, 1.0);
+        (
+            (dx as f64 * p).round() as i16,
+            (dy as f64 * p).round() as i16,
+        )
+    }
+
+    /// Check if this animation affects position (vs. just opacity).
+    pub fn affects_position(self) -> bool {
+        !matches!(self, Self::FadeOut | Self::None)
+    }
+}
+
+/// Easing function for animations.
+///
+/// Simplified subset of easing curves for toast animations.
+/// For the full set, see `ftui_extras::text_effects::Easing`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ToastEasing {
+    /// Linear interpolation.
+    Linear,
+    /// Smooth ease-out (decelerating).
+    #[default]
+    EaseOut,
+    /// Smooth ease-in (accelerating).
+    EaseIn,
+    /// Smooth S-curve.
+    EaseInOut,
+    /// Bouncy effect.
+    Bounce,
+}
+
+impl ToastEasing {
+    /// Apply the easing function to a progress value (0.0 to 1.0).
+    pub fn apply(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Self::Linear => t,
+            Self::EaseOut => {
+                let inv = 1.0 - t;
+                1.0 - inv * inv * inv
+            }
+            Self::EaseIn => t * t * t,
+            Self::EaseInOut => {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    let inv = -2.0 * t + 2.0;
+                    1.0 - inv * inv * inv / 2.0
+                }
+            }
+            Self::Bounce => {
+                let n1 = 7.5625;
+                let d1 = 2.75;
+                let mut t = t;
+                if t < 1.0 / d1 {
+                    n1 * t * t
+                } else if t < 2.0 / d1 {
+                    t -= 1.5 / d1;
+                    n1 * t * t + 0.75
+                } else if t < 2.5 / d1 {
+                    t -= 2.25 / d1;
+                    n1 * t * t + 0.9375
+                } else {
+                    t -= 2.625 / d1;
+                    n1 * t * t + 0.984375
+                }
+            }
+        }
+    }
+}
+
+/// Animation configuration for a toast.
+#[derive(Debug, Clone)]
+pub struct ToastAnimationConfig {
+    /// Entrance animation type.
+    pub entrance: ToastEntranceAnimation,
+    /// Exit animation type.
+    pub exit: ToastExitAnimation,
+    /// Duration of entrance animation.
+    pub entrance_duration: Duration,
+    /// Duration of exit animation.
+    pub exit_duration: Duration,
+    /// Easing function for entrance.
+    pub entrance_easing: ToastEasing,
+    /// Easing function for exit.
+    pub exit_easing: ToastEasing,
+    /// Whether to respect reduced-motion preference.
+    pub respect_reduced_motion: bool,
+}
+
+impl Default for ToastAnimationConfig {
+    fn default() -> Self {
+        Self {
+            entrance: ToastEntranceAnimation::default(),
+            exit: ToastExitAnimation::default(),
+            entrance_duration: Duration::from_millis(200),
+            exit_duration: Duration::from_millis(150),
+            entrance_easing: ToastEasing::EaseOut,
+            exit_easing: ToastEasing::EaseIn,
+            respect_reduced_motion: true,
+        }
+    }
+}
+
+impl ToastAnimationConfig {
+    /// Create a config with no animations.
+    pub fn none() -> Self {
+        Self {
+            entrance: ToastEntranceAnimation::None,
+            exit: ToastExitAnimation::None,
+            entrance_duration: Duration::ZERO,
+            exit_duration: Duration::ZERO,
+            ..Default::default()
+        }
+    }
+
+    /// Check if animations are effectively disabled.
+    pub fn is_disabled(&self) -> bool {
+        matches!(self.entrance, ToastEntranceAnimation::None)
+            && matches!(self.exit, ToastExitAnimation::None)
+    }
+}
+
+/// Tracks the animation state for a toast.
+#[derive(Debug, Clone)]
+pub struct ToastAnimationState {
+    /// Current animation phase.
+    pub phase: ToastAnimationPhase,
+    /// When the current phase started.
+    pub phase_started: Instant,
+    /// Whether reduced motion is active.
+    pub reduced_motion: bool,
+}
+
+impl Default for ToastAnimationState {
+    fn default() -> Self {
+        Self {
+            phase: ToastAnimationPhase::Entering,
+            phase_started: Instant::now(),
+            reduced_motion: false,
+        }
+    }
+}
+
+impl ToastAnimationState {
+    /// Create a new animation state starting in the Entering phase.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a state with reduced motion enabled (skips to Visible).
+    pub fn with_reduced_motion() -> Self {
+        Self {
+            phase: ToastAnimationPhase::Visible,
+            phase_started: Instant::now(),
+            reduced_motion: true,
+        }
+    }
+
+    /// Get the progress within the current phase (0.0 to 1.0).
+    pub fn progress(&self, phase_duration: Duration) -> f64 {
+        if phase_duration.is_zero() {
+            return 1.0;
+        }
+        let elapsed = self.phase_started.elapsed();
+        (elapsed.as_secs_f64() / phase_duration.as_secs_f64()).min(1.0)
+    }
+
+    /// Transition to the next phase.
+    pub fn transition_to(&mut self, phase: ToastAnimationPhase) {
+        self.phase = phase;
+        self.phase_started = Instant::now();
+    }
+
+    /// Start the exit animation.
+    pub fn start_exit(&mut self) {
+        if self.reduced_motion {
+            self.transition_to(ToastAnimationPhase::Hidden);
+        } else {
+            self.transition_to(ToastAnimationPhase::Exiting);
+        }
+    }
+
+    /// Check if the animation has completed (Hidden phase).
+    pub fn is_complete(&self) -> bool {
+        self.phase == ToastAnimationPhase::Hidden
+    }
+
+    /// Update the animation state based on elapsed time.
+    ///
+    /// Returns true if the phase changed.
+    pub fn tick(&mut self, config: &ToastAnimationConfig) -> bool {
+        let prev_phase = self.phase;
+
+        match self.phase {
+            ToastAnimationPhase::Entering => {
+                let duration = if self.reduced_motion {
+                    Duration::ZERO
+                } else {
+                    config.entrance_duration
+                };
+                if self.progress(duration) >= 1.0 {
+                    self.transition_to(ToastAnimationPhase::Visible);
+                }
+            }
+            ToastAnimationPhase::Exiting => {
+                let duration = if self.reduced_motion {
+                    Duration::ZERO
+                } else {
+                    config.exit_duration
+                };
+                if self.progress(duration) >= 1.0 {
+                    self.transition_to(ToastAnimationPhase::Hidden);
+                }
+            }
+            ToastAnimationPhase::Visible | ToastAnimationPhase::Hidden => {}
+        }
+
+        self.phase != prev_phase
+    }
+
+    /// Calculate the current animation offset.
+    ///
+    /// Returns (dx, dy) offset to apply to the toast position.
+    pub fn current_offset(
+        &self,
+        config: &ToastAnimationConfig,
+        toast_width: u16,
+        toast_height: u16,
+    ) -> (i16, i16) {
+        if self.reduced_motion {
+            return (0, 0);
+        }
+
+        match self.phase {
+            ToastAnimationPhase::Entering => {
+                let raw_progress = self.progress(config.entrance_duration);
+                let eased_progress = config.entrance_easing.apply(raw_progress);
+                config
+                    .entrance
+                    .offset_at_progress(eased_progress, toast_width, toast_height)
+            }
+            ToastAnimationPhase::Exiting => {
+                let raw_progress = self.progress(config.exit_duration);
+                let eased_progress = config.exit_easing.apply(raw_progress);
+                config.exit.offset_at_progress(
+                    eased_progress,
+                    toast_width,
+                    toast_height,
+                    config.entrance,
+                )
+            }
+            ToastAnimationPhase::Visible => (0, 0),
+            ToastAnimationPhase::Hidden => (0, 0),
+        }
+    }
+
+    /// Calculate the current opacity (0.0 to 1.0).
+    ///
+    /// Used for fade animations.
+    pub fn current_opacity(&self, config: &ToastAnimationConfig) -> f64 {
+        if self.reduced_motion {
+            return if self.phase == ToastAnimationPhase::Hidden {
+                0.0
+            } else {
+                1.0
+            };
+        }
+
+        match self.phase {
+            ToastAnimationPhase::Entering => {
+                if matches!(config.entrance, ToastEntranceAnimation::FadeIn) {
+                    let raw_progress = self.progress(config.entrance_duration);
+                    config.entrance_easing.apply(raw_progress)
+                } else {
+                    1.0
+                }
+            }
+            ToastAnimationPhase::Exiting => {
+                if matches!(config.exit, ToastExitAnimation::FadeOut) {
+                    let raw_progress = self.progress(config.exit_duration);
+                    1.0 - config.exit_easing.apply(raw_progress)
+                } else {
+                    1.0
+                }
+            }
+            ToastAnimationPhase::Visible => 1.0,
+            ToastAnimationPhase::Hidden => 0.0,
+        }
+    }
+}
+
 /// Configuration for a toast notification.
 #[derive(Debug, Clone)]
 pub struct ToastConfig {
@@ -161,6 +586,8 @@ pub struct ToastConfig {
     pub margin: u16,
     /// Whether the toast can be dismissed by the user.
     pub dismissable: bool,
+    /// Animation configuration.
+    pub animation: ToastAnimationConfig,
 }
 
 impl Default for ToastConfig {
@@ -172,6 +599,7 @@ impl Default for ToastConfig {
             max_width: 50,
             margin: 1,
             dismissable: true,
+            animation: ToastAnimationConfig::default(),
         }
     }
 }
@@ -217,6 +645,8 @@ pub struct ToastState {
     pub created_at: Instant,
     /// Whether the toast has been dismissed.
     pub dismissed: bool,
+    /// Animation state.
+    pub animation: ToastAnimationState,
 }
 
 impl Default for ToastState {
@@ -224,6 +654,18 @@ impl Default for ToastState {
         Self {
             created_at: Instant::now(),
             dismissed: false,
+            animation: ToastAnimationState::default(),
+        }
+    }
+}
+
+impl ToastState {
+    /// Create a new state with reduced motion enabled.
+    pub fn with_reduced_motion() -> Self {
+        Self {
+            created_at: Instant::now(),
+            dismissed: false,
+            animation: ToastAnimationState::with_reduced_motion(),
         }
     }
 }
@@ -367,6 +809,64 @@ impl Toast {
         self
     }
 
+    // --- Animation builder methods ---
+
+    /// Set the entrance animation.
+    pub fn entrance_animation(mut self, animation: ToastEntranceAnimation) -> Self {
+        self.config.animation.entrance = animation;
+        self
+    }
+
+    /// Set the exit animation.
+    pub fn exit_animation(mut self, animation: ToastExitAnimation) -> Self {
+        self.config.animation.exit = animation;
+        self
+    }
+
+    /// Set the entrance animation duration.
+    pub fn entrance_duration(mut self, duration: Duration) -> Self {
+        self.config.animation.entrance_duration = duration;
+        self
+    }
+
+    /// Set the exit animation duration.
+    pub fn exit_duration(mut self, duration: Duration) -> Self {
+        self.config.animation.exit_duration = duration;
+        self
+    }
+
+    /// Set the entrance easing function.
+    pub fn entrance_easing(mut self, easing: ToastEasing) -> Self {
+        self.config.animation.entrance_easing = easing;
+        self
+    }
+
+    /// Set the exit easing function.
+    pub fn exit_easing(mut self, easing: ToastEasing) -> Self {
+        self.config.animation.exit_easing = easing;
+        self
+    }
+
+    /// Disable all animations.
+    pub fn no_animation(mut self) -> Self {
+        self.config.animation = ToastAnimationConfig::none();
+        self.state.animation = ToastAnimationState {
+            phase: ToastAnimationPhase::Visible,
+            phase_started: Instant::now(),
+            reduced_motion: true,
+        };
+        self
+    }
+
+    /// Enable reduced motion mode (skips animations).
+    pub fn reduced_motion(mut self, enabled: bool) -> Self {
+        self.config.animation.respect_reduced_motion = enabled;
+        if enabled {
+            self.state.animation = ToastAnimationState::with_reduced_motion();
+        }
+        self
+    }
+
     // --- State methods ---
 
     /// Check if the toast has expired based on its duration.
@@ -379,13 +879,64 @@ impl Toast {
     }
 
     /// Check if the toast should be visible.
+    ///
+    /// A toast is visible if it's not dismissed, not expired, and not in
+    /// the Hidden animation phase.
     pub fn is_visible(&self) -> bool {
-        !self.state.dismissed && !self.is_expired()
+        !self.state.dismissed
+            && !self.is_expired()
+            && self.state.animation.phase != ToastAnimationPhase::Hidden
     }
 
-    /// Dismiss the toast.
+    /// Check if the toast is currently animating.
+    pub fn is_animating(&self) -> bool {
+        matches!(
+            self.state.animation.phase,
+            ToastAnimationPhase::Entering | ToastAnimationPhase::Exiting
+        )
+    }
+
+    /// Dismiss the toast, starting exit animation.
     pub fn dismiss(&mut self) {
+        if !self.state.dismissed {
+            self.state.dismissed = true;
+            self.state.animation.start_exit();
+        }
+    }
+
+    /// Dismiss immediately without animation.
+    pub fn dismiss_immediately(&mut self) {
         self.state.dismissed = true;
+        self.state
+            .animation
+            .transition_to(ToastAnimationPhase::Hidden);
+    }
+
+    /// Update the animation state. Call this each frame.
+    ///
+    /// Returns true if the animation phase changed.
+    pub fn tick_animation(&mut self) -> bool {
+        self.state.animation.tick(&self.config.animation)
+    }
+
+    /// Get the current animation phase.
+    pub fn animation_phase(&self) -> ToastAnimationPhase {
+        self.state.animation.phase
+    }
+
+    /// Get the current animation offset for rendering.
+    ///
+    /// Returns (dx, dy) offset to apply to the position.
+    pub fn animation_offset(&self) -> (i16, i16) {
+        let (width, height) = self.calculate_dimensions();
+        self.state
+            .animation
+            .current_offset(&self.config.animation, width, height)
+    }
+
+    /// Get the current opacity for rendering (0.0 to 1.0).
+    pub fn animation_opacity(&self) -> f64 {
+        self.state.animation.current_opacity(&self.config.animation)
     }
 
     /// Get the remaining time before auto-dismiss.
@@ -868,5 +1419,241 @@ mod tests {
         assert_eq!(content.message, "Message");
         assert_eq!(content.icon, Some(ToastIcon::Warning));
         assert_eq!(content.title, Some("Alert".to_string()));
+    }
+
+    // --- Animation Tests ---
+
+    #[test]
+    fn test_animation_phase_default() {
+        let toast = Toast::new("Test");
+        assert_eq!(toast.state.animation.phase, ToastAnimationPhase::Entering);
+    }
+
+    #[test]
+    fn test_animation_phase_reduced_motion() {
+        let toast = Toast::new("Test").reduced_motion(true);
+        assert_eq!(toast.state.animation.phase, ToastAnimationPhase::Visible);
+        assert!(toast.state.animation.reduced_motion);
+    }
+
+    #[test]
+    fn test_animation_no_animation() {
+        let toast = Toast::new("Test").no_animation();
+        assert_eq!(toast.state.animation.phase, ToastAnimationPhase::Visible);
+        assert!(toast.config.animation.is_disabled());
+    }
+
+    #[test]
+    fn test_entrance_animation_builder() {
+        let toast = Toast::new("Test")
+            .entrance_animation(ToastEntranceAnimation::SlideFromTop)
+            .entrance_duration(Duration::from_millis(300))
+            .entrance_easing(ToastEasing::Bounce);
+
+        assert_eq!(
+            toast.config.animation.entrance,
+            ToastEntranceAnimation::SlideFromTop
+        );
+        assert_eq!(
+            toast.config.animation.entrance_duration,
+            Duration::from_millis(300)
+        );
+        assert_eq!(toast.config.animation.entrance_easing, ToastEasing::Bounce);
+    }
+
+    #[test]
+    fn test_exit_animation_builder() {
+        let toast = Toast::new("Test")
+            .exit_animation(ToastExitAnimation::SlideOut)
+            .exit_duration(Duration::from_millis(100))
+            .exit_easing(ToastEasing::EaseInOut);
+
+        assert_eq!(toast.config.animation.exit, ToastExitAnimation::SlideOut);
+        assert_eq!(
+            toast.config.animation.exit_duration,
+            Duration::from_millis(100)
+        );
+        assert_eq!(toast.config.animation.exit_easing, ToastEasing::EaseInOut);
+    }
+
+    #[test]
+    fn test_entrance_animation_offsets() {
+        let width = 30u16;
+        let height = 5u16;
+
+        // SlideFromTop: starts above, ends at (0, 0)
+        let (dx, dy) = ToastEntranceAnimation::SlideFromTop.initial_offset(width, height);
+        assert_eq!(dx, 0);
+        assert_eq!(dy, -(height as i16));
+
+        // At progress 0.0, should be at initial offset
+        let (dx, dy) = ToastEntranceAnimation::SlideFromTop.offset_at_progress(0.0, width, height);
+        assert_eq!(dx, 0);
+        assert_eq!(dy, -(height as i16));
+
+        // At progress 1.0, should be at (0, 0)
+        let (dx, dy) = ToastEntranceAnimation::SlideFromTop.offset_at_progress(1.0, width, height);
+        assert_eq!(dx, 0);
+        assert_eq!(dy, 0);
+
+        // SlideFromRight: starts to the right
+        let (dx, dy) = ToastEntranceAnimation::SlideFromRight.initial_offset(width, height);
+        assert_eq!(dx, width as i16);
+        assert_eq!(dy, 0);
+    }
+
+    #[test]
+    fn test_exit_animation_offsets() {
+        let width = 30u16;
+        let height = 5u16;
+        let entrance = ToastEntranceAnimation::SlideFromRight;
+
+        // SlideOut reverses entrance direction
+        let (dx, dy) = ToastExitAnimation::SlideOut.final_offset(width, height, entrance);
+        assert_eq!(dx, -(width as i16)); // Opposite of SlideFromRight
+        assert_eq!(dy, 0);
+
+        // At progress 0.0, should be at (0, 0)
+        let (dx, dy) =
+            ToastExitAnimation::SlideOut.offset_at_progress(0.0, width, height, entrance);
+        assert_eq!(dx, 0);
+        assert_eq!(dy, 0);
+
+        // At progress 1.0, should be at final offset
+        let (dx, dy) =
+            ToastExitAnimation::SlideOut.offset_at_progress(1.0, width, height, entrance);
+        assert_eq!(dx, -(width as i16));
+        assert_eq!(dy, 0);
+    }
+
+    #[test]
+    fn test_easing_apply() {
+        // Linear: t = t
+        assert!((ToastEasing::Linear.apply(0.5) - 0.5).abs() < 0.001);
+
+        // EaseOut at 0.5 should be > 0.5 (decelerating)
+        assert!(ToastEasing::EaseOut.apply(0.5) > 0.5);
+
+        // EaseIn at 0.5 should be < 0.5 (accelerating)
+        assert!(ToastEasing::EaseIn.apply(0.5) < 0.5);
+
+        // All should be 0 at 0 and 1 at 1
+        for easing in [
+            ToastEasing::Linear,
+            ToastEasing::EaseIn,
+            ToastEasing::EaseOut,
+            ToastEasing::EaseInOut,
+            ToastEasing::Bounce,
+        ] {
+            assert!((easing.apply(0.0) - 0.0).abs() < 0.001, "{:?} at 0", easing);
+            assert!((easing.apply(1.0) - 1.0).abs() < 0.001, "{:?} at 1", easing);
+        }
+    }
+
+    #[test]
+    fn test_animation_state_progress() {
+        let state = ToastAnimationState::new();
+        // Just created, progress should be very small
+        let progress = state.progress(Duration::from_millis(200));
+        assert!(
+            progress < 0.1,
+            "Progress should be small immediately after creation"
+        );
+    }
+
+    #[test]
+    fn test_animation_state_zero_duration() {
+        let state = ToastAnimationState::new();
+        // Zero duration should return 1.0 (complete)
+        let progress = state.progress(Duration::ZERO);
+        assert_eq!(progress, 1.0);
+    }
+
+    #[test]
+    fn test_dismiss_starts_exit_animation() {
+        let mut toast = Toast::new("Test").no_animation();
+        // First set to visible phase
+        toast.state.animation.phase = ToastAnimationPhase::Visible;
+        toast.state.animation.reduced_motion = false;
+
+        toast.dismiss();
+
+        assert!(toast.state.dismissed);
+        assert_eq!(toast.state.animation.phase, ToastAnimationPhase::Exiting);
+    }
+
+    #[test]
+    fn test_dismiss_immediately() {
+        let mut toast = Toast::new("Test");
+        toast.dismiss_immediately();
+
+        assert!(toast.state.dismissed);
+        assert_eq!(toast.state.animation.phase, ToastAnimationPhase::Hidden);
+        assert!(!toast.is_visible());
+    }
+
+    #[test]
+    fn test_is_animating() {
+        let toast = Toast::new("Test");
+        assert!(toast.is_animating()); // Starts in Entering phase
+
+        let toast_visible = Toast::new("Test").no_animation();
+        assert!(!toast_visible.is_animating()); // No animation = Visible phase
+    }
+
+    #[test]
+    fn test_animation_opacity_fade_in() {
+        let config = ToastAnimationConfig {
+            entrance: ToastEntranceAnimation::FadeIn,
+            exit: ToastExitAnimation::FadeOut,
+            entrance_duration: Duration::from_millis(200),
+            exit_duration: Duration::from_millis(150),
+            entrance_easing: ToastEasing::Linear,
+            exit_easing: ToastEasing::Linear,
+            respect_reduced_motion: false,
+        };
+
+        // At progress 0, opacity should be 0
+        let mut state = ToastAnimationState::new();
+        let opacity = state.current_opacity(&config);
+        assert!(opacity < 0.1, "Should be low opacity at start");
+
+        // At progress 1 (Visible phase), opacity should be 1
+        state.phase = ToastAnimationPhase::Visible;
+        let opacity = state.current_opacity(&config);
+        assert!((opacity - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_animation_config_default() {
+        let config = ToastAnimationConfig::default();
+
+        assert_eq!(config.entrance, ToastEntranceAnimation::SlideFromRight);
+        assert_eq!(config.exit, ToastExitAnimation::FadeOut);
+        assert_eq!(config.entrance_duration, Duration::from_millis(200));
+        assert_eq!(config.exit_duration, Duration::from_millis(150));
+        assert!(config.respect_reduced_motion);
+    }
+
+    #[test]
+    fn test_animation_affects_position() {
+        assert!(ToastEntranceAnimation::SlideFromTop.affects_position());
+        assert!(ToastEntranceAnimation::SlideFromRight.affects_position());
+        assert!(!ToastEntranceAnimation::FadeIn.affects_position());
+        assert!(!ToastEntranceAnimation::None.affects_position());
+
+        assert!(ToastExitAnimation::SlideOut.affects_position());
+        assert!(ToastExitAnimation::SlideToLeft.affects_position());
+        assert!(!ToastExitAnimation::FadeOut.affects_position());
+        assert!(!ToastExitAnimation::None.affects_position());
+    }
+
+    #[test]
+    fn test_toast_animation_offset() {
+        let toast = Toast::new("Test").entrance_animation(ToastEntranceAnimation::SlideFromRight);
+        let (dx, dy) = toast.animation_offset();
+        // Should have positive dx (sliding from right)
+        assert!(dx > 0, "Should have positive x offset at start");
+        assert_eq!(dy, 0);
     }
 }
