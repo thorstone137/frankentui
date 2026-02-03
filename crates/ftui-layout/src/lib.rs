@@ -465,8 +465,9 @@ impl Flex {
             return Vec::new();
         }
 
-        // Calculate gaps
-        let total_gap = self.gap.saturating_mul((count - 1) as u16);
+        // Calculate gaps safely
+        let gap_count = count - 1;
+        let total_gap = (gap_count as u64 * self.gap as u64).min(u16::MAX as u64) as u16;
         let available_size = total_size.saturating_sub(total_gap);
 
         // Solve constraints to get sizes
@@ -479,9 +480,10 @@ impl Flex {
     fn sizes_to_rects(&self, area: Rect, sizes: &[u16]) -> Vec<Rect> {
         let mut rects = Vec::with_capacity(sizes.len());
 
-        // Calculate total used space (sizes + gaps)
+        // Calculate total used space (sizes + gaps) safely
         let total_gaps = if sizes.len() > 1 {
-            self.gap.saturating_mul((sizes.len() - 1) as u16)
+            let gap_count = sizes.len() - 1;
+            (gap_count as u64 * self.gap as u64).min(u16::MAX as u64) as u16
         } else {
             0
         };
@@ -503,8 +505,10 @@ impl Flex {
                     (0, 0)
                 } else {
                     // Space around: equal space before, between, and after
-                    let space_unit = leftover / (sizes.len() as u16 * 2);
-                    (space_unit, 0)
+                    // slots = sizes.len() * 2. Use usize to prevent overflow.
+                    let slots = sizes.len() * 2;
+                    let unit = (leftover as usize / slots) as u16;
+                    (unit, 0)
                 }
             }
         };
@@ -541,17 +545,18 @@ impl Flex {
             match self.alignment {
                 Alignment::SpaceBetween => {
                     if sizes.len() > 1 && i < sizes.len() - 1 {
-                        let count = (sizes.len() - 1) as u16;
-                        let base = leftover / count;
-                        let rem = leftover % count;
+                        let count = sizes.len() - 1; // usize
+                        // Use usize division to prevent overflow/panic
+                        let base = (leftover as usize / count) as u16;
+                        let rem = (leftover as usize % count) as u16;
                         let extra = base + if (i as u16) < rem { 1 } else { 0 };
                         current_pos = current_pos.saturating_add(extra);
                     }
                 }
                 Alignment::SpaceAround => {
                     if !sizes.is_empty() {
-                        let slots = sizes.len() as u16 * 2;
-                        let unit = leftover / slots;
+                        let slots = sizes.len() * 2; // usize
+                        let unit = (leftover as usize / slots) as u16;
                         current_pos = current_pos.saturating_add(unit.saturating_mul(2));
                     }
                 }
@@ -605,8 +610,9 @@ impl Flex {
             return Vec::new();
         }
 
-        // Calculate gaps
-        let total_gap = self.gap.saturating_mul((count - 1) as u16);
+        // Calculate gaps safely
+        let gap_count = count - 1;
+        let total_gap = (gap_count as u64 * self.gap as u64).min(u16::MAX as u64) as u16;
         let available_size = total_size.saturating_sub(total_gap);
 
         // Solve constraints with hints from measurer

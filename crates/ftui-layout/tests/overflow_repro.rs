@@ -10,7 +10,7 @@ fn alignment_space_between_overflow() {
         .constraints(constraints);
     
     // This should panic due to division by zero if not fixed
-    let _ = flex.split(Rect::new(0, 0, 100000, 10));
+    let _ = flex.split(Rect::new(0, 0, u16::MAX, 10));
 }
 
 #[test]
@@ -22,5 +22,5 @@ fn alignment_space_around_overflow() {
         .constraints(constraints);
         
     // This should panic due to division by zero if not fixed
-    let _ = flex.split(Rect::new(0, 0, 100000, 10));
+    let _ = flex.split(Rect::new(0, 0, u16::MAX, 10));
 }

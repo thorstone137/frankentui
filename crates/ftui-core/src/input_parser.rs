@@ -249,12 +249,12 @@ impl InputParser {
     }
 
     /// Process byte at start of CSI sequence.
-    fn process_csi(&mut self, byte: u8) -> Option<Event> {
+    fn process_csi(&mut self, byte: u8, events: &mut Vec<Event>) {
         // Robustness: ESC restarts sequence
         if byte == 0x1B {
             self.state = ParserState::Escape;
             self.buffer.clear();
-            return None;
+            return;
         }
 
         self.buffer.push(byte);
@@ -263,73 +263,73 @@ impl InputParser {
             // Parameter bytes (0x30-0x3F) and Intermediate bytes (0x20-0x2F)
             0x20..=0x3F => {
                 self.state = ParserState::CsiParam;
-                None
             }
             // Final byte (0x40-0x7E) - parse and return
             0x40..=0x7E => {
                 self.state = ParserState::Ground;
-                self.parse_csi_sequence()
+                if let Some(e) = self.parse_csi_sequence() {
+                    events.push(e);
+                }
             }
             // Invalid (0x00-0x1F, 0x7F-0xFF)
             _ => {
                 self.state = ParserState::Ground;
                 self.buffer.clear();
-                None
             }
         }
     }
 
     /// Process byte while collecting CSI parameters.
-    fn process_csi_param(&mut self, byte: u8) -> Option<Event> {
+    fn process_csi_param(&mut self, byte: u8, events: &mut Vec<Event>) {
         // Robustness: ESC restarts sequence
         if byte == 0x1B {
             self.state = ParserState::Escape;
             self.buffer.clear();
-            return None;
+            return;
         }
 
         // DoS protection
         if self.buffer.len() >= MAX_CSI_LEN {
             self.state = ParserState::CsiIgnore;
             self.buffer.clear();
-            return None;
+            return;
         }
 
         self.buffer.push(byte);
 
         match byte {
             // Continue collecting parameters/intermediates
-            0x20..=0x3F => None,
+            0x20..=0x3F => {}
             // Final byte - parse and return
             0x40..=0x7E => {
                 self.state = ParserState::Ground;
-                self.parse_csi_sequence()
+                if let Some(e) = self.parse_csi_sequence() {
+                    events.push(e);
+                }
             }
             // Invalid
             _ => {
                 self.state = ParserState::Ground;
                 self.buffer.clear();
-                None
             }
         }
     }
 
     /// Ignore bytes until end of CSI sequence.
-    fn process_csi_ignore(&mut self, byte: u8) -> Option<Event> {
+    fn process_csi_ignore(&mut self, byte: u8, _events: &mut Vec<Event>) {
         // Robustness: ESC restarts sequence
         if byte == 0x1B {
             self.state = ParserState::Escape;
-            return None;
+            return;
         }
 
         match byte {
             // Final byte (0x40-0x7E) - return to ground
             0x40..=0x7E => {
                 self.state = ParserState::Ground;
-                None
             }
             // Intermediate bytes - keep ignoring
-            _ => None,
+            _ => {}
         }
     }
 
@@ -608,11 +608,11 @@ impl InputParser {
     }
 
     /// Process SS3 (ESC O) sequences.
-    fn process_ss3(&mut self, byte: u8) -> Option<Event> {
+    fn process_ss3(&mut self, byte: u8, events: &mut Vec<Event>) {
         // Robustness: ESC restarts sequence
         if byte == 0x1B {
             self.state = ParserState::Escape;
-            return None;
+            return;
         }
 
         self.state = ParserState::Ground;
@@ -628,10 +628,10 @@ impl InputParser {
             b'D' => KeyCode::Left,
             b'H' => KeyCode::Home,
             b'F' => KeyCode::End,
-            _ => return None,
+            _ => return,
         };
 
-        Some(Event::Key(KeyEvent::new(code)))
+        events.push(Event::Key(KeyEvent::new(code)));
     }
 
     /// Process OSC start.
