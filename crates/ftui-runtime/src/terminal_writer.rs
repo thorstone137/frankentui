@@ -2300,4 +2300,39 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn present_ui_positions_cursor_after_restore() {
+        let mut output = Vec::new();
+        {
+            let mut writer = TerminalWriter::new(
+                &mut output,
+                ScreenMode::Inline { ui_height: 5 },
+                UiAnchor::Bottom,
+                basic_caps(),
+            );
+            writer.set_size(80, 24);
+
+            let buffer = Buffer::new(80, 5);
+            // Request cursor at (2, 1) in UI coordinates
+            writer.present_ui(&buffer, Some((2, 1))).unwrap();
+        }
+
+        // UI starts at row 20 (24 - 5 + 1 = 20) (1-indexed)
+        // Cursor requested at relative (2, 1) -> (x=3, y=2) (1-indexed)
+        // Absolute position: y = 20 + 1 = 21. x = 3.
+        let expected_pos = b"\x1b[21;3H";
+
+        // Find restore
+        let restore_idx = find_nth(&output, CURSOR_RESTORE, 1).expect("expected cursor restore");
+        let after_restore = &output[restore_idx..];
+
+        // Ensure cursor positioning happens *after* restore
+        assert!(
+            after_restore
+                .windows(expected_pos.len())
+                .any(|w| w == expected_pos),
+            "Cursor positioning should happen after restore"
+        );
+    }
 }

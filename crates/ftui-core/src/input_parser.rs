@@ -821,11 +821,13 @@ impl InputParser {
             // Invalid - return to ground and re-process the unexpected byte.
             // Also emit a replacement character for the invalid sequence we just aborted.
             self.state = ParserState::Ground;
-            
+
             // Queue the replacement event for the next iteration of the parse loop
             self.pending_event = self.process_ground(byte);
-            
-            return Some(Event::Key(KeyEvent::new(KeyCode::Char(std::char::REPLACEMENT_CHARACTER))));
+
+            return Some(Event::Key(KeyEvent::new(KeyCode::Char(
+                std::char::REPLACEMENT_CHARACTER,
+            ))));
         }
 
         self.utf8_buffer[collected as usize] = byte;
@@ -855,39 +857,40 @@ impl InputParser {
         // 1. If we have room in paste_buffer, push it.
         // 2. If we are full, push to self.buffer (used as a tail tracker) to detect END_SEQ.
         // 3. Always check if the effective stream ends with END_SEQ.
-        
+
         if self.paste_buffer.len() < MAX_PASTE_LEN {
             self.paste_buffer.push(byte);
-            
+
             // Check for end sequence in paste_buffer
             if self.paste_buffer.ends_with(END_SEQ) {
-                 self.in_paste = false;
-                 // Remove the end sequence from content
-                 let content_len = self.paste_buffer.len() - END_SEQ.len();
-                 let content = String::from_utf8_lossy(&self.paste_buffer[..content_len]).into_owned();
-                 self.paste_buffer.clear();
-                 return Some(Event::Paste(PasteEvent::bracketed(content)));
+                self.in_paste = false;
+                // Remove the end sequence from content
+                let content_len = self.paste_buffer.len() - END_SEQ.len();
+                let content =
+                    String::from_utf8_lossy(&self.paste_buffer[..content_len]).into_owned();
+                self.paste_buffer.clear();
+                return Some(Event::Paste(PasteEvent::bracketed(content)));
             }
         } else {
             // Buffer is full. DoS protection active.
             // We stop collecting content, but we MUST track the end sequence.
             // Use self.buffer as a sliding window for the tail.
-            
+
             self.buffer.push(byte);
             if self.buffer.len() > END_SEQ.len() {
                 self.buffer.remove(0);
             }
-            
+
             // Check if we found the end sequence.
             // The sequence might be split between paste_buffer and buffer.
             // We only need to check the last 6 bytes.
             // Since `buffer` contains the most recent bytes (up to 6), and `paste_buffer` is full...
-            
+
             // Construct a view of the last 6 bytes
             let mut last_bytes = [0u8; 6];
             let tail_len = self.buffer.len();
             let paste_len = self.paste_buffer.len();
-            
+
             if tail_len + paste_len >= 6 {
                 // Fill from buffer (reverse order)
                 for i in 0..tail_len {
@@ -897,22 +900,24 @@ impl InputParser {
                 let remaining = 6 - tail_len;
                 if remaining > 0 {
                     let start = paste_len - remaining;
-                    last_bytes[..remaining].copy_from_slice(&self.paste_buffer[start..(remaining + start)]);
+                    last_bytes[..remaining]
+                        .copy_from_slice(&self.paste_buffer[start..(remaining + start)]);
                 }
-                
+
                 if last_bytes == END_SEQ {
                     self.in_paste = false;
-                    
+
                     // We found the end sequence.
                     // The content is `paste_buffer` MINUS the part of END_SEQ that was in it.
                     // `remaining` bytes of END_SEQ were in paste_buffer.
-                    
+
                     let content_len = paste_len - remaining;
-                    let content = String::from_utf8_lossy(&self.paste_buffer[..content_len]).into_owned();
-                    
+                    let content =
+                        String::from_utf8_lossy(&self.paste_buffer[..content_len]).into_owned();
+
                     self.paste_buffer.clear();
                     self.buffer.clear();
-                    
+
                     return Some(Event::Paste(PasteEvent::bracketed(content)));
                 }
             }

@@ -1181,8 +1181,7 @@ mod tests {
             let analysis = analyze_stream(&stream);
             assert!(analysis.flicker_free, "seed {seed} should be flicker-free");
             assert_eq!(
-                analysis.stats.total_frames,
-                frames as u64,
+                analysis.stats.total_frames, frames as u64,
                 "seed {seed} should count all frames"
             );
         }
@@ -1204,7 +1203,10 @@ mod tests {
                 analysis.stats.sync_gaps > 0,
                 "seed {seed} should detect sync gap"
             );
-            assert!(!analysis.flicker_free, "seed {seed} should not be flicker-free");
+            assert!(
+                !analysis.flicker_free,
+                "seed {seed} should not be flicker-free"
+            );
         }
     }
 

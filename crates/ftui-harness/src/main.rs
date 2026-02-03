@@ -44,6 +44,7 @@ use ftui_core::input_parser::InputParser;
 use ftui_core::keybinding::{Action, ActionMapper, AppState};
 use ftui_core::terminal_session::{SessionOptions, TerminalSession};
 use ftui_extras::theme;
+use ftui_harness::flicker_detection;
 use ftui_layout::{Constraint, Flex, Grid, GridArea};
 use ftui_render::cell::Cell;
 use ftui_render::frame::{Frame, HitId, HitRegion};
@@ -65,7 +66,6 @@ use ftui_widgets::status_line::{StatusItem, StatusLine};
 use ftui_widgets::table::{Row, Table, TableState};
 use ftui_widgets::tree::{Tree, TreeNode};
 use ftui_widgets::{StatefulWidget, Widget};
-use ftui_harness::flicker_detection;
 
 /// Application state for the agent harness.
 struct AgentHarness {
@@ -1236,7 +1236,28 @@ impl AgentHarness {
 
 fn main() -> std::io::Result<()> {
     if std::env::var("FTUI_HARNESS_FLICKER_ANALYZE").is_ok() {
-        return run_flicker_analysis();
+        let input_path = std::env::var("FTUI_HARNESS_FLICKER_INPUT").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "FTUI_HARNESS_FLICKER_INPUT must be set",
+            )
+        })?;
+        let run_id =
+            std::env::var("FTUI_HARNESS_FLICKER_RUN_ID").unwrap_or_else(|_| "flicker".into());
+        let bytes = std::fs::read(&input_path)?;
+        let analysis = flicker_detection::analyze_stream_with_id(&run_id, &bytes);
+
+        if let Ok(output_path) = std::env::var("FTUI_HARNESS_FLICKER_JSONL") {
+            std::fs::write(&output_path, analysis.jsonl.as_bytes())?;
+        } else {
+            print!("{}", analysis.jsonl);
+        }
+
+        if !analysis.flicker_free {
+            std::process::exit(2);
+        }
+
+        return Ok(());
     }
 
     let input_mode = std::env::var("FTUI_HARNESS_INPUT_MODE")

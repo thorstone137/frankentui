@@ -87,13 +87,7 @@ impl PlasmaCanvasAdapter {
     ///
     /// # No Allocations
     /// This method does not allocate after initial painter setup.
-    pub fn fill(
-        &self,
-        painter: &mut Painter,
-        time: f64,
-        quality: FxQuality,
-        theme: &ThemeInputs,
-    ) {
+    pub fn fill(&self, painter: &mut Painter, time: f64, quality: FxQuality, theme: &ThemeInputs) {
         if !quality.is_enabled() {
             return;
         }
@@ -185,12 +179,15 @@ impl MetaballsCanvasAdapter {
 
         // Ensure cache capacity
         if self.ball_cache.len() != count {
-            self.ball_cache.resize(count, BallState {
-                x: 0.0,
-                y: 0.0,
-                r2: 0.0,
-                hue: 0.0,
-            });
+            self.ball_cache.resize(
+                count,
+                BallState {
+                    x: 0.0,
+                    y: 0.0,
+                    r2: 0.0,
+                    hue: 0.0,
+                },
+            );
         }
 
         // Animate balls
@@ -201,11 +198,17 @@ impl MetaballsCanvasAdapter {
         for (i, ball) in self.params.balls.iter().take(count).enumerate() {
             let x = ping_pong(ball.x + ball.vx * t_scaled, bounds_min, bounds_max);
             let y = ping_pong(ball.y + ball.vy * t_scaled, bounds_min, bounds_max);
-            let pulse = 1.0 + self.params.pulse_amount * (time * self.params.pulse_speed + ball.phase).sin();
+            let pulse = 1.0
+                + self.params.pulse_amount * (time * self.params.pulse_speed + ball.phase).sin();
             let radius = ball.radius.clamp(radius_min, radius_max).max(0.001) * pulse;
             let hue = (ball.hue + time * self.params.hue_speed).rem_euclid(1.0);
 
-            self.ball_cache[i] = BallState { x, y, r2: radius * radius, hue };
+            self.ball_cache[i] = BallState {
+                x,
+                y,
+                r2: radius * radius,
+                hue,
+            };
         }
     }
 
@@ -221,12 +224,7 @@ impl MetaballsCanvasAdapter {
     ///
     /// # No Allocations
     /// This method does not allocate after initial painter setup.
-    pub fn fill(
-        &self,
-        painter: &mut Painter,
-        quality: FxQuality,
-        theme: &ThemeInputs,
-    ) {
+    pub fn fill(&self, painter: &mut Painter, quality: FxQuality, theme: &ThemeInputs) {
         if !quality.is_enabled() || self.ball_cache.is_empty() {
             return;
         }
@@ -301,7 +299,9 @@ fn ball_count_for_quality(params: &MetaballsParams, quality: FxQuality) -> usize
 }
 
 fn thresholds(params: &MetaballsParams) -> (f64, f64) {
-    let glow = params.glow_threshold.clamp(0.0, params.threshold.max(0.001));
+    let glow = params
+        .glow_threshold
+        .clamp(0.0, params.threshold.max(0.001));
     let mut threshold = params.threshold.max(glow + 0.0001);
     if threshold <= glow {
         threshold = glow + 0.0001;
@@ -438,7 +438,10 @@ mod tests {
         let (w, h) = painter.size();
         for y in 0..h {
             for x in 0..w {
-                assert!(!painter.get(x as i32, y as i32), "Off quality should not set pixels");
+                assert!(
+                    !painter.get(x as i32, y as i32),
+                    "Off quality should not set pixels"
+                );
             }
         }
     }
@@ -499,7 +502,10 @@ mod tests {
         let (w, h) = painter.size();
         for y in 0..h {
             for x in 0..w {
-                assert!(!painter.get(x as i32, y as i32), "Off quality should not set pixels");
+                assert!(
+                    !painter.get(x as i32, y as i32),
+                    "Off quality should not set pixels"
+                );
             }
         }
     }

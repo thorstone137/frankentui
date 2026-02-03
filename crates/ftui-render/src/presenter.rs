@@ -2490,7 +2490,7 @@ mod tests {
         // It is not empty, not continuation, not grapheme (unless pooled).
         // Storing it directly as a char means it's a standalone cell content.
         let zw_char = '\u{0301}';
-        
+
         // Ensure our assumption about width is correct for this environment
         assert_eq!(Cell::from_char(zw_char).content.width(), 0);
 
@@ -2516,7 +2516,7 @@ mod tests {
             !output_str.contains(zw_char),
             "Should not contain raw zero-width char"
         );
-        
+
         // Should contain 'A' (verify cursor sync didn't swallow it)
         assert!(
             output_str.contains('A'),

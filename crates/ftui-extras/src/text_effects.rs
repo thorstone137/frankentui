@@ -4835,8 +4835,11 @@ mod tests {
 
     #[test]
     fn test_styled_text_with_shadow() {
-        let text = StyledText::new("SHADOW")
-            .shadow(Shadow::new(1, 1).color(PackedRgba::rgb(0, 0, 0)).opacity(0.5));
+        let text = StyledText::new("SHADOW").shadow(
+            Shadow::new(1, 1)
+                .color(PackedRgba::rgb(0, 0, 0))
+                .opacity(0.5),
+        );
 
         assert!(text.has_shadows());
         assert_eq!(text.shadow_count(), 1);

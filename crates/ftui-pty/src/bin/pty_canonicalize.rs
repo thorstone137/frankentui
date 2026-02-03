@@ -38,15 +38,9 @@ fn parse_profile(name: &str) -> Result<QuirkSet, String> {
 
 fn apply_quirk(quirks: QuirkSet, name: &str) -> Result<QuirkSet, String> {
     match name {
-        "tmux_nested_cursor" | "tmux_nested" => {
-            Ok(quirks.with_tmux_nested_cursor(true))
-        }
-        "screen_immediate_wrap" | "screen_wrap" => {
-            Ok(quirks.with_screen_immediate_wrap(true))
-        }
-        "windows_no_alt_screen" | "windows_console" => {
-            Ok(quirks.with_windows_no_alt_screen(true))
-        }
+        "tmux_nested_cursor" | "tmux_nested" => Ok(quirks.with_tmux_nested_cursor(true)),
+        "screen_immediate_wrap" | "screen_wrap" => Ok(quirks.with_screen_immediate_wrap(true)),
+        "windows_no_alt_screen" | "windows_console" => Ok(quirks.with_windows_no_alt_screen(true)),
         _ => Err(format!("unknown --quirk value: {name}")),
     }
 }

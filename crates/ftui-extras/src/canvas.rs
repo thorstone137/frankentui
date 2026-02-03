@@ -256,6 +256,10 @@ impl Painter {
 
     /// Render a metaball field to the painter at sub-pixel resolution.
     ///
+    /// This is a low-level method that accepts a custom color function. For a
+    /// higher-level API with theme integration and animation support, see
+    /// [`crate::visual_fx::effects::canvas_adapters::MetaballsCanvasAdapter`].
+    ///
     /// This method uses the shared sampling API from [`crate::visual_fx::effects::sampling`]
     /// to render metaballs with sub-pixel precision using the canvas's resolution mode.
     ///
@@ -878,8 +882,8 @@ mod tests {
     #[cfg(feature = "visual-fx")]
     mod metaball_adapter_tests {
         use super::*;
-        use crate::visual_fx::effects::sampling::{BallState, MetaballFieldSampler};
         use crate::visual_fx::FxQuality;
+        use crate::visual_fx::effects::sampling::{BallState, MetaballFieldSampler};
 
         #[test]
         fn metaball_field_renders_pixels() {
@@ -922,13 +926,8 @@ mod tests {
             let sampler = MetaballFieldSampler::new(balls);
 
             let mut painter = Painter::new(10, 10, Mode::Braille);
-            painter.render_metaball_field(
-                &sampler,
-                1.0,
-                0.0,
-                FxQuality::Off,
-                |_, _| PackedRgba::RED,
-            );
+            painter
+                .render_metaball_field(&sampler, 1.0, 0.0, FxQuality::Off, |_, _| PackedRgba::RED);
 
             // Nothing should be set when quality is Off
             for y in 0..10 {
@@ -943,13 +942,8 @@ mod tests {
             let sampler = MetaballFieldSampler::new(vec![]);
 
             let mut painter = Painter::new(0, 0, Mode::Braille);
-            painter.render_metaball_field(
-                &sampler,
-                1.0,
-                0.5,
-                FxQuality::Full,
-                |_, _| PackedRgba::RED,
-            );
+            painter
+                .render_metaball_field(&sampler, 1.0, 0.5, FxQuality::Full, |_, _| PackedRgba::RED);
             // Should not panic
         }
 
@@ -1003,20 +997,14 @@ mod tests {
             let sampler = MetaballFieldSampler::new(balls);
 
             let mut painter = Painter::new(20, 10, Mode::Braille);
-            painter.render_metaball_field(
-                &sampler,
-                0.5,
-                0.1,
-                FxQuality::Full,
-                |hue, _| {
-                    // Use hue to distinguish balls
-                    if hue < 0.25 {
-                        PackedRgba::RED
-                    } else {
-                        PackedRgba::BLUE
-                    }
-                },
-            );
+            painter.render_metaball_field(&sampler, 0.5, 0.1, FxQuality::Full, |hue, _| {
+                // Use hue to distinguish balls
+                if hue < 0.25 {
+                    PackedRgba::RED
+                } else {
+                    PackedRgba::BLUE
+                }
+            });
 
             // Left side should have pixels (near first ball)
             assert!(painter.get(5, 5), "left side should have pixels");

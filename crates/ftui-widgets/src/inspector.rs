@@ -1728,7 +1728,9 @@ mod tests {
                     assert!(
                         max_diff >= 100,
                         "Bound colors {} and {} should differ by at least 100 in one channel (max diff = {})",
-                        i, j, max_diff
+                        i,
+                        j,
+                        max_diff
                     );
                 }
             }
@@ -1745,7 +1747,8 @@ mod tests {
             assert!(
                 max_channel >= 100,
                 "Bound color {} should have at least one channel >= 100 for visibility (max = {})",
-                i, max_channel
+                i,
+                max_channel
             );
         }
     }

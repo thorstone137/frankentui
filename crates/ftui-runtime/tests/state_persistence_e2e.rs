@@ -86,7 +86,12 @@ fn persist_cycle_basic_round_trip() {
     assert_eq!(restored.data, original_data);
     assert_eq!(restored.version, 1);
 
-    log_jsonl("persist_cycle", "basic_round_trip", true, "state matches after round-trip");
+    log_jsonl(
+        "persist_cycle",
+        "basic_round_trip",
+        true,
+        "state matches after round-trip",
+    );
 }
 
 /// Test partial state handling - some widgets have state, some don't.
@@ -122,7 +127,12 @@ fn persist_cycle_save_on_exit() {
     }
 
     // Registry is dropped - in real usage this would persist to file
-    log_jsonl("persist_cycle", "save_on_exit", true, "flush before drop works");
+    log_jsonl(
+        "persist_cycle",
+        "save_on_exit",
+        true,
+        "flush before drop works",
+    );
 }
 
 /// Test restore on app start with existing state.
@@ -179,11 +189,15 @@ fn persist_widget_scrollview() {
 
     // Verify restoration
     let restored = registry.get("ScrollView::content").unwrap();
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&restored.data).expect("valid JSON");
+    let parsed: serde_json::Value = serde_json::from_slice(&restored.data).expect("valid JSON");
 
     assert_eq!(parsed["scroll_offset"], 150);
-    log_jsonl("persist_widget", "scrollview", true, "scroll position persisted");
+    log_jsonl(
+        "persist_widget",
+        "scrollview",
+        true,
+        "scroll position persisted",
+    );
 }
 
 /// Test TreeView expanded nodes persistence.
@@ -204,7 +218,12 @@ fn persist_widget_treeview() {
     assert_eq!(parsed["expanded_nodes"], serde_json::json!([1, 5, 12, 15]));
     assert_eq!(restored.version, 2);
 
-    log_jsonl("persist_widget", "treeview", true, "expanded nodes persisted");
+    log_jsonl(
+        "persist_widget",
+        "treeview",
+        true,
+        "expanded nodes persisted",
+    );
 }
 
 /// Test Table sort/filter state persistence.
@@ -229,7 +248,12 @@ fn persist_widget_table() {
     assert_eq!(parsed["sort_ascending"], false);
     assert_eq!(parsed["filter"], "active");
 
-    log_jsonl("persist_widget", "table", true, "sort/filter state persisted");
+    log_jsonl(
+        "persist_widget",
+        "table",
+        true,
+        "sort/filter state persisted",
+    );
 }
 
 /// Test multiple widget types together.
@@ -347,7 +371,12 @@ fn persist_migrate_version_isolation() {
     assert_eq!(entry.version, 2);
     assert_eq!(entry.data, b"v2_data");
 
-    log_jsonl("persist_migrate", "version_isolation", true, "v2 overwrites v1");
+    log_jsonl(
+        "persist_migrate",
+        "version_isolation",
+        true,
+        "v2 overwrites v1",
+    );
 }
 
 // ============================================================================
@@ -418,7 +447,12 @@ fn persist_storage_availability() {
     let registry = StateRegistry::in_memory();
     assert!(registry.is_available());
 
-    log_jsonl("persist_storage", "availability", true, "backends report available");
+    log_jsonl(
+        "persist_storage",
+        "availability",
+        true,
+        "backends report available",
+    );
 }
 
 // ============================================================================
@@ -459,7 +493,12 @@ fn persist_error_recovery() {
     let stats = registry.stats();
     assert_eq!(stats.entry_count, 1);
 
-    log_jsonl("persist_error", "recovery", true, "operations complete normally");
+    log_jsonl(
+        "persist_error",
+        "recovery",
+        true,
+        "operations complete normally",
+    );
 }
 
 /// Test atomic save behavior - partial failure shouldn't corrupt state.
@@ -481,7 +520,12 @@ fn persist_error_atomic_save() {
     assert!(registry.get("entry2").is_some());
     assert!(registry.get("entry3").is_some());
 
-    log_jsonl("persist_error", "atomic_save", true, "all entries saved atomically");
+    log_jsonl(
+        "persist_error",
+        "atomic_save",
+        true,
+        "all entries saved atomically",
+    );
 }
 
 // ============================================================================
@@ -556,5 +600,10 @@ fn persist_property_dirty_flag() {
     registry.remove("x");
     assert!(registry.is_dirty());
 
-    log_jsonl("persist_property", "dirty_flag", true, "dirty flag accurate");
+    log_jsonl(
+        "persist_property",
+        "dirty_flag",
+        true,
+        "dirty flag accurate",
+    );
 }

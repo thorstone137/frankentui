@@ -10,22 +10,22 @@ use ftui_runtime::Cmd;
 use ftui_style::{Style, StyleFlags};
 use ftui_text::WrapMode;
 use ftui_widgets::Badge;
-use ftui_widgets::command_palette::{ActionItem, CommandPalette};
-use ftui_widgets::file_picker::{FilePicker, FilePickerState};
 use ftui_widgets::StatefulWidget;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::columns::{Column, Columns};
+use ftui_widgets::command_palette::{ActionItem, CommandPalette};
+use ftui_widgets::file_picker::{FilePicker, FilePickerState};
+use ftui_widgets::input::TextInput;
+use ftui_widgets::json_view::JsonView;
+use ftui_widgets::layout::Layout;
+use ftui_widgets::list::{List, ListItem};
 use ftui_widgets::log_viewer::{LogViewer, LogViewerState, LogWrapMode};
 use ftui_widgets::modal::{Dialog, DialogState};
 use ftui_widgets::notification_queue::{
     NotificationPriority, NotificationQueue, NotificationStack, QueueConfig,
 };
-use ftui_widgets::input::TextInput;
-use ftui_widgets::json_view::JsonView;
-use ftui_widgets::layout::Layout;
-use ftui_widgets::list::{List, ListItem};
 use ftui_widgets::paginator::{Paginator, PaginatorMode};
 use ftui_widgets::panel::Panel;
 use ftui_widgets::paragraph::Paragraph;
@@ -1718,9 +1718,7 @@ impl WidgetGallery {
             let mut timer_state = TimerState::new(Duration::from_secs(90));
             timer_state.start();
             timer_state.tick(Duration::from_secs(31));
-            let timer = Timer::new()
-                .format(TimerFormat::Digital)
-                .label("ETA ");
+            let timer = Timer::new().format(TimerFormat::Digital).label("ETA ");
             StatefulWidget::render(&timer, rows[1], frame, &mut timer_state);
         }
     }
