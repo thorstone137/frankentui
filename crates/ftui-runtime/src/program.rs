@@ -915,11 +915,23 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         let before_count = self.subscriptions.active_count();
         self.subscriptions.reconcile(subs);
         let after_count = self.subscriptions.active_count();
+        let started = after_count.saturating_sub(before_count);
+        let stopped = before_count.saturating_sub(after_count);
+        crate::debug_trace!(
+            "subscriptions reconcile: before={}, after={}, started={}, stopped={}",
+            before_count,
+            after_count,
+            started,
+            stopped
+        );
+        if after_count == 0 {
+            crate::debug_trace!("subscriptions reconcile: no active subscriptions");
+        }
         let current = tracing::Span::current();
         current.record("active_count", after_count);
         // started/stopped would require tracking in SubscriptionManager
-        current.record("started", after_count.saturating_sub(before_count));
-        current.record("stopped", before_count.saturating_sub(after_count));
+        current.record("started", started);
+        current.record("stopped", stopped);
     }
 
     /// Process pending messages from subscriptions.
@@ -1064,6 +1076,10 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         // Early skip if budget says to skip this frame entirely
         if self.budget.exhausted() {
             self.budget.record_frame_time(Duration::ZERO);
+            crate::debug_trace!(
+                "frame skipped: budget exhausted (degradation={})",
+                self.budget.degradation().as_str()
+            );
             debug!(
                 degradation = self.budget.degradation().as_str(),
                 "frame skipped: budget exhausted before render"

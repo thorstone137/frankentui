@@ -37,6 +37,11 @@ use crate::theme;
 // Performance HUD Diagnostics (bd-3k3x.8)
 // ---------------------------------------------------------------------------
 
+/// Warn if no ticks are observed for longer than this.
+const TICK_STALL_WARN_AFTER: Duration = Duration::from_millis(750);
+/// Rate-limit tick stall logs to avoid spamming.
+const TICK_STALL_LOG_INTERVAL: Duration = Duration::from_millis(2_000);
+
 /// Global counter for JSONL log sequence numbers.
 #[allow(dead_code)]
 static PERF_HUD_LOG_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -634,37 +639,52 @@ impl ScreenStates {
         }
     }
 
-    /// Forward a tick to all screens (so they can update animations/data).
-    fn tick(&mut self, tick_count: u64) {
+    /// Forward a tick to the active screen and always tick performance_hud.
+    ///
+    /// Only the active screen receives tick updates for animations/data.
+    /// Performance HUD is always ticked to collect metrics regardless of which
+    /// screen is visible.
+    fn tick(&mut self, active: ScreenId, tick_count: u64) {
         use screens::Screen;
-        self.dashboard.tick(tick_count);
-        self.shakespeare.tick(tick_count);
-        self.code_explorer.tick(tick_count);
-        self.widget_gallery.tick(tick_count);
-        self.layout_lab.tick(tick_count);
-        self.forms_input.tick(tick_count);
-        self.data_viz.tick(tick_count);
-        self.file_browser.tick(tick_count);
-        self.advanced_features.tick(tick_count);
-        self.terminal_capabilities.tick(tick_count);
-        self.macro_recorder.tick(tick_count);
-        self.performance.tick(tick_count);
-        self.markdown_rich_text.tick(tick_count);
-        self.visual_effects.tick(tick_count);
-        self.responsive_demo.tick(tick_count);
-        self.log_search.tick(tick_count);
-        self.notifications.tick(tick_count);
-        self.action_timeline.tick(tick_count);
-        self.intrinsic_sizing.tick(tick_count);
-        self.advanced_text_editor.tick(tick_count);
-        self.mouse_playground.tick(tick_count);
-        self.form_validation.tick(tick_count);
-        self.virtualized_search.tick(tick_count);
-        self.async_tasks.tick(tick_count);
-        self.theme_studio.tick(tick_count);
-        self.snapshot_player.tick(tick_count);
+
+        // Always tick performance_hud for metrics collection
         self.performance_hud.tick(tick_count);
-        self.i18n_demo.tick(tick_count);
+
+        // Only tick the active screen (skip if it's performance_hud since we just ticked it)
+        if active == ScreenId::PerformanceHud {
+            return;
+        }
+
+        match active {
+            ScreenId::Dashboard => self.dashboard.tick(tick_count),
+            ScreenId::Shakespeare => self.shakespeare.tick(tick_count),
+            ScreenId::CodeExplorer => self.code_explorer.tick(tick_count),
+            ScreenId::WidgetGallery => self.widget_gallery.tick(tick_count),
+            ScreenId::LayoutLab => self.layout_lab.tick(tick_count),
+            ScreenId::FormsInput => self.forms_input.tick(tick_count),
+            ScreenId::DataViz => self.data_viz.tick(tick_count),
+            ScreenId::FileBrowser => self.file_browser.tick(tick_count),
+            ScreenId::AdvancedFeatures => self.advanced_features.tick(tick_count),
+            ScreenId::TerminalCapabilities => self.terminal_capabilities.tick(tick_count),
+            ScreenId::MacroRecorder => self.macro_recorder.tick(tick_count),
+            ScreenId::Performance => self.performance.tick(tick_count),
+            ScreenId::MarkdownRichText => self.markdown_rich_text.tick(tick_count),
+            ScreenId::VisualEffects => self.visual_effects.tick(tick_count),
+            ScreenId::ResponsiveDemo => self.responsive_demo.tick(tick_count),
+            ScreenId::LogSearch => self.log_search.tick(tick_count),
+            ScreenId::Notifications => self.notifications.tick(tick_count),
+            ScreenId::ActionTimeline => self.action_timeline.tick(tick_count),
+            ScreenId::IntrinsicSizing => self.intrinsic_sizing.tick(tick_count),
+            ScreenId::AdvancedTextEditor => self.advanced_text_editor.tick(tick_count),
+            ScreenId::MousePlayground => self.mouse_playground.tick(tick_count),
+            ScreenId::FormValidation => self.form_validation.tick(tick_count),
+            ScreenId::VirtualizedSearch => self.virtualized_search.tick(tick_count),
+            ScreenId::AsyncTasks => self.async_tasks.tick(tick_count),
+            ScreenId::ThemeStudio => self.theme_studio.tick(tick_count),
+            ScreenId::SnapshotPlayer => self.snapshot_player.tick(tick_count),
+            ScreenId::PerformanceHud => {} // Already ticked above
+            ScreenId::I18nDemo => self.i18n_demo.tick(tick_count),
+        }
     }
 
     fn apply_theme(&mut self) {
@@ -857,6 +877,10 @@ pub struct AppModel {
     perf_views_per_tick: f64,
     /// Performance HUD: previous view count snapshot (for computing views per tick).
     perf_prev_view_count: u64,
+    /// Timestamp of last tick received (for stall detection).
+    tick_last_seen: Option<Instant>,
+    /// Last time a tick stall was logged (rate limiting).
+    tick_stall_last_log: Cell<Option<Instant>>,
     /// Global undo/redo history manager for reversible operations.
     pub history: HistoryManager,
     /// Optional telemetry hooks for A11y mode changes.
@@ -903,6 +927,8 @@ impl AppModel {
             perf_view_counter: Cell::new(0),
             perf_views_per_tick: 0.0,
             perf_prev_view_count: 0,
+            tick_last_seen: None,
+            tick_stall_last_log: Cell::new(None),
             history: HistoryManager::default(),
             a11y_telemetry: None,
         }
@@ -1181,9 +1207,10 @@ impl AppModel {
 
             AppMsg::Tick => {
                 self.tick_count += 1;
+                self.tick_last_seen = Some(Instant::now());
                 self.record_tick_timing();
                 if !self.a11y.reduced_motion {
-                    self.screens.tick(self.tick_count);
+                    self.screens.tick(self.current_screen, self.tick_count);
                 }
                 let playback_events = self.screens.macro_recorder.drain_playback_events();
                 for event in playback_events {
@@ -1393,6 +1420,7 @@ impl Model for AppModel {
     fn view(&self, frame: &mut Frame) {
         // Increment view counter (interior mutability for perf tracking)
         self.perf_view_counter.set(self.perf_view_counter.get() + 1);
+        self.maybe_log_tick_stall();
 
         let area = Rect::from_size(frame.buffer.width(), frame.buffer.height());
 
@@ -1704,6 +1732,48 @@ impl AppModel {
                 "Performance HUD stats"
             );
         }
+    }
+
+    /// Emit a diagnostic log if ticks appear to have stalled.
+    fn maybe_log_tick_stall(&self) {
+        if !perf_hud_jsonl_enabled() {
+            return;
+        }
+        let Some(last_tick) = self.tick_last_seen else {
+            return;
+        };
+        let elapsed = last_tick.elapsed();
+        if elapsed < TICK_STALL_WARN_AFTER {
+            return;
+        }
+
+        let now = Instant::now();
+        let should_log = self
+            .tick_stall_last_log
+            .get()
+            .map(|prev| now.duration_since(prev) >= TICK_STALL_LOG_INTERVAL)
+            .unwrap_or(true);
+        if !should_log {
+            return;
+        }
+        self.tick_stall_last_log.set(Some(now));
+
+        let since_ms = elapsed.as_millis().to_string();
+        let tick = self.tick_count.to_string();
+        let reduced_motion = if self.a11y.reduced_motion {
+            "true"
+        } else {
+            "false"
+        };
+        emit_perf_hud_jsonl(
+            "tick_stall",
+            &[
+                ("since_ms", &since_ms),
+                ("tick", &tick),
+                ("screen", self.current_screen.title()),
+                ("reduced_motion", reduced_motion),
+            ],
+        );
     }
 
     /// Seed deterministic Performance HUD metrics for tests/snapshots.

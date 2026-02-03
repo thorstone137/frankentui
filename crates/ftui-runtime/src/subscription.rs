@@ -169,6 +169,19 @@ impl<M: Send + 'static> SubscriptionManager<M> {
     /// - Leaves unchanged subscriptions running
     pub(crate) fn reconcile(&mut self, subscriptions: Vec<Box<dyn Subscription<M>>>) {
         let new_ids: HashSet<SubId> = subscriptions.iter().map(|s| s.id()).collect();
+        let active_count_before = self.active.len();
+
+        crate::debug_trace!(
+            "reconcile: new_ids={:?}, active_before={}",
+            new_ids,
+            active_count_before
+        );
+        tracing::trace!(
+            new_id_count = new_ids.len(),
+            active_before = active_count_before,
+            new_ids = ?new_ids,
+            "subscription reconcile starting"
+        );
 
         // Stop subscriptions that are no longer active
         let mut remaining = Vec::new();
@@ -206,6 +219,19 @@ impl<M: Send + 'static> SubscriptionManager<M> {
                 thread: Some(thread),
             });
         }
+
+        let active_count_after = self.active.len();
+        crate::debug_trace!(
+            "reconcile complete: active_after={}",
+            active_count_after
+        );
+        tracing::trace!(
+            active_before = active_count_before,
+            active_after = active_count_after,
+            started = active_count_after.saturating_sub(active_count_before),
+            stopped = active_count_before.saturating_sub(active_count_after),
+            "subscription reconcile complete"
+        );
     }
 
     /// Drain pending messages from subscriptions.
