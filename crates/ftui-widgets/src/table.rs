@@ -464,7 +464,23 @@ impl<'a> StatefulWidget for Table<'a> {
             .gap(self.column_spacing);
 
         // We need a dummy rect with correct width to solve horizontal constraints
-        let column_rects = flex.split(Rect::new(table_area.x, table_area.y, table_area.width, 1));
+        let column_rects = flex.split_with_measurer(
+            Rect::new(table_area.x, table_area.y, table_area.width, 1),
+            |idx, _| {
+                let mut width = 0;
+                if let Some(header) = &self.header
+                    && let Some(cell) = header.cells.get(idx)
+                {
+                    width = width.max(cell.width() as u16);
+                }
+                for row in &self.rows {
+                    if let Some(cell) = row.cells.get(idx) {
+                        width = width.max(cell.width() as u16);
+                    }
+                }
+                ftui_layout::LayoutSizeHint::exact(width)
+            },
+        );
 
         let mut y = table_area.y;
         let max_y = table_area.bottom();

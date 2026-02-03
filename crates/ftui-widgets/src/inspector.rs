@@ -1659,4 +1659,226 @@ mod tests {
         let area = Rect::new(0, 0, 20, 10);
         overlay.render(area, &mut frame); // Should enter "inspector_overlay" span
     }
+
+    // =========================================================================
+    // Accessibility/UX Tests (bd-17h9.9)
+    // =========================================================================
+
+    /// Calculate relative luminance for WCAG contrast calculation.
+    /// Formula: https://www.w3.org/TR/WCAG20/#relativeluminancedef
+    fn relative_luminance(rgba: PackedRgba) -> f64 {
+        fn channel_luminance(c: u8) -> f64 {
+            let c = c as f64 / 255.0;
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        let r = channel_luminance(rgba.r());
+        let g = channel_luminance(rgba.g());
+        let b = channel_luminance(rgba.b());
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    /// Calculate WCAG contrast ratio between two colors.
+    /// Returns ratio in range [1.0, 21.0].
+    fn contrast_ratio(fg: PackedRgba, bg: PackedRgba) -> f64 {
+        let l1 = relative_luminance(fg);
+        let l2 = relative_luminance(bg);
+        let lighter = l1.max(l2);
+        let darker = l1.min(l2);
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    #[test]
+    fn a11y_label_contrast_meets_wcag_aa() {
+        // WCAG AA requires 4.5:1 for normal text, 3:1 for large text
+        // Labels in inspector are typically large (widget names), so 3:1 is sufficient
+        let style = InspectorStyle::default();
+        let ratio = contrast_ratio(style.label_fg, style.label_bg);
+        assert!(
+            ratio >= 3.0,
+            "Label contrast ratio {:.2}:1 should be >= 3:1 (WCAG AA large text)",
+            ratio
+        );
+        // Actually we exceed 4.5:1 (white on dark bg)
+        assert!(
+            ratio >= 4.5,
+            "Label contrast ratio {:.2}:1 should be >= 4.5:1 (WCAG AA normal text)",
+            ratio
+        );
+    }
+
+    #[test]
+    fn a11y_bound_colors_are_distinct() {
+        // Ensure bound colors are visually distinct from each other
+        // by checking they have different hues
+        let style = InspectorStyle::default();
+        let colors = &style.bound_colors;
+
+        // All pairs should have at least one channel differing by 100+
+        for (i, a) in colors.iter().enumerate() {
+            for (j, b) in colors.iter().enumerate() {
+                if i != j {
+                    let r_diff = (a.r() as i32 - b.r() as i32).abs();
+                    let g_diff = (a.g() as i32 - b.g() as i32).abs();
+                    let b_diff = (a.b() as i32 - b.b() as i32).abs();
+                    let max_diff = r_diff.max(g_diff).max(b_diff);
+                    assert!(
+                        max_diff >= 100,
+                        "Bound colors {} and {} should differ by at least 100 in one channel (max diff = {})",
+                        i, j, max_diff
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a11y_bound_colors_have_good_visibility() {
+        // All bound colors should be bright enough to be visible
+        // At least one channel should be >= 100
+        let style = InspectorStyle::default();
+        for (i, color) in style.bound_colors.iter().enumerate() {
+            let max_channel = color.r().max(color.g()).max(color.b());
+            assert!(
+                max_channel >= 100,
+                "Bound color {} should have at least one channel >= 100 for visibility (max = {})",
+                i, max_channel
+            );
+        }
+    }
+
+    #[test]
+    fn a11y_hit_overlays_are_visible() {
+        // Hit overlays should have enough alpha to be visible
+        // but not so much that they obscure content
+        let style = InspectorStyle::default();
+
+        // hit_overlay (normal state) - should be visible but subtle
+        assert!(
+            style.hit_overlay.a() >= 50,
+            "hit_overlay alpha {} should be >= 50 for visibility",
+            style.hit_overlay.a()
+        );
+
+        // hit_hover (hover state) - should be more prominent
+        assert!(
+            style.hit_hover.a() >= 80,
+            "hit_hover alpha {} should be >= 80 for clear hover indication",
+            style.hit_hover.a()
+        );
+        assert!(
+            style.hit_hover.a() > style.hit_overlay.a(),
+            "hit_hover should be more visible than hit_overlay"
+        );
+
+        // selected_highlight - should be the most prominent
+        assert!(
+            style.selected_highlight.a() >= 100,
+            "selected_highlight alpha {} should be >= 100 for clear selection",
+            style.selected_highlight.a()
+        );
+    }
+
+    #[test]
+    fn a11y_region_colors_cover_all_variants() {
+        // Ensure all HitRegion variants have a defined color
+        let style = InspectorStyle::default();
+        let regions = [
+            HitRegion::None,
+            HitRegion::Content,
+            HitRegion::Border,
+            HitRegion::Scrollbar,
+            HitRegion::Handle,
+            HitRegion::Button,
+            HitRegion::Link,
+            HitRegion::Custom(0),
+        ];
+
+        for region in regions {
+            let color = style.region_color(region);
+            // None should be transparent, others should be visible
+            match region {
+                HitRegion::None => {
+                    assert_eq!(
+                        color,
+                        PackedRgba::TRANSPARENT,
+                        "HitRegion::None should be transparent"
+                    );
+                }
+                _ => {
+                    assert!(
+                        color.a() > 0,
+                        "HitRegion::{:?} should have non-zero alpha",
+                        region
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a11y_interactive_regions_are_distinct_from_passive() {
+        // Interactive regions (Button, Link) should be visually distinct
+        // from passive regions (Content, Border)
+        let style = InspectorStyle::default();
+
+        let button_color = style.region_color(HitRegion::Button);
+        let link_color = style.region_color(HitRegion::Link);
+        let content_color = style.region_color(HitRegion::Content);
+        let _border_color = style.region_color(HitRegion::Border);
+
+        // Button and Link should be more visible (higher alpha) than passive regions
+        assert!(
+            button_color.a() >= content_color.a(),
+            "Button overlay should be as visible or more visible than Content"
+        );
+        assert!(
+            link_color.a() >= content_color.a(),
+            "Link overlay should be as visible or more visible than Content"
+        );
+
+        // Button and Link should differ from Content by color (not just alpha)
+        let button_content_diff = (button_color.r() as i32 - content_color.r() as i32).abs()
+            + (button_color.g() as i32 - content_color.g() as i32).abs()
+            + (button_color.b() as i32 - content_color.b() as i32).abs();
+        assert!(
+            button_content_diff >= 100,
+            "Button color should differ significantly from Content (diff = {})",
+            button_content_diff
+        );
+    }
+
+    #[test]
+    fn a11y_keybinding_constants_documented() {
+        // This test documents the expected keybindings per spec.
+        // It doesn't test runtime behavior, but serves as a reminder
+        // of accessibility considerations for keybindings:
+        //
+        // Primary activations (accessible):
+        //   - F12: Toggle inspector
+        //   - Ctrl+Shift+I: Alternative toggle (browser devtools pattern)
+        //
+        // Mode selection (may conflict with text input):
+        //   - i: Cycle modes
+        //   - 0-3: Direct mode selection
+        //
+        // Navigation (accessible):
+        //   - Tab/Shift+Tab: Widget cycling
+        //   - Escape: Clear selection
+        //   - Enter: Expand/collapse
+        //
+        // Toggles (may conflict with text input):
+        //   - h: Toggle hits, b: bounds, n: names, t: times
+        //   - d: Toggle detail panel
+        //
+        // Recommendation: When inspector is active and focused,
+        // these single-letter keys should work. When a text input
+        // has focus, pass through to the input.
+
+        // This test passes if it compiles - it's documentation-as-code
+        // (Assertion removed as it was always true)
+    }
 }
