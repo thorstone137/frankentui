@@ -50,6 +50,13 @@
 - [x] `br sync --flush-only`
 - [ ] Send closure note to OliveDesert (MCP send failed; retry)
 
+## Current Session (ScarletStream) — bd-1csc.6 Drag-and-Drop E2E Test Suite
+- [x] Claim `bd-1csc.6`
+- [x] Run `tests/e2e/scripts/test_drag_drop.sh` (4/4 cases passed)
+- [x] Close `bd-1csc.6`
+- [x] `br sync --flush-only`
+- [ ] Send completion message to OliveDesert (MCP send failed; retry)
+
 ## 8. Current Session (DustyCanyon) — Agent Mail + E2E Kitty Keyboard
 - [x] **Confirm AGENTS.md + README.md fully read** (requirements + architecture context)
 - [x] **Run code investigation agent** to map FrankenTUI architecture and key crates

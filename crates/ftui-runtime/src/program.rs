@@ -827,6 +827,11 @@ impl<M: Model, W: Write + Send> Program<M, W> {
             if self.dirty {
                 self.render_frame()?;
             }
+
+            // Periodic grapheme pool GC
+            if loop_count.is_multiple_of(1000) {
+                self.writer.gc();
+            }
         }
 
         // Auto-save state on exit

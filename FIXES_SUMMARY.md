@@ -90,3 +90,11 @@ All tasks are complete. The codebase has been extensively refactored for Unicode
         - **Horizontal:** The loop now skips `symbol_width` cells after drawing, preserving wide characters.
         - **Vertical:** The loop continues to increment by 1 (row), as wide characters stack vertically without overlapping.
 
+## 72. Grapheme Pool Garbage Collection
+**File:** `crates/ftui-runtime/src/terminal_writer.rs`, `crates/ftui-runtime/src/program.rs`
+**Issue:** The `GraphemePool` used for interning complex characters (emoji, ZWJ sequences) never released its slots because `garbage_collect` was never called by the runtime. In long-running applications with streaming content (like logs with many unique emojis), this would lead to unbounded memory growth.
+**Fix:**
+    - Added a `gc()` method to `TerminalWriter` that performs mark-and-sweep using the previous frame's buffer as the live set.
+    - Updated `Program::run_event_loop` to trigger `writer.gc()` periodically (every 1000 loop iterations) to reclaim unused grapheme slots.
+
+

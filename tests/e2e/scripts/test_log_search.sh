@@ -22,6 +22,9 @@ source "$LIB_DIR/pty.sh"
 
 JSONL_FILE="$E2E_RESULTS_DIR/log_search.jsonl"
 RUN_ID="logsearch_$(date +%Y%m%d_%H%M%S)_$$"
+TERM_NAME="${TERM:-unknown}"
+COLORTERM_NAME="${COLORTERM:-}"
+GIT_REV="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 
 jsonl_log() {
     local line="$1"
@@ -63,9 +66,11 @@ run_case() {
         local duration_ms=$((end_ms - start_ms))
         local size
         size=$(wc -c < "$output_file" | tr -d ' ')
+        local checksum
+        checksum=$(cksum "$output_file" | awk '{print $1}')
         log_test_pass "$name"
         record_result "$name" "passed" "$duration_ms" "$LOG_FILE"
-        jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$name\",\"status\":\"passed\",\"duration_ms\":$duration_ms,\"output_bytes\":$size,\"send\":\"$send_label\",\"cols\":120,\"rows\":40}"
+        jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$name\",\"status\":\"passed\",\"duration_ms\":$duration_ms,\"output_bytes\":$size,\"checksum\":$checksum,\"send\":\"$send_label\",\"cols\":120,\"rows\":40,\"term\":\"$TERM_NAME\",\"colorterm\":\"$COLORTERM_NAME\",\"capabilities\":\"pty\",\"seed\":\"none\",\"git_rev\":\"$GIT_REV\"}"
         return 0
     fi
 
@@ -74,7 +79,15 @@ run_case() {
     local duration_ms=$((end_ms - start_ms))
     log_test_fail "$name" "assertion failed"
     record_result "$name" "failed" "$duration_ms" "$LOG_FILE" "assertion failed"
-    jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$name\",\"status\":\"failed\",\"duration_ms\":$duration_ms,\"send\":\"$send_label\",\"cols\":120,\"rows\":40}"
+    if [[ -f "$output_file" ]]; then
+        local size
+        size=$(wc -c < "$output_file" | tr -d ' ')
+        local checksum
+        checksum=$(cksum "$output_file" | awk '{print $1}')
+        jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$name\",\"status\":\"failed\",\"duration_ms\":$duration_ms,\"output_bytes\":$size,\"checksum\":$checksum,\"send\":\"$send_label\",\"cols\":120,\"rows\":40,\"term\":\"$TERM_NAME\",\"colorterm\":\"$COLORTERM_NAME\",\"capabilities\":\"pty\",\"seed\":\"none\",\"git_rev\":\"$GIT_REV\"}"
+    else
+        jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$name\",\"status\":\"failed\",\"duration_ms\":$duration_ms,\"send\":\"$send_label\",\"cols\":120,\"rows\":40,\"term\":\"$TERM_NAME\",\"colorterm\":\"$COLORTERM_NAME\",\"capabilities\":\"pty\",\"seed\":\"none\",\"git_rev\":\"$GIT_REV\"}"
+    fi
     return 1
 }
 
@@ -84,10 +97,12 @@ if [[ -z "$DEMO_BIN" ]]; then
     for t in log_search_open log_search_literal log_search_regex log_search_case log_search_exit; do
         log_test_skip "$t" "ftui-demo-showcase binary missing"
         record_result "$t" "skipped" 0 "$LOG_FILE" "binary missing"
-        jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$t\",\"status\":\"skipped\",\"reason\":\"binary missing\"}"
+        jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"$t\",\"status\":\"skipped\",\"reason\":\"binary missing\",\"term\":\"$TERM_NAME\",\"colorterm\":\"$COLORTERM_NAME\",\"capabilities\":\"pty\",\"seed\":\"none\",\"git_rev\":\"$GIT_REV\"}"
     done
     exit 0
 fi
+
+jsonl_log "{\"run_id\":\"$RUN_ID\",\"case\":\"env\",\"status\":\"info\",\"term\":\"$TERM_NAME\",\"colorterm\":\"$COLORTERM_NAME\",\"capabilities\":\"pty\",\"seed\":\"none\",\"cols\":120,\"rows\":40,\"git_rev\":\"$GIT_REV\"}"
 
 # Control bytes
 SLASH='/'
