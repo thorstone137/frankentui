@@ -1,0 +1,24 @@
+ 1: Dash │ 2: Shakes │ 3: Code │ 4: Widgets │ 5: Layout │ 6: Forms │ 7: DataViz 
+╭─────────────────────────────────Async Tasks──────────────────────────────────╮
+│Tasks: 3 total | Queued: 3 | Running: 0 | Done: 0 | Failed: 0 | Policy: FIFO  │
+│╭─────────────────Task Queue──────────────────╮╭────────Task Details─────────╮│
+││> Queued   [M] Initial Setup                 ││ID: 1                        ││
+││  Queued   [L] Data Sync                     ││Name: Initial Setup          ││
+││  Queued   [H] Cache Warm                    ││State: Queued                ││
+││                                             ││Priority: 2                  ││
+││                                             ││Progress: 0%                 ││
+││                                             ││Elapsed: 0 ticks             ││
+││                                             ││Estimated: 30 ticks          ││
+││                                             │╰─────────────────────────────╯│
+││                                             │╭──────────Activity───────────╮│
+││                                             ││Spawned: Initial Setup       ││
+││                                             ││Spawned: Data Sync           ││
+││                                             ││Spawned: Cache Warm          ││
+││                                             ││                             ││
+││                                             ││                             ││
+││                                             ││                             ││
+││                                             ││                             ││
+│╰─────────────────────────────────────────────╯╰─────────────────────────────╯│
+│n:spawn  c:cancel  s:scheduler  r:retry  j/k:nav  q:quit                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ Async Tasks [23/23]  Cyberpunk Aurora          tick:0 frm:0          0x0 00:00 
