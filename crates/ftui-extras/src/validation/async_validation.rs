@@ -335,13 +335,12 @@ impl ValidationTrace {
                 current_token,
                 ..
             } = event
+                && token >= current_token
             {
-                if token >= current_token {
-                    violations.push(format!(
-                        "StaleDiscarded with non-stale token: {} >= {}",
-                        token, current_token
-                    ));
-                }
+                violations.push(format!(
+                    "StaleDiscarded with non-stale token: {} >= {}",
+                    token, current_token
+                ));
             }
         }
 

@@ -31,6 +31,8 @@ use crate::theme::ThemePalette;
 
 // Effects submodule with extracted effects (Metaballs, Plasma, etc.)
 pub mod effects;
+#[cfg(feature = "fx-gpu")]
+pub mod gpu;
 
 // Re-export from effects for convenience
 pub use effects::{

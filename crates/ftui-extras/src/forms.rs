@@ -366,6 +366,12 @@ pub struct FormState {
     pub errors: Vec<ValidationError>,
     /// Cursor position within a text field (grapheme index).
     pub text_cursor: usize,
+    /// Per-field touched state (true if field was focused then blurred).
+    touched: Vec<bool>,
+    /// Per-field dirty state (true if field value differs from initial).
+    dirty: Vec<bool>,
+    /// Initial field values for dirty tracking (set via `init_tracking`).
+    initial_values: Option<Vec<FormValue>>,
 }
 
 impl FormState {
@@ -382,6 +388,146 @@ impl FormState {
             self.focused = self.focused.checked_sub(1).unwrap_or(field_count - 1);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Touched / Dirty State Tracking
+    // -------------------------------------------------------------------------
+
+    /// Initialize tracking for a form's fields.
+    ///
+    /// This captures the current field values as the "initial" state for dirty
+    /// tracking and ensures the touched/dirty vectors are sized correctly.
+    /// Should be called once when the form is first displayed.
+    pub fn init_tracking(&mut self, form: &Form) {
+        let count = form.field_count();
+        self.touched = vec![false; count];
+        self.dirty = vec![false; count];
+        self.initial_values = Some(
+            form.fields
+                .iter()
+                .map(|f| match f {
+                    FormField::Text { value, .. } => FormValue::Text(value.clone()),
+                    FormField::Checkbox { checked, .. } => FormValue::Bool(*checked),
+                    FormField::Radio {
+                        options, selected, ..
+                    } => FormValue::Choice {
+                        index: *selected,
+                        label: options.get(*selected).cloned().unwrap_or_default(),
+                    },
+                    FormField::Select {
+                        options, selected, ..
+                    } => FormValue::Choice {
+                        index: *selected,
+                        label: options.get(*selected).cloned().unwrap_or_default(),
+                    },
+                    FormField::Number { value, .. } => FormValue::Number(*value),
+                })
+                .collect(),
+        );
+    }
+
+    /// Check if a specific field has been touched (focused then blurred).
+    pub fn is_touched(&self, field_idx: usize) -> bool {
+        self.touched.get(field_idx).copied().unwrap_or(false)
+    }
+
+    /// Check if any field has been touched.
+    pub fn any_touched(&self) -> bool {
+        self.touched.iter().any(|&t| t)
+    }
+
+    /// Mark a specific field as touched.
+    pub fn mark_touched(&mut self, field_idx: usize) {
+        if field_idx < self.touched.len() {
+            self.touched[field_idx] = true;
+        }
+    }
+
+    /// Check if a specific field is dirty (value differs from initial).
+    ///
+    /// Returns `false` if tracking was not initialized or the field doesn't exist.
+    pub fn is_dirty(&self, field_idx: usize) -> bool {
+        self.dirty.get(field_idx).copied().unwrap_or(false)
+    }
+
+    /// Check if any field is dirty.
+    pub fn any_dirty(&self) -> bool {
+        self.dirty.iter().any(|&d| d)
+    }
+
+    /// Update dirty state for a field by comparing current value to initial.
+    ///
+    /// Call this after any value change to keep dirty state accurate.
+    pub fn update_dirty(&mut self, form: &Form, field_idx: usize) {
+        let Some(initial_values) = &self.initial_values else {
+            return;
+        };
+        let Some(initial) = initial_values.get(field_idx) else {
+            return;
+        };
+        let Some(field) = form.fields.get(field_idx) else {
+            return;
+        };
+
+        let current = match field {
+            FormField::Text { value, .. } => FormValue::Text(value.clone()),
+            FormField::Checkbox { checked, .. } => FormValue::Bool(*checked),
+            FormField::Radio {
+                options, selected, ..
+            } => FormValue::Choice {
+                index: *selected,
+                label: options.get(*selected).cloned().unwrap_or_default(),
+            },
+            FormField::Select {
+                options, selected, ..
+            } => FormValue::Choice {
+                index: *selected,
+                label: options.get(*selected).cloned().unwrap_or_default(),
+            },
+            FormField::Number { value, .. } => FormValue::Number(*value),
+        };
+
+        if field_idx < self.dirty.len() {
+            self.dirty[field_idx] = current != *initial;
+        }
+    }
+
+    /// Get list of touched field indices.
+    pub fn touched_fields(&self) -> Vec<usize> {
+        self.touched
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &t)| if t { Some(i) } else { None })
+            .collect()
+    }
+
+    /// Get list of dirty field indices.
+    pub fn dirty_fields(&self) -> Vec<usize> {
+        self.dirty
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &d)| if d { Some(i) } else { None })
+            .collect()
+    }
+
+    /// Reset touched state for all fields.
+    pub fn reset_touched(&mut self) {
+        self.touched.iter_mut().for_each(|t| *t = false);
+    }
+
+    /// Reset dirty state by re-capturing current values as initial.
+    pub fn reset_dirty(&mut self, form: &Form) {
+        self.init_tracking(form);
+    }
+
+    /// Check if form is pristine (no fields touched or dirty).
+    pub fn is_pristine(&self) -> bool {
+        !self.any_touched() && !self.any_dirty()
+    }
+
+    // -------------------------------------------------------------------------
+    // Event Handling
+    // -------------------------------------------------------------------------
 
     /// Handle a terminal event for the form. Returns `true` if state changed.
     pub fn handle_event(&mut self, form: &mut Form, event: &Event) -> bool {
@@ -401,11 +547,15 @@ impl FormState {
         match key.code {
             // Tab / Shift+Tab: navigate fields
             KeyCode::Tab => {
+                // Mark current field as touched before moving focus
+                self.mark_touched(self.focused);
                 self.focus_next(form.field_count());
                 self.sync_text_cursor(form);
                 true
             }
             KeyCode::BackTab => {
+                // Mark current field as touched before moving focus
+                self.mark_touched(self.focused);
                 self.focus_prev(form.field_count());
                 self.sync_text_cursor(form);
                 true
@@ -456,6 +606,7 @@ impl FormState {
                             .checked_sub(1)
                             .unwrap_or(options.len().saturating_sub(1));
                     }
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Select {
@@ -466,6 +617,7 @@ impl FormState {
                             .checked_sub(1)
                             .unwrap_or(options.len().saturating_sub(1));
                     }
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Number {
@@ -473,12 +625,14 @@ impl FormState {
                 } => {
                     let new_val = value.saturating_add(*step);
                     *value = max.map_or(new_val, |m| new_val.min(m));
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 _ => {}
             }
         }
-        // Default: move focus up
+        // Default: move focus up (mark touched before moving)
+        self.mark_touched(self.focused);
         self.focus_prev(form.field_count());
         self.sync_text_cursor(form);
         true
@@ -493,6 +647,7 @@ impl FormState {
                     if !options.is_empty() {
                         *selected = (*selected + 1) % options.len();
                     }
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Select {
@@ -501,6 +656,7 @@ impl FormState {
                     if !options.is_empty() {
                         *selected = (*selected + 1) % options.len();
                     }
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Number {
@@ -508,12 +664,14 @@ impl FormState {
                 } => {
                     let new_val = value.saturating_sub(*step);
                     *value = min.map_or(new_val, |m| new_val.max(m));
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 _ => {}
             }
         }
-        // Default: move focus down
+        // Default: move focus down (mark touched before moving)
+        self.mark_touched(self.focused);
         self.focus_next(form.field_count());
         self.sync_text_cursor(form);
         true
@@ -524,12 +682,14 @@ impl FormState {
             match field {
                 FormField::Checkbox { checked, .. } => {
                     *checked = !*checked;
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Text { value, .. } => {
                     let byte_offset = grapheme_byte_offset(value, self.text_cursor);
                     value.insert(byte_offset, ' ');
                     self.text_cursor += 1;
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 _ => {}
@@ -546,6 +706,7 @@ impl FormState {
                 } => {
                     let new_val = value.saturating_sub(*step);
                     *value = min.map_or(new_val, |m| new_val.max(m));
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Select {
@@ -556,9 +717,11 @@ impl FormState {
                             .checked_sub(1)
                             .unwrap_or(options.len().saturating_sub(1));
                     }
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Text { .. } => {
+                    // Cursor movement doesn't change value, no dirty update needed
                     if self.text_cursor > 0 {
                         self.text_cursor -= 1;
                     }
@@ -578,6 +741,7 @@ impl FormState {
                 } => {
                     let new_val = value.saturating_add(*step);
                     *value = max.map_or(new_val, |m| new_val.min(m));
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Select {
@@ -586,9 +750,11 @@ impl FormState {
                     if !options.is_empty() {
                         *selected = (*selected + 1) % options.len();
                     }
+                    self.update_dirty(form, self.focused);
                     return true;
                 }
                 FormField::Text { value, .. } => {
+                    // Cursor movement doesn't change value, no dirty update needed
                     let count = grapheme_count(value);
                     if self.text_cursor < count {
                         self.text_cursor += 1;
@@ -612,6 +778,7 @@ impl FormState {
             } else {
                 self.text_cursor = self.text_cursor.min(after_count);
             }
+            self.update_dirty(form, self.focused);
             return true;
         }
         false
@@ -625,6 +792,7 @@ impl FormState {
             let byte_end = grapheme_byte_offset(value, self.text_cursor);
             value.drain(byte_start..byte_end);
             self.text_cursor -= 1;
+            self.update_dirty(form, self.focused);
             return true;
         }
         false
@@ -637,6 +805,7 @@ impl FormState {
                 let byte_start = grapheme_byte_offset(value, self.text_cursor);
                 let byte_end = grapheme_byte_offset(value, self.text_cursor + 1);
                 value.drain(byte_start..byte_end);
+                self.update_dirty(form, self.focused);
                 return true;
             }
         }
@@ -1912,5 +2081,332 @@ mod tests {
     #[test]
     fn grapheme_byte_offset_past_end() {
         assert_eq!(grapheme_byte_offset("hi", 10), 2);
+    }
+
+    // -- Touched / Dirty state tracking --
+
+    #[test]
+    fn init_tracking_sets_up_vectors() {
+        let form = Form::new(vec![
+            FormField::text("Name"),
+            FormField::checkbox("Agree", false),
+            FormField::number("Age", 25),
+        ]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert_eq!(state.touched.len(), 3);
+        assert_eq!(state.dirty.len(), 3);
+        assert!(state.initial_values.is_some());
+        assert!(state.is_pristine());
+    }
+
+    #[test]
+    fn tab_marks_field_as_touched() {
+        let mut form = Form::new(vec![FormField::text("A"), FormField::text("B")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_touched(0));
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        assert!(state.is_touched(0));
+        assert!(!state.is_touched(1));
+    }
+
+    #[test]
+    fn backtab_marks_field_as_touched() {
+        let mut form = Form::new(vec![FormField::text("A"), FormField::text("B")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::BackTab));
+        assert!(state.is_touched(0));
+    }
+
+    #[test]
+    fn text_input_marks_dirty() {
+        let mut form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_dirty(0));
+        state.handle_event(&mut form, &press(KeyCode::Char('A')));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn checkbox_toggle_marks_dirty() {
+        let mut form = Form::new(vec![FormField::checkbox("Agree", false)]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_dirty(0));
+        state.handle_event(&mut form, &press(KeyCode::Char(' ')));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn number_change_marks_dirty() {
+        let mut form = Form::new(vec![FormField::number("Count", 10)]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_dirty(0));
+        state.handle_event(&mut form, &press(KeyCode::Up));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn radio_change_marks_dirty() {
+        let mut form = Form::new(vec![FormField::radio(
+            "Color",
+            vec!["Red".into(), "Green".into()],
+        )]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_dirty(0));
+        state.handle_event(&mut form, &press(KeyCode::Down));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn select_change_marks_dirty() {
+        let mut form = Form::new(vec![FormField::select(
+            "Size",
+            vec!["S".into(), "M".into()],
+        )]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_dirty(0));
+        state.handle_event(&mut form, &press(KeyCode::Right));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn any_touched_returns_true_when_one_touched() {
+        let mut form = Form::new(vec![FormField::text("A"), FormField::text("B")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.any_touched());
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        assert!(state.any_touched());
+    }
+
+    #[test]
+    fn any_dirty_returns_true_when_one_dirty() {
+        let mut form = Form::new(vec![
+            FormField::text("A"),
+            FormField::text_with_value("B", "Hello"),
+        ]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.any_dirty());
+        state.handle_event(&mut form, &press(KeyCode::Char('X')));
+        assert!(state.any_dirty());
+    }
+
+    #[test]
+    fn touched_fields_returns_indices() {
+        let mut form = Form::new(vec![
+            FormField::text("A"),
+            FormField::text("B"),
+            FormField::text("C"),
+        ]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        // Touched: 0, 1 (current field 2 not yet touched since we haven't left it)
+        assert_eq!(state.touched_fields(), vec![0, 1]);
+    }
+
+    #[test]
+    fn dirty_fields_returns_indices() {
+        let mut form = Form::new(vec![
+            FormField::text("A"),
+            FormField::text("B"),
+            FormField::text("C"),
+        ]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Char('X')));
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        state.handle_event(&mut form, &press(KeyCode::Char('Y')));
+        // Dirty: 0 (typed X), 2 (typed Y)
+        assert_eq!(state.dirty_fields(), vec![0, 2]);
+    }
+
+    #[test]
+    fn reset_touched_clears_all() {
+        let mut form = Form::new(vec![FormField::text("A"), FormField::text("B")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        assert!(state.any_touched());
+
+        state.reset_touched();
+        assert!(!state.any_touched());
+    }
+
+    #[test]
+    fn reset_dirty_re_initializes() {
+        let mut form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Char('A')));
+        assert!(state.is_dirty(0));
+
+        state.reset_dirty(&form);
+        // After reset, "A" is now the initial value, so not dirty
+        assert!(!state.is_dirty(0));
+    }
+
+    #[test]
+    fn is_pristine_initially_true() {
+        let form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(state.is_pristine());
+    }
+
+    #[test]
+    fn is_pristine_false_after_touched() {
+        let mut form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Tab));
+        assert!(!state.is_pristine());
+    }
+
+    #[test]
+    fn is_pristine_false_after_dirty() {
+        let mut form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Char('X')));
+        assert!(!state.is_pristine());
+    }
+
+    #[test]
+    fn dirty_becomes_false_when_value_reverts() {
+        let mut form = Form::new(vec![FormField::text_with_value("Name", "A")]);
+        let mut state = FormState {
+            text_cursor: 1,
+            ..Default::default()
+        };
+        state.init_tracking(&form);
+
+        // Type a character
+        state.handle_event(&mut form, &press(KeyCode::Char('B')));
+        assert!(state.is_dirty(0));
+
+        // Delete it
+        state.handle_event(&mut form, &press(KeyCode::Backspace));
+        assert!(!state.is_dirty(0));
+    }
+
+    #[test]
+    fn backspace_updates_dirty() {
+        let mut form = Form::new(vec![FormField::text_with_value("Name", "AB")]);
+        let mut state = FormState {
+            text_cursor: 2,
+            ..Default::default()
+        };
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Backspace));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn delete_updates_dirty() {
+        let mut form = Form::new(vec![FormField::text_with_value("Name", "AB")]);
+        let mut state = FormState {
+            text_cursor: 0,
+            ..Default::default()
+        };
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Delete));
+        assert!(state.is_dirty(0));
+    }
+
+    #[test]
+    fn is_touched_returns_false_for_invalid_index() {
+        let form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_touched(100));
+    }
+
+    #[test]
+    fn is_dirty_returns_false_for_invalid_index() {
+        let form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        assert!(!state.is_dirty(100));
+    }
+
+    #[test]
+    fn is_touched_false_without_init() {
+        let state = FormState::default();
+        assert!(!state.is_touched(0));
+    }
+
+    #[test]
+    fn is_dirty_false_without_init() {
+        let state = FormState::default();
+        assert!(!state.is_dirty(0));
+    }
+
+    #[test]
+    fn mark_touched_noop_for_invalid_index() {
+        let form = Form::new(vec![FormField::text("Name")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        // Should not panic
+        state.mark_touched(100);
+        assert!(!state.is_touched(100));
+    }
+
+    #[test]
+    fn up_on_text_field_marks_touched() {
+        let mut form = Form::new(vec![FormField::text("A"), FormField::text("B")]);
+        let mut state = FormState {
+            focused: 1,
+            ..Default::default()
+        };
+        state.init_tracking(&form);
+
+        // Up on text field moves focus (doesn't change value)
+        state.handle_event(&mut form, &press(KeyCode::Up));
+        assert!(state.is_touched(1));
+        assert_eq!(state.focused, 0);
+    }
+
+    #[test]
+    fn down_on_text_field_marks_touched() {
+        let mut form = Form::new(vec![FormField::text("A"), FormField::text("B")]);
+        let mut state = FormState::default();
+        state.init_tracking(&form);
+
+        state.handle_event(&mut form, &press(KeyCode::Down));
+        assert!(state.is_touched(0));
+        assert_eq!(state.focused, 1);
     }
 }

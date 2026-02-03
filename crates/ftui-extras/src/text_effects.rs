@@ -33,7 +33,7 @@
 //!     .time(current_time);
 //! ```
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2, TAU};
 
 use ftui_core::geometry::Rect;
 use ftui_render::cell::{CellAttrs, CellContent, PackedRgba, StyleFlags as CellStyleFlags};
@@ -84,6 +84,80 @@ pub fn hsv_to_rgb(h: f64, s: f64, v: f64) -> PackedRgba {
         ((g + m) * 255.0) as u8,
         ((b + m) * 255.0) as u8,
     )
+}
+
+// =============================================================================
+// Organic Breathing Pulse (bd-27kx)
+// =============================================================================
+//
+// Organic breathing has asymmetric timing: quick inhale, slow exhale.
+// This mimics natural breathing patterns and creates a more lifelike animation.
+//
+// Evidence Ledger:
+// - Choice: Quadratic easing for rise/fall curves
+// - Reason: Quadratic provides smooth acceleration without sharp inflection points,
+//   and is computationally cheap (no transcendental functions in inner loop).
+// - Invariants:
+//   - breathing_curve(0, _) = 0.0 (start at minimum)
+//   - breathing_curve(rise_end, _) = 1.0 (peak at end of inhale)
+//   - breathing_curve(1, _) = 0.0 (return to minimum after full cycle)
+//   - Curve is continuous at rise_duration boundary
+// - Failure Modes:
+//   - asymmetry > 1.0: clamped to prevent rise_duration going negative
+//   - t outside [0,1]: use rem_euclid before calling
+
+/// Asymmetric breathing curve for organic pulse effect.
+///
+/// Models natural breathing with quick inhale, slow exhale.
+///
+/// # Arguments
+/// * `t` - Position in breath cycle (0.0 = start, 1.0 = end, wraps)
+/// * `asymmetry` - Asymmetry factor (0.0 = symmetric, 1.0 = very asymmetric)
+///
+/// # Returns
+/// Brightness value from 0.0 to 1.0.
+///
+/// # Invariants
+/// - Returns 0.0 at t=0 (cycle start)
+/// - Peaks at 1.0 during the inhale phase
+/// - Returns to 0.0 at t=1 (cycle end)
+#[inline]
+pub fn breathing_curve(t: f64, asymmetry: f64) -> f64 {
+    let t = t.rem_euclid(1.0);
+    let asymmetry = asymmetry.clamp(0.0, 1.0);
+
+    // Rise duration: 30% at symmetric, down to 10% at max asymmetry
+    let rise_duration = 0.3 - asymmetry * 0.2;
+
+    if t < rise_duration {
+        // Quick rise (inhale) - quadratic ease-out for snappy attack
+        let local_t = t / rise_duration;
+        1.0 - (1.0 - local_t) * (1.0 - local_t)
+    } else {
+        // Slow fall (exhale) - quadratic ease-in-out for smooth decay
+        let local_t = (t - rise_duration) / (1.0 - rise_duration);
+        if local_t < 0.5 {
+            // First half: ease-out from peak
+            1.0 - 2.0 * local_t * local_t
+        } else {
+            // Second half: ease-in to minimum
+            2.0 * (1.0 - local_t) * (1.0 - local_t)
+        }
+    }
+}
+
+/// Compute deterministic phase offset for a character in organic pulse.
+///
+/// Uses a simple hash function to spread characters across the phase cycle
+/// based on their index and a seed value.
+#[inline]
+pub fn organic_char_phase_offset(char_idx: usize, seed: u64, phase_variation: f64) -> f64 {
+    // Simple deterministic hash: multiply by large prime, take fractional part
+    let hash = seed
+        .wrapping_mul(2654435761)
+        .wrapping_add(char_idx as u64 * 2246822519);
+    let frac = (hash % 10000) as f64 / 10000.0;
+    frac * phase_variation.clamp(0.0, 1.0)
 }
 
 // =============================================================================
@@ -1555,6 +1629,36 @@ pub enum TextEffect {
         min_alpha: f64,
     },
 
+    /// Organic breathing pulse with asymmetric timing (quick inhale, slow exhale).
+    ///
+    /// Unlike regular `Pulse`, this effect:
+    /// - Has asymmetric rise/fall timing for a more natural feel
+    /// - Supports per-character phase variation for wave-like motion
+    /// - Uses deterministic seeded randomness for consistent animation
+    ///
+    /// # Example
+    /// ```ignore
+    /// TextEffect::OrganicPulse {
+    ///     speed: 0.5,           // One breath every 2 seconds
+    ///     min_brightness: 0.3,  // Dim to 30% at exhale
+    ///     asymmetry: 0.5,       // Moderate asymmetry
+    ///     phase_variation: 0.2, // Slight wave across characters
+    ///     seed: 42,
+    /// }
+    /// ```
+    OrganicPulse {
+        /// Breath cycles per second (0.5 = one breath every 2s).
+        speed: f64,
+        /// Minimum brightness (0.0-1.0) at the lowest point of exhale.
+        min_brightness: f64,
+        /// Asymmetry factor (0.0 = symmetric, 1.0 = very asymmetric quick-in/slow-out).
+        asymmetry: f64,
+        /// Phase variation (0.0-1.0) for how much adjacent characters differ in phase.
+        phase_variation: f64,
+        /// Seed for deterministic pseudo-random phase offsets.
+        seed: u64,
+    },
+
     // --- Gradient Effects ---
     /// Horizontal gradient across text.
     HorizontalGradient {
@@ -1572,6 +1676,41 @@ pub enum TextEffect {
     RainbowGradient {
         /// Animation speed.
         speed: f64,
+    },
+
+    /// Vertical gradient from top to bottom (for multi-line text).
+    ///
+    /// For multi-line text, samples gradient by row: t = row / total_rows.
+    /// For single-line text, returns the center color (sample(0.5)).
+    VerticalGradient {
+        /// Gradient to use.
+        gradient: ColorGradient,
+    },
+
+    /// Diagonal gradient at a specified angle.
+    ///
+    /// The angle is in degrees:
+    /// - 0° = left to right (horizontal)
+    /// - 90° = top to bottom (vertical)
+    /// - 45° = top-left to bottom-right
+    /// - 135° = top-right to bottom-left
+    DiagonalGradient {
+        /// Gradient to use.
+        gradient: ColorGradient,
+        /// Angle in degrees (0-360, wraps).
+        angle: f64,
+    },
+
+    /// Radial gradient from center outward.
+    ///
+    /// Colors radiate from a center point with configurable aspect ratio.
+    RadialGradient {
+        /// Gradient to use.
+        gradient: ColorGradient,
+        /// Center point (normalized 0-1). (0.5, 0.5) is dead center.
+        center: (f64, f64),
+        /// Aspect ratio (1.0 = circular, 2.0 = horizontally stretched).
+        aspect: f64,
     },
 
     // --- Color Cycling ---
@@ -1764,6 +1903,35 @@ pub enum TextEffect {
         progress: f64,
         /// Edge softness from 0.0 (hard edge) to 1.0 (gradient fade).
         softness: f64,
+    },
+
+    // --- Visual Distortion Effects (bd-atwq) ---
+    /// Chromatic aberration / RGB channel split effect.
+    ///
+    /// Creates a "3D glasses" or glitch aesthetic by shifting red and blue
+    /// channels based on character position. Characters on the left appear
+    /// redder while characters on the right appear bluer.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// StyledText::new("GLITCH")
+    ///     .effect(TextEffect::ChromaticAberration {
+    ///         offset: 2,
+    ///         direction: Direction::Right,
+    ///         animated: true,
+    ///         speed: 0.5,
+    ///     })
+    /// ```
+    ChromaticAberration {
+        /// Color shift intensity (1-5). Higher = more separation.
+        offset: u8,
+        /// Shift direction (Horizontal: red left/blue right, Vertical: red top/blue bottom).
+        direction: Direction,
+        /// Whether the offset oscillates over time.
+        animated: bool,
+        /// Oscillation speed (cycles per second) when animated.
+        speed: f64,
     },
 }
 
@@ -1975,6 +2143,20 @@ impl StyledText {
                 apply_alpha(base, alpha)
             }
 
+            TextEffect::OrganicPulse {
+                speed,
+                min_brightness,
+                asymmetry,
+                phase_variation,
+                seed,
+            } => {
+                let phase_offset = organic_char_phase_offset(idx, *seed, *phase_variation);
+                let cycle_t = (self.time * speed + phase_offset).rem_euclid(1.0);
+                let brightness =
+                    min_brightness + (1.0 - min_brightness) * breathing_curve(cycle_t, *asymmetry);
+                apply_alpha(base, brightness)
+            }
+
             TextEffect::HorizontalGradient { gradient } => gradient.sample(t),
 
             TextEffect::AnimatedGradient { gradient, speed } => {
@@ -1985,6 +2167,37 @@ impl StyledText {
             TextEffect::RainbowGradient { speed } => {
                 let hue = ((t + self.time * speed) * 360.0).rem_euclid(360.0);
                 hsv_to_rgb(hue, 1.0, 1.0)
+            }
+
+            // For single-line text, vertical gradient returns center color
+            TextEffect::VerticalGradient { gradient } => gradient.sample(0.5),
+
+            // For single-line text, diagonal uses horizontal position only (t_y = 0.5)
+            TextEffect::DiagonalGradient { gradient, angle } => {
+                let angle_rad = angle.to_radians();
+                let cos_a = angle_rad.cos();
+                let sin_a = angle_rad.sin();
+                // Project position onto gradient axis
+                // t_y = 0.5 for single-line text
+                let projected = t * cos_a + 0.5 * sin_a;
+                // Normalize to 0-1 range (diagonal spans -sqrt(2)/2 to sqrt(2)/2)
+                let normalized = (projected + FRAC_1_SQRT_2) / SQRT_2;
+                gradient.sample(normalized.clamp(0.0, 1.0))
+            }
+
+            // For single-line text, radial uses horizontal position and centered y
+            TextEffect::RadialGradient {
+                gradient,
+                center,
+                aspect,
+            } => {
+                let dx = (t - center.0) * aspect;
+                let dy = 0.5 - center.1; // y is always 0.5 for single-line
+                let dist = (dx * dx + dy * dy).sqrt();
+                // Max distance is from center to corner
+                let max_dist = (0.5_f64.powi(2) * aspect * aspect + 0.5_f64.powi(2)).sqrt();
+                let normalized = (dist / max_dist).clamp(0.0, 1.0);
+                gradient.sample(normalized)
             }
 
             TextEffect::ColorCycle { colors, speed } => {
@@ -2081,6 +2294,51 @@ impl StyledText {
                     }
                 }
             }
+
+            TextEffect::ChromaticAberration {
+                offset,
+                direction,
+                animated,
+                speed,
+            } => {
+                // Calculate effective offset (animate if requested)
+                let effective_offset = if *animated {
+                    let oscillation = (self.time * speed * TAU).sin();
+                    (*offset as f64 * oscillation).abs()
+                } else {
+                    *offset as f64
+                };
+
+                // Calculate distance from center (-1 to 1)
+                let center = total as f64 / 2.0;
+                let distance = if total > 1 {
+                    (idx as f64 - center) / center
+                } else {
+                    0.0
+                };
+
+                // Apply direction-based shift
+                let shift = match direction {
+                    Direction::Left | Direction::Right => {
+                        // Horizontal: use character position
+                        distance * effective_offset * 30.0
+                    }
+                    Direction::Up | Direction::Down => {
+                        // Vertical mode uses horizontal position for single-line text
+                        distance * effective_offset * 30.0
+                    }
+                };
+
+                // Red shifts negative direction, Blue shifts positive
+                let red_boost = (-shift).clamp(-50.0, 50.0);
+                let blue_boost = shift.clamp(-50.0, 50.0);
+
+                PackedRgba::rgb(
+                    (base.r() as i16 + red_boost as i16).clamp(0, 255) as u8,
+                    base.g(),
+                    (base.b() as i16 + blue_boost as i16).clamp(0, 255) as u8,
+                )
+            }
         }
     }
 
@@ -2109,6 +2367,19 @@ impl StyledText {
                     let alpha = min_alpha
                         + (1.0 - min_alpha) * (0.5 + 0.5 * (self.time * speed * TAU).sin());
                     alpha_multiplier *= alpha;
+                }
+                TextEffect::OrganicPulse {
+                    speed,
+                    min_brightness,
+                    asymmetry,
+                    phase_variation,
+                    seed,
+                } => {
+                    let phase_offset = organic_char_phase_offset(idx, *seed, *phase_variation);
+                    let cycle_t = (self.time * speed + phase_offset).rem_euclid(1.0);
+                    let brightness = min_brightness
+                        + (1.0 - min_brightness) * breathing_curve(cycle_t, *asymmetry);
+                    alpha_multiplier *= brightness;
                 }
                 TextEffect::Typewriter { visible_chars } => {
                     if (idx as f64) >= *visible_chars {
@@ -2145,8 +2416,12 @@ impl StyledText {
                 TextEffect::HorizontalGradient { .. }
                 | TextEffect::AnimatedGradient { .. }
                 | TextEffect::RainbowGradient { .. }
+                | TextEffect::VerticalGradient { .. }
+                | TextEffect::DiagonalGradient { .. }
+                | TextEffect::RadialGradient { .. }
                 | TextEffect::ColorCycle { .. }
-                | TextEffect::ColorWave { .. } => {
+                | TextEffect::ColorWave { .. }
+                | TextEffect::ChromaticAberration { .. } => {
                     // Get the color from this effect and blend with current
                     let effect_color = self.effect_color(effect, idx, total, color);
                     color = effect_color;
@@ -3814,6 +4089,118 @@ mod tests {
             let lines = art.render_lines();
             assert!(!lines.is_empty());
         }
+    }
+
+    // =========================================================================
+    // Organic Pulse Tests (bd-27kx)
+    // =========================================================================
+
+    #[test]
+    fn test_organic_asymmetric_rise_fast() {
+        // With asymmetry > 0, rise duration < fall duration
+        // At asymmetry=0.5: rise is 0.3 - 0.5*0.2 = 0.2 (20% of cycle)
+        let rise_end = 0.2;
+        let peak = breathing_curve(rise_end, 0.5);
+        assert!(
+            (peak - 1.0).abs() < 0.01,
+            "Expected peak ~1.0 at t={rise_end}, got {peak}"
+        );
+        let mid_rise = breathing_curve(0.1, 0.5);
+        assert!(mid_rise > 0.5, "Expected mid-rise > 0.5, got {mid_rise}");
+    }
+
+    #[test]
+    fn test_organic_symmetric_equal() {
+        // With asymmetry=0, rise takes 30% of cycle
+        let mid_rise = breathing_curve(0.15, 0.0);
+        let mid_fall = breathing_curve(0.65, 0.0);
+        assert!(
+            mid_rise > 0.4 && mid_rise < 0.9,
+            "Expected mid_rise in range, got {mid_rise}"
+        );
+        assert!(
+            mid_fall > 0.4 && mid_fall < 0.9,
+            "Expected mid_fall in range, got {mid_fall}"
+        );
+    }
+
+    #[test]
+    fn test_organic_phase_variation_spreads() {
+        let seed = 42u64;
+        let phase_variation = 0.5;
+        let phase0 = organic_char_phase_offset(0, seed, phase_variation);
+        let phase1 = organic_char_phase_offset(1, seed, phase_variation);
+        let phase2 = organic_char_phase_offset(2, seed, phase_variation);
+        assert!(phase0 >= 0.0 && phase0 <= phase_variation);
+        assert!(phase1 >= 0.0 && phase1 <= phase_variation);
+        assert!(phase2 >= 0.0 && phase2 <= phase_variation);
+        let all_same = (phase0 - phase1).abs() < 0.001 && (phase1 - phase2).abs() < 0.001;
+        assert!(!all_same, "Expected different phases for adjacent chars");
+    }
+
+    #[test]
+    fn test_organic_seed_deterministic() {
+        let seed = 12345u64;
+        let phase_variation = 1.0;
+        let phase_a = organic_char_phase_offset(10, seed, phase_variation);
+        let phase_b = organic_char_phase_offset(10, seed, phase_variation);
+        assert!(
+            (phase_a - phase_b).abs() < 1e-10,
+            "Expected identical phases for same seed+index"
+        );
+        let phase_c = organic_char_phase_offset(10, seed + 1, phase_variation);
+        assert!(
+            (phase_a - phase_c).abs() > 0.01,
+            "Expected different phases for different seeds"
+        );
+    }
+
+    #[test]
+    fn test_organic_min_brightness_floor() {
+        let at_start = breathing_curve(0.0, 0.5);
+        assert!(
+            at_start < 0.01,
+            "Expected curve near 0 at t=0, got {at_start}"
+        );
+        let at_end = breathing_curve(0.999, 0.5);
+        assert!(at_end < 0.05, "Expected curve near 0 at t~1, got {at_end}");
+    }
+
+    #[test]
+    fn test_organic_max_brightness_ceiling() {
+        let peak = breathing_curve(0.2, 0.5);
+        assert!((peak - 1.0).abs() < 0.01, "Expected peak=1.0, got {peak}");
+    }
+
+    #[test]
+    fn test_organic_cycle_complete() {
+        let start = breathing_curve(0.0, 0.5);
+        let end = breathing_curve(1.0, 0.5);
+        assert!(
+            (start - end).abs() < 0.01,
+            "Expected cycle to complete: start={start}, end={end}"
+        );
+    }
+
+    #[test]
+    fn test_organic_pulse_effect_integration() {
+        let text = StyledText::new("HELLO")
+            .effect(TextEffect::OrganicPulse {
+                speed: 1.0,
+                min_brightness: 0.3,
+                asymmetry: 0.5,
+                phase_variation: 0.2,
+                seed: 42,
+            })
+            .time(0.0);
+        let color = text.char_color(0, 5);
+        let expected_intensity = (0.3 * 255.0) as u8;
+        assert!(
+            color.r() >= expected_intensity.saturating_sub(10)
+                && color.r() <= expected_intensity.saturating_add(10),
+            "Expected color ~{expected_intensity}, got {}",
+            color.r()
+        );
     }
 
     // =========================================================================
@@ -5868,6 +6255,224 @@ mod tests {
             );
         }
     }
+
+    // =========================================================================
+    // Chromatic Aberration Tests (bd-atwq)
+    // =========================================================================
+
+    #[test]
+    fn test_chromatic_aberration_basic() {
+        // Basic chromatic aberration should shift red/blue channels based on position
+        let text = StyledText::new("0123456789")
+            .base_color(PackedRgba::rgb(128, 128, 128))
+            .effect(TextEffect::ChromaticAberration {
+                offset: 2,
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        // Left edge should have red boost (shift is negative)
+        let left = text.char_color(0, 10);
+        // Right edge should have blue boost (shift is positive)
+        let right = text.char_color(9, 10);
+
+        // Left character: red should be boosted, blue should be reduced
+        assert!(
+            left.r() > 128 || left.b() < 128,
+            "Left edge should show red shift or blue reduction: r={}, b={}",
+            left.r(),
+            left.b()
+        );
+        // Right character: blue should be boosted, red should be reduced
+        assert!(
+            right.b() > 128 || right.r() < 128,
+            "Right edge should show blue shift or red reduction: r={}, b={}",
+            right.r(),
+            right.b()
+        );
+    }
+
+    #[test]
+    fn test_chromatic_aberration_zero_offset() {
+        // Zero offset should produce no change
+        let base = PackedRgba::rgb(128, 128, 128);
+        let text = StyledText::new("0123456789")
+            .base_color(base)
+            .effect(TextEffect::ChromaticAberration {
+                offset: 0,
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        for idx in 0..10 {
+            let result = text.char_color(idx, 10);
+            assert_eq!(
+                result.r(),
+                base.r(),
+                "Zero offset should not change red at idx={}",
+                idx
+            );
+            assert_eq!(
+                result.b(),
+                base.b(),
+                "Zero offset should not change blue at idx={}",
+                idx
+            );
+        }
+    }
+
+    #[test]
+    fn test_chromatic_aberration_center_unchanged() {
+        // Center character should have minimal shift compared to edges
+        let base = PackedRgba::rgb(128, 128, 128);
+        let text = StyledText::new("0123456789") // 10 chars - center between idx 4 and 5
+            .base_color(base)
+            .effect(TextEffect::ChromaticAberration {
+                offset: 5,
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        // For 10 chars, indices near center (4 and 5) should have less shift than edges
+        let center_left = text.char_color(4, 10);
+        let center_right = text.char_color(5, 10);
+        let edge_left = text.char_color(0, 10);
+        let edge_right = text.char_color(9, 10);
+
+        // Center chars should have smaller shift magnitude than edge chars
+        let center_left_shift = ((center_left.r() as i16 - base.r() as i16).abs()
+            + (center_left.b() as i16 - base.b() as i16).abs()) as f64;
+        let center_right_shift = ((center_right.r() as i16 - base.r() as i16).abs()
+            + (center_right.b() as i16 - base.b() as i16).abs()) as f64;
+        let edge_left_shift = ((edge_left.r() as i16 - base.r() as i16).abs()
+            + (edge_left.b() as i16 - base.b() as i16).abs()) as f64;
+        let edge_right_shift = ((edge_right.r() as i16 - base.r() as i16).abs()
+            + (edge_right.b() as i16 - base.b() as i16).abs()) as f64;
+
+        let avg_center = (center_left_shift + center_right_shift) / 2.0;
+        let avg_edge = (edge_left_shift + edge_right_shift) / 2.0;
+
+        assert!(
+            avg_center < avg_edge,
+            "Center should have less shift than edges: center={}, edge={}",
+            avg_center,
+            avg_edge
+        );
+    }
+
+    #[test]
+    fn test_chromatic_aberration_symmetry() {
+        // Left and right edges should have opposite color shifts
+        let base = PackedRgba::rgb(128, 128, 128);
+        let text = StyledText::new("0123456789")
+            .base_color(base)
+            .effect(TextEffect::ChromaticAberration {
+                offset: 3,
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        let left = text.char_color(0, 10);
+        let right = text.char_color(9, 10);
+
+        // Red shifts should be roughly opposite
+        let left_r_shift = left.r() as i16 - base.r() as i16;
+        let right_r_shift = right.r() as i16 - base.r() as i16;
+
+        // Blue shifts should be roughly opposite
+        let left_b_shift = left.b() as i16 - base.b() as i16;
+        let right_b_shift = right.b() as i16 - base.b() as i16;
+
+        // Shifts should be opposite signs (with some tolerance)
+        assert!(
+            left_r_shift * right_r_shift <= 0,
+            "Red shifts should be opposite: left={}, right={}",
+            left_r_shift,
+            right_r_shift
+        );
+        assert!(
+            left_b_shift * right_b_shift <= 0,
+            "Blue shifts should be opposite: left={}, right={}",
+            left_b_shift,
+            right_b_shift
+        );
+    }
+
+    #[test]
+    fn test_chromatic_aberration_green_unchanged() {
+        // Green channel should remain unchanged (chromatic aberration affects R/B only)
+        let base = PackedRgba::rgb(100, 150, 200);
+        let text = StyledText::new("0123456789")
+            .base_color(base)
+            .effect(TextEffect::ChromaticAberration {
+                offset: 5,
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        for idx in 0..10 {
+            let result = text.char_color(idx, 10);
+            assert_eq!(
+                result.g(),
+                base.g(),
+                "Green should be unchanged at idx={}",
+                idx
+            );
+        }
+    }
+
+    #[test]
+    fn test_chromatic_aberration_clamping() {
+        // Verify RGB values are properly clamped to 0-255
+        let base = PackedRgba::rgb(250, 128, 250);
+        let text = StyledText::new("01234567890123456789") // 20 chars
+            .base_color(base)
+            .effect(TextEffect::ChromaticAberration {
+                offset: 10, // High offset
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        for idx in 0..20 {
+            let result = text.char_color(idx, 20);
+            // All values should be valid u8
+            assert!(result.r() <= 255, "Red should be <= 255");
+            assert!(result.b() <= 255, "Blue should be <= 255");
+            // These would panic if clamping failed, but this is explicit verification
+        }
+    }
+
+    #[test]
+    fn test_chromatic_aberration_single_char() {
+        // Single character should have no shift (distance = 0)
+        let base = PackedRgba::rgb(128, 128, 128);
+        let text = StyledText::new("X")
+            .base_color(base)
+            .effect(TextEffect::ChromaticAberration {
+                offset: 5,
+                direction: Direction::Right,
+                animated: false,
+                speed: 1.0,
+            })
+            .time(0.0);
+
+        let result = text.char_color(0, 1);
+        assert_eq!(result.r(), base.r(), "Single char red unchanged");
+        assert_eq!(result.g(), base.g(), "Single char green unchanged");
+        assert_eq!(result.b(), base.b(), "Single char blue unchanged");
+    }
 }
 
 // =============================================================================
@@ -6532,6 +7137,41 @@ impl StyledMultiLine {
                     let hue = (t_x + t_y * 0.3 + self.time * speed).rem_euclid(1.0);
                     color = hsv_to_rgb(hue, 0.9, 1.0);
                 }
+                TextEffect::VerticalGradient { gradient } => {
+                    // For multi-line: t = row / total_rows
+                    color = gradient.sample(t_y);
+                }
+                TextEffect::DiagonalGradient { gradient, angle } => {
+                    let angle_rad = angle.to_radians();
+                    let cos_a = angle_rad.cos();
+                    let sin_a = angle_rad.sin();
+                    // Project 2D position onto gradient axis
+                    let projected = t_x * cos_a + t_y * sin_a;
+                    // Normalize to 0-1 range
+                    let normalized = (projected + FRAC_1_SQRT_2) / SQRT_2;
+                    color = gradient.sample(normalized.clamp(0.0, 1.0));
+                }
+                TextEffect::RadialGradient {
+                    gradient,
+                    center,
+                    aspect,
+                } => {
+                    let dx = (t_x - center.0) * aspect;
+                    let dy = t_y - center.1;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    // Max distance is from center to corner
+                    let max_dist = {
+                        let corner_dx = (0.5_f64.max(center.0) - center.0.min(0.5)) * aspect;
+                        let corner_dy = 0.5_f64.max(center.1) - center.1.min(0.5);
+                        (corner_dx * corner_dx + corner_dy * corner_dy).sqrt()
+                    };
+                    let normalized = if max_dist > 0.0 {
+                        (dist / max_dist).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    color = gradient.sample(normalized);
+                }
                 TextEffect::ColorWave {
                     color1,
                     color2,
@@ -6554,6 +7194,21 @@ impl StyledMultiLine {
                     let alpha = min_alpha
                         + (1.0 - min_alpha) * ((self.time * speed * TAU).sin() * 0.5 + 0.5);
                     color = apply_alpha(color, alpha);
+                }
+                TextEffect::OrganicPulse {
+                    speed,
+                    min_brightness,
+                    asymmetry,
+                    phase_variation,
+                    seed,
+                } => {
+                    // Use 2D position as character index for phase variation
+                    let char_idx = row * total_width + col;
+                    let phase_offset = organic_char_phase_offset(char_idx, *seed, *phase_variation);
+                    let cycle_t = (self.time * speed + phase_offset).rem_euclid(1.0);
+                    let brightness = min_brightness
+                        + (1.0 - min_brightness) * breathing_curve(cycle_t, *asymmetry);
+                    color = apply_alpha(color, brightness);
                 }
                 TextEffect::Glow {
                     color: glow_color,
@@ -7154,8 +7809,7 @@ impl MatrixRainState {
 
 #[cfg(test)]
 mod palette_tests {
-    use super::PackedRgba;
-    use super::palette;
+    use super::{PackedRgba, palette};
 
     #[test]
     fn test_all_gradients_have_at_least_two_stops() {

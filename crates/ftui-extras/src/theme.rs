@@ -147,7 +147,7 @@ const THEMES: [ThemePalette; 4] = [
         accent_secondary: PackedRgba::rgb(152, 118, 170),
         accent_success: PackedRgba::rgb(106, 135, 89),
         accent_warning: PackedRgba::rgb(255, 198, 109),
-        accent_error: PackedRgba::rgb(255, 107, 104),
+        accent_error: PackedRgba::rgb(255, 85, 85),
         accent_info: PackedRgba::rgb(179, 212, 252),
         accent_link: PackedRgba::rgb(74, 136, 199),
         accent_slots: [
@@ -188,7 +188,7 @@ const THEMES: [ThemePalette; 4] = [
         accent_success: PackedRgba::rgb(22, 163, 74),
         accent_warning: PackedRgba::rgb(245, 158, 11),
         accent_error: PackedRgba::rgb(220, 38, 38),
-        accent_info: PackedRgba::rgb(14, 165, 233),
+        accent_info: PackedRgba::rgb(2, 132, 199),
         accent_link: PackedRgba::rgb(37, 99, 235),
         accent_slots: [
             PackedRgba::rgb(37, 99, 235),
@@ -196,7 +196,7 @@ const THEMES: [ThemePalette; 4] = [
             PackedRgba::rgb(22, 163, 74),
             PackedRgba::rgb(245, 158, 11),
             PackedRgba::rgb(220, 38, 38),
-            PackedRgba::rgb(14, 165, 233),
+            PackedRgba::rgb(2, 132, 199),
             PackedRgba::rgb(20, 184, 166),
             PackedRgba::rgb(219, 39, 119),
             PackedRgba::rgb(99, 102, 241),
