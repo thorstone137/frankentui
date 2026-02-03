@@ -10,11 +10,18 @@ use ftui_runtime::Cmd;
 use ftui_style::{Style, StyleFlags};
 use ftui_text::WrapMode;
 use ftui_widgets::Badge;
+use ftui_widgets::command_palette::{ActionItem, CommandPalette};
+use ftui_widgets::file_picker::{FilePicker, FilePickerState};
 use ftui_widgets::StatefulWidget;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::columns::{Column, Columns};
+use ftui_widgets::log_viewer::{LogViewer, LogViewerState, LogWrapMode};
+use ftui_widgets::modal::{Dialog, DialogState};
+use ftui_widgets::notification_queue::{
+    NotificationPriority, NotificationQueue, NotificationStack, QueueConfig,
+};
 use ftui_widgets::input::TextInput;
 use ftui_widgets::json_view::JsonView;
 use ftui_widgets::layout::Layout;
@@ -31,8 +38,12 @@ use ftui_widgets::status_line::{StatusItem, StatusLine};
 use ftui_widgets::stopwatch::{Stopwatch, StopwatchFormat, StopwatchState};
 use ftui_widgets::table::{Row, Table};
 use ftui_widgets::textarea::{TextArea, TextAreaState};
-use ftui_widgets::toast::{Toast, ToastIcon};
+use ftui_widgets::timer::{Timer, TimerFormat, TimerState};
+use ftui_widgets::toast::{Toast, ToastIcon, ToastPosition, ToastStyle};
 use ftui_widgets::tree::{Tree, TreeGuides, TreeNode};
+use ftui_widgets::validation_error::{ValidationErrorDisplay, ValidationErrorState};
+use ftui_widgets::virtualized::{RenderItem, VirtualizedList, VirtualizedListState};
+use std::cell::RefCell;
 use std::time::Duration;
 
 use super::{HelpEntry, Screen};
@@ -40,7 +51,7 @@ use crate::theme;
 use crate::theme::{BadgeSpec, PriorityBadge, StatusBadge};
 
 /// Number of gallery sections.
-const SECTION_COUNT: usize = 7;
+const SECTION_COUNT: usize = 8;
 
 /// Section names.
 const SECTION_NAMES: [&str; SECTION_COUNT] = [
@@ -51,13 +62,37 @@ const SECTION_NAMES: [&str; SECTION_COUNT] = [
     "E: Navigation",
     "F: Layout",
     "G: Utility",
+    "H: Advanced",
 ];
+
+#[derive(Debug, Clone)]
+struct GalleryVirtualItem {
+    label: &'static str,
+    detail: &'static str,
+}
+
+impl RenderItem for GalleryVirtualItem {
+    fn render(&self, area: Rect, frame: &mut Frame, selected: bool) {
+        if area.is_empty() {
+            return;
+        }
+        let prefix = theme::selection_indicator(selected);
+        let text = format!("{prefix}{} — {}", self.label, self.detail);
+        let style = theme::list_item_style(selected, true);
+        Paragraph::new(text).style(style).render(area, frame);
+    }
+}
 
 /// Widget Gallery screen state.
 pub struct WidgetGallery {
     current_section: usize,
     tick_count: u64,
     spinner_state: SpinnerState,
+    file_picker_state: RefCell<Option<FilePickerState>>,
+    log_viewer: RefCell<LogViewer>,
+    log_viewer_state: RefCell<LogViewerState>,
+    virtualized_items: Vec<GalleryVirtualItem>,
+    virtualized_state: RefCell<VirtualizedListState>,
 }
 
 impl Default for WidgetGallery {
@@ -68,10 +103,60 @@ impl Default for WidgetGallery {
 
 impl WidgetGallery {
     pub fn new() -> Self {
+        let file_picker_state = FilePickerState::from_path(".").ok();
+
+        let mut log_viewer = LogViewer::new(128).wrap_mode(LogWrapMode::Wrap);
+        let sample_logs = [
+            "INFO  boot: FrankenTUI demo started",
+            "DEBUG layout: resolved 6 constraints",
+            "WARN  io: slow disk detected, using cache",
+            "INFO  render: diff cells=512 runs=18 bytes=9.6KB",
+            "INFO  net: connected to telemetry endpoint",
+            "ERROR auth: token expired, refresh scheduled",
+        ];
+        for line in sample_logs {
+            log_viewer.push(line);
+        }
+
+        let virtualized_items = vec![
+            GalleryVirtualItem {
+                label: "Item 0001",
+                detail: "CPU 72%",
+            },
+            GalleryVirtualItem {
+                label: "Item 0002",
+                detail: "Mem 48%",
+            },
+            GalleryVirtualItem {
+                label: "Item 0003",
+                detail: "IO 35%",
+            },
+            GalleryVirtualItem {
+                label: "Item 0004",
+                detail: "GPU 18%",
+            },
+            GalleryVirtualItem {
+                label: "Item 0005",
+                detail: "Net 2.1MB/s",
+            },
+            GalleryVirtualItem {
+                label: "Item 0006",
+                detail: "FPS 120",
+            },
+        ];
+
+        let mut virtualized_state = VirtualizedListState::new();
+        virtualized_state.selected = Some(2);
+
         Self {
             current_section: 0,
             tick_count: 0,
             spinner_state: SpinnerState::default(),
+            file_picker_state: RefCell::new(file_picker_state),
+            log_viewer: RefCell::new(log_viewer),
+            log_viewer_state: RefCell::new(LogViewerState::default()),
+            virtualized_items,
+            virtualized_state: RefCell::new(virtualized_state),
         }
     }
 }
@@ -183,6 +268,7 @@ impl WidgetGallery {
             4 => self.render_navigation_widgets(frame, area),
             5 => self.render_layout_widgets(frame, area),
             6 => self.render_utility_widgets(frame, area),
+            7 => self.render_advanced_widgets(frame, area),
             _ => {}
         }
     }
@@ -1388,6 +1474,256 @@ impl WidgetGallery {
             .mode(PaginatorMode::Dots)
             .style(Style::new().fg(theme::accent::SUCCESS))
             .render(inner, frame);
+    }
+
+    // -----------------------------------------------------------------------
+    // Section H: Advanced Widgets
+    // -----------------------------------------------------------------------
+    fn render_advanced_widgets(&self, frame: &mut Frame, area: Rect) {
+        let rows = Flex::vertical()
+            .constraints([
+                Constraint::Percentage(38.0),
+                Constraint::Percentage(34.0),
+                Constraint::Percentage(28.0),
+            ])
+            .split(area);
+
+        let top_cols = Flex::horizontal()
+            .constraints([Constraint::Percentage(52.0), Constraint::Percentage(48.0)])
+            .split(rows[0]);
+        self.render_command_palette_demo(frame, top_cols[0]);
+        self.render_file_picker_demo(frame, top_cols[1]);
+
+        let mid_cols = Flex::horizontal()
+            .constraints([Constraint::Percentage(58.0), Constraint::Percentage(42.0)])
+            .split(rows[1]);
+        self.render_log_viewer_demo(frame, mid_cols[0]);
+        self.render_virtualized_demo(frame, mid_cols[1]);
+
+        let bottom_cols = Flex::horizontal()
+            .constraints([
+                Constraint::Percentage(34.0),
+                Constraint::Percentage(33.0),
+                Constraint::Percentage(33.0),
+            ])
+            .split(rows[2]);
+        self.render_modal_demo(frame, bottom_cols[0]);
+        self.render_notification_stack_demo(frame, bottom_cols[1]);
+        self.render_validation_timer_demo(frame, bottom_cols[2]);
+    }
+
+    fn render_command_palette_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Command Palette")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let mut palette = CommandPalette::new().with_max_visible(6);
+        palette.register_action(
+            ActionItem::new("cmd:open", "Open File")
+                .with_description("Open a file from disk")
+                .with_tags(&["file", "open"])
+                .with_category("File"),
+        );
+        palette.register_action(
+            ActionItem::new("cmd:save", "Save File")
+                .with_description("Save current buffer")
+                .with_tags(&["file", "save"])
+                .with_category("File"),
+        );
+        palette.register_action(
+            ActionItem::new("cmd:theme", "Cycle Theme")
+                .with_description("Switch color theme")
+                .with_tags(&["theme", "colors"])
+                .with_category("View"),
+        );
+        palette.register_action(
+            ActionItem::new("cmd:perf", "Toggle Performance HUD")
+                .with_description("Show performance overlay")
+                .with_tags(&["hud", "perf"])
+                .with_category("View"),
+        );
+        palette.register_action(
+            ActionItem::new("cmd:quit", "Quit")
+                .with_description("Exit the application")
+                .with_tags(&["exit"])
+                .with_category("App"),
+        );
+        palette.open();
+        palette.render(inner, frame);
+    }
+
+    fn render_file_picker_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("File Picker")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let picker = FilePicker::new()
+            .dir_style(Style::new().fg(theme::accent::PRIMARY))
+            .file_style(Style::new().fg(theme::fg::PRIMARY))
+            .cursor_style(Style::new().bg(theme::alpha::HIGHLIGHT))
+            .header_style(Style::new().fg(theme::fg::MUTED));
+
+        let mut guard = self.file_picker_state.borrow_mut();
+        if let Some(state) = guard.as_mut() {
+            state.entries.truncate(8);
+            StatefulWidget::render(&picker, inner, frame, state);
+        } else {
+            Paragraph::new("File picker unavailable")
+                .style(theme::muted())
+                .render(inner, frame);
+        }
+    }
+
+    fn render_log_viewer_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Log Viewer")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let mut viewer = self.log_viewer.borrow_mut();
+        let mut state = self.log_viewer_state.borrow_mut();
+        viewer.wrap_mode(LogWrapMode::Wrap);
+        StatefulWidget::render(&*viewer, inner, frame, &mut *state);
+    }
+
+    fn render_virtualized_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Virtualized List")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let list = VirtualizedList::new(&self.virtualized_items)
+            .fixed_height(1)
+            .style(Style::new().fg(theme::fg::SECONDARY))
+            .highlight_style(
+                Style::new()
+                    .fg(theme::fg::PRIMARY)
+                    .bg(theme::alpha::HIGHLIGHT)
+                    .attrs(StyleFlags::BOLD),
+            );
+        let mut state = self.virtualized_state.borrow_mut();
+        StatefulWidget::render(&list, inner, frame, &mut *state);
+    }
+
+    fn render_modal_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Modal Dialog")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let dialog = Dialog::confirm("Delete file?", "This action cannot be undone.");
+        let mut state = DialogState::new();
+        StatefulWidget::render(&dialog, inner, frame, &mut state);
+    }
+
+    fn render_notification_stack_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Notifications")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let mut queue = NotificationQueue::new(
+            QueueConfig::new()
+                .max_visible(2)
+                .max_queued(4)
+                .position(ToastPosition::TopLeft),
+        );
+        queue.push(
+            Toast::new("Build succeeded")
+                .icon(ToastIcon::Success)
+                .style_variant(ToastStyle::Success)
+                .persistent(),
+            NotificationPriority::Normal,
+        );
+        queue.push(
+            Toast::new("New update available")
+                .icon(ToastIcon::Info)
+                .style_variant(ToastStyle::Info)
+                .persistent(),
+            NotificationPriority::Low,
+        );
+
+        let stack = NotificationStack::new(&queue).margin(0);
+        stack.render(inner, frame);
+    }
+
+    fn render_validation_timer_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Validation + Timer")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let rows = Flex::vertical()
+            .constraints([Constraint::Fixed(1), Constraint::Min(1)])
+            .split(inner);
+
+        let error = ValidationErrorDisplay::new("Invalid email address")
+            .with_icon("!")
+            .with_style(Style::new().fg(theme::accent::ERROR));
+        let mut error_state = ValidationErrorState::default();
+        error_state.set_visible(true);
+        StatefulWidget::render(&error, rows[0], frame, &mut error_state);
+
+        if rows.len() > 1 {
+            let mut timer_state = TimerState::new(Duration::from_secs(90));
+            timer_state.start();
+            timer_state.tick(Duration::from_secs(31));
+            let timer = Timer::new()
+                .format(TimerFormat::Digital)
+                .label("ETA ");
+            StatefulWidget::render(&timer, rows[1], frame, &mut timer_state);
+        }
     }
 }
 
