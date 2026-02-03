@@ -809,6 +809,8 @@ pub struct RenderBudget {
     total: Duration,
     /// When this frame started.
     start: Instant,
+    /// Measured render+present time for the last frame (if recorded).
+    last_frame_time: Option<Duration>,
     /// Current degradation level.
     degradation: DegradationLevel,
     /// Per-phase budgets.
@@ -832,6 +834,7 @@ impl RenderBudget {
         Self {
             total,
             start: Instant::now(),
+            last_frame_time: None,
             degradation: DegradationLevel::Full,
             phase_budgets: PhaseBudgets::default(),
             allow_frame_skip: true,
@@ -847,6 +850,7 @@ impl RenderBudget {
         Self {
             total: config.total,
             start: Instant::now(),
+            last_frame_time: None,
             degradation: DegradationLevel::Full,
             phase_budgets: config.phase_budgets,
             allow_frame_skip: config.allow_frame_skip,
@@ -969,6 +973,25 @@ impl RenderBudget {
             && self.frames_since_change >= self.cooldown
     }
 
+    /// Check if we should upgrade using a measured frame time.
+    fn should_upgrade_with_elapsed(&self, elapsed: Duration) -> bool {
+        if self.degradation.is_full() || self.frames_since_change < self.cooldown {
+            return false;
+        }
+        self.remaining_fraction_for_elapsed(elapsed) > self.upgrade_threshold
+    }
+
+    /// Remaining fraction computed from an elapsed frame time.
+    fn remaining_fraction_for_elapsed(&self, elapsed: Duration) -> f32 {
+        if self.total.is_zero() {
+            return 0.0;
+        }
+        let remaining = self.total.saturating_sub(elapsed);
+        let remaining = remaining.as_secs_f32();
+        let total = self.total.as_secs_f32();
+        (remaining / total).clamp(0.0, 1.0)
+    }
+
     /// Upgrade to the previous (better quality) level.
     ///
     /// Logs when upgrade occurs.
@@ -1006,9 +1029,12 @@ impl RenderBudget {
     /// (degrade / upgrade / hold) is applied automatically. The simple
     /// threshold-based upgrade path is skipped in that case.
     pub fn next_frame(&mut self) {
+        let frame_time = self
+            .last_frame_time
+            .unwrap_or_else(|| self.start.elapsed());
+
         if self.controller.is_some() {
             // Measure how long the previous frame took
-            let frame_time = self.start.elapsed();
 
             // SAFETY: we just checked is_some; this avoids a borrow-checker
             // conflict with `&mut self` needed for degrade/upgrade below.
@@ -1021,11 +1047,16 @@ impl RenderBudget {
             }
         } else {
             // Legacy path: simple threshold-based upgrade
-            if self.should_upgrade() {
+            if self.should_upgrade_with_elapsed(frame_time) {
                 self.upgrade();
             }
         }
         self.reset();
+    }
+
+    /// Record the measured render+present time for the last frame.
+    pub fn record_frame_time(&mut self, elapsed: Duration) {
+        self.last_frame_time = Some(elapsed);
     }
 
     /// Get a telemetry snapshot from the adaptive controller, if attached.

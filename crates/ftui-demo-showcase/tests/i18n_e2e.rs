@@ -40,6 +40,7 @@ use ftui_layout::direction::{
 use ftui_layout::{Alignment, Sides};
 use ftui_render::frame::Frame;
 use ftui_render::grapheme_pool::GraphemePool;
+use ftui_runtime::locale::LocaleContext;
 use ftui_text::bidi::{BidiSegment, Direction, ParagraphDirection, reorder};
 
 // =============================================================================
@@ -1211,4 +1212,141 @@ fn bidi_numbers_in_rtl() {
     let result = reorder(text, ParagraphDirection::Rtl);
     assert!(result.contains("123"), "Numbers preserved in RTL");
     log_jsonl("bidi", "numbers_in_rtl", true, "");
+}
+
+// =============================================================================
+// 8. Locale Context (Runtime)
+// =============================================================================
+
+#[test]
+fn locale_context_basic_set_get() {
+    let ctx = LocaleContext::new("en");
+    assert_eq!(ctx.current_locale(), "en");
+    assert_eq!(ctx.base_locale(), "en");
+
+    ctx.set_locale("fr");
+    assert_eq!(ctx.current_locale(), "fr");
+    assert_eq!(ctx.base_locale(), "fr");
+
+    log_jsonl("locale_ctx", "basic_set_get", true, "");
+}
+
+#[test]
+fn locale_context_scoped_override_lifo() {
+    let ctx = LocaleContext::new("en");
+
+    {
+        let _g1 = ctx.push_override("fr");
+        assert_eq!(ctx.current_locale(), "fr");
+        assert_eq!(ctx.base_locale(), "en", "base unchanged under override");
+
+        {
+            let _g2 = ctx.push_override("ru");
+            assert_eq!(ctx.current_locale(), "ru");
+            assert_eq!(ctx.base_locale(), "en");
+        }
+        // g2 dropped → back to fr
+        assert_eq!(ctx.current_locale(), "fr");
+    }
+    // g1 dropped → back to en
+    assert_eq!(ctx.current_locale(), "en");
+
+    log_jsonl("locale_ctx", "scoped_override_lifo", true, "");
+}
+
+#[test]
+fn locale_context_version_increments_on_base_change() {
+    let ctx = LocaleContext::new("en");
+    let v0 = ctx.version();
+
+    ctx.set_locale("es");
+    let v1 = ctx.version();
+    assert!(v1 > v0, "version should increment on base locale change");
+
+    // Override should NOT change version
+    let _guard = ctx.push_override("ar");
+    let v2 = ctx.version();
+    assert_eq!(v1, v2, "override should not increment version");
+
+    log_jsonl("locale_ctx", "version_tracking", true, "");
+}
+
+#[test]
+fn locale_context_override_preserves_base() {
+    let ctx = LocaleContext::new("en");
+    let _guard = ctx.push_override("ja");
+
+    assert_eq!(ctx.current_locale(), "ja");
+    assert_eq!(ctx.base_locale(), "en");
+
+    log_jsonl("locale_ctx", "override_preserves_base", true, "");
+}
+
+#[test]
+fn locale_context_normalize_strips_encoding() {
+    // Locales with encoding suffixes should be normalized
+    let ctx = LocaleContext::new("en_US.UTF-8");
+    let locale = ctx.current_locale();
+    assert!(
+        !locale.contains('.'),
+        "encoding suffix should be stripped: got {locale}"
+    );
+    assert!(
+        !locale.contains('_'),
+        "underscore should be normalized: got {locale}"
+    );
+
+    log_jsonl("locale_ctx", "normalize", true, &locale);
+}
+
+#[test]
+fn locale_context_c_posix_to_en() {
+    let ctx_c = LocaleContext::new("C");
+    assert_eq!(ctx_c.current_locale(), "en", "C should normalize to en");
+
+    let ctx_posix = LocaleContext::new("POSIX");
+    assert_eq!(
+        ctx_posix.current_locale(),
+        "en",
+        "POSIX should normalize to en"
+    );
+
+    log_jsonl("locale_ctx", "c_posix", true, "");
+}
+
+#[test]
+fn locale_context_empty_to_en() {
+    let ctx = LocaleContext::new("");
+    assert_eq!(ctx.current_locale(), "en", "empty should default to en");
+
+    let ctx_ws = LocaleContext::new("   ");
+    assert_eq!(
+        ctx_ws.current_locale(),
+        "en",
+        "whitespace should default to en"
+    );
+
+    log_jsonl("locale_ctx", "empty_default", true, "");
+}
+
+#[test]
+fn locale_context_triple_override_stack() {
+    let ctx = LocaleContext::new("en");
+
+    let g1 = ctx.push_override("fr");
+    let g2 = ctx.push_override("de");
+    let g3 = ctx.push_override("ja");
+
+    assert_eq!(ctx.current_locale(), "ja");
+
+    drop(g3);
+    assert_eq!(ctx.current_locale(), "de");
+
+    drop(g2);
+    assert_eq!(ctx.current_locale(), "fr");
+
+    drop(g1);
+    assert_eq!(ctx.current_locale(), "en");
+
+    log_jsonl("locale_ctx", "triple_stack", true, "");
 }
