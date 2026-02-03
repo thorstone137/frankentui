@@ -37,8 +37,6 @@
 //! STORM_SEED=42 cargo test -p ftui-harness --test resize_storm_e2e  # deterministic
 //! ```
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -46,7 +44,7 @@ use ftui_core::geometry::Rect;
 use ftui_harness::golden::compute_buffer_checksum;
 use ftui_harness::resize_storm::{
     ResizeStorm, StormConfig, StormPattern, TerminalCapabilities as StormCapabilities,
-    compute_output_checksum, get_storm_seed,
+    get_storm_seed,
 };
 use ftui_render::buffer::Buffer;
 use ftui_render::cell::Cell;
@@ -81,14 +79,29 @@ fn escape_json(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
+fn storm_env_json(seed: u64) -> String {
+    let term = std::env::var("TERM").unwrap_or_default();
+    let colorterm = std::env::var("COLORTERM").unwrap_or_default();
+    let ci = std::env::var("CI").is_ok();
+
+    format!(
+        r#"{{"term":"{}","colorterm":"{}","ci":{},"seed":{}}}"#,
+        escape_json(&term),
+        escape_json(&colorterm),
+        ci,
+        seed
+    )
+}
+
 // ============================================================================
 // Scene Rendering
 // ============================================================================
 
-/// Minimum width/height for the scene to render with borders and visible text.
-/// Block with Borders::ALL needs 2 cols for borders + text; height needs 2 rows + text.
-const MIN_SCENE_WIDTH: u16 = 10;
-const MIN_SCENE_HEIGHT: u16 = 4;
+/// Minimum width/height for the scene to render with borders and visible label.
+/// The label "Storm E2E {w}x{h}" can be up to ~20 chars; with 2 border cols that
+/// needs width >= 25 to avoid wrapping. Height needs 2 border rows + 1 content row.
+const MIN_SCENE_WIDTH: u16 = 25;
+const MIN_SCENE_HEIGHT: u16 = 5;
 
 /// Render a deterministic test scene at the given size.
 /// Content adapts to the buffer dimensions, which is critical for
@@ -166,7 +179,6 @@ struct StormE2eResult {
     pipeline_failures: Vec<String>,
     flicker_issues: Vec<String>,
     budget_violations: Vec<String>,
-    jsonl: String,
 }
 
 /// Execute a full E2E resize storm test.
@@ -179,14 +191,12 @@ struct StormE2eResult {
 /// 5. Check for ghosting after shrink
 /// 6. Analyze ANSI output for flicker
 /// 7. Verify timing budget
-fn run_storm_e2e(
-    case_name: &str,
-    storm: &ResizeStorm,
-    frame_budget_us: u64,
-) -> StormE2eResult {
+fn run_storm_e2e(case_name: &str, storm: &ResizeStorm, frame_budget_us: u64) -> StormE2eResult {
     let start = Instant::now();
     let seed = storm.config().seed;
     let events = storm.events();
+    let caps = StormCapabilities::detect();
+    let env_json = storm_env_json(seed);
 
     let mut frame_checksums = Vec::with_capacity(events.len() + 1);
     let mut ghost_failures = Vec::new();
@@ -204,19 +214,21 @@ fn run_storm_e2e(
             ("seed", &seed.to_string()),
             ("pattern", &format!("\"{}\"", storm.config().pattern.name())),
             ("frames", &events.len().to_string()),
+            ("env", &env_json),
+            ("capabilities", &caps.to_json()),
         ],
     );
 
     // Render initial frame at the initial size
     let (init_w, init_h) = storm.config().initial_size;
-    let mut prev_buf = render_scene(init_w, init_h);
-    let initial_checksum = compute_buffer_checksum(&prev_buf);
+    let initial_buf = render_scene(init_w, init_h);
+    let initial_checksum = compute_buffer_checksum(&initial_buf);
     frame_checksums.push(initial_checksum.clone());
 
     log_jsonl(
         "storm_e2e_frame",
         &[
-            ("idx", &format!("\"initial\"")),
+            ("idx", "\"initial\""),
             ("width", &init_w.to_string()),
             ("height", &init_h.to_string()),
             ("checksum", &format!("\"{}\"", initial_checksum)),
@@ -311,14 +323,12 @@ fn run_storm_e2e(
 
         prev_w = w;
         prev_h = h;
-        prev_buf = new_buf;
+        let _ = new_buf; // Consumed; next iteration creates a fresh buffer
     }
 
     // 7. Flicker analysis on accumulated ANSI output
-    let flicker = ftui_harness::flicker_detection::analyze_stream_with_id(
-        storm.run_id(),
-        &all_ansi_output,
-    );
+    let flicker =
+        ftui_harness::flicker_detection::analyze_stream_with_id(storm.run_id(), &all_ansi_output);
     if !flicker.flicker_free {
         for issue in &flicker.issues {
             flicker_issues.push(format!(
@@ -333,10 +343,7 @@ fn run_storm_e2e(
         &[
             ("flicker_free", &flicker.flicker_free.to_string()),
             ("sync_gaps", &flicker.stats.sync_gaps.to_string()),
-            (
-                "partial_clears",
-                &flicker.stats.partial_clears.to_string(),
-            ),
+            ("partial_clears", &flicker.stats.partial_clears.to_string()),
         ],
     );
 
@@ -344,9 +351,8 @@ fn run_storm_e2e(
     // Note: flicker_issues are informational — the basic Presenter doesn't emit
     // sync output brackets (?2026h/?2026l), so all output appears as "sync gaps".
     // This is expected, not a real failure. We only fail on content/ghost/budget.
-    let passed = ghost_failures.is_empty()
-        && pipeline_failures.is_empty()
-        && budget_violations.is_empty();
+    let passed =
+        ghost_failures.is_empty() && pipeline_failures.is_empty() && budget_violations.is_empty();
 
     let outcome = if passed { "pass" } else { "fail" };
     let seq_checksum = storm.sequence_checksum();
@@ -372,7 +378,6 @@ fn run_storm_e2e(
         pipeline_failures,
         flicker_issues,
         budget_violations,
-        jsonl: String::new(),
     }
 }
 
@@ -427,7 +432,7 @@ fn assert_storm_result(result: &StormE2eResult) {
             }
         }
 
-        panic!("{}", msg);
+        panic!("{msg}");
     }
 }
 
@@ -669,16 +674,17 @@ fn e2e_same_size_repeated() {
 #[test]
 fn e2e_minimum_viable_sizes() {
     // Test with small buffer sizes that stress boundary conditions.
-    // Includes sizes both above and below the label threshold.
+    // Includes sizes both above and below the label threshold (25x5).
     let config = StormConfig::default()
         .with_seed(42)
         .with_pattern(StormPattern::Custom {
             events: vec![
                 (3, 3, 0),   // Below label threshold — marker only
                 (5, 3, 0),   // Below label threshold
-                (10, 4, 0),  // At label threshold
-                (15, 5, 0),  // Above threshold
-                (20, 8, 0),  // Comfortable
+                (10, 4, 0),  // Below label threshold
+                (20, 5, 0),  // Below label threshold (width < 25)
+                (25, 5, 0),  // At label threshold
+                (30, 8, 0),  // Above threshold
                 (3, 3, 0),   // Back to tiny
                 (80, 24, 0), // Standard
             ],
@@ -778,21 +784,14 @@ fn e2e_pipeline_content_every_frame() {
 #[test]
 fn e2e_diff_correctness_across_sizes() {
     // Verify that diff between two different-sized renders captures all changes
-    let sizes = [
-        (80, 24),
-        (120, 40),
-        (60, 15),
-        (40, 10),
-        (200, 60),
-        (80, 24),
-    ];
+    let sizes = [(80, 24), (120, 40), (60, 15), (40, 10), (200, 60), (80, 24)];
 
     for window in sizes.windows(2) {
-        let (w1, h1) = window[0];
+        let (_prev_w, _prev_h) = window[0];
         let (w2, h2) = window[1];
 
-        let buf1 = render_scene(w2, h2); // Render prev content at new size
-        let buf2 = render_scene(w2, h2); // Render new content at new size
+        let buf1 = render_scene(w2, h2); // Render at target size (first)
+        let buf2 = render_scene(w2, h2); // Render at target size (second)
 
         // Self-diff should be empty (idempotence)
         let self_diff = BufferDiff::compute(&buf1, &buf2);
@@ -860,11 +859,9 @@ fn e2e_flicker_analysis_burst() {
 
     // Note: we don't assert flicker_free here because the basic presenter
     // may not emit sync output brackets. This test verifies the analysis
-    // infrastructure works correctly under storm conditions.
-    assert!(
-        analysis.stats.total_frames > 0 || all_output.is_empty() || true,
-        "Flicker analysis should complete without error"
-    );
+    // infrastructure runs without panicking under storm conditions.
+    // The analysis results are logged for diagnostic purposes.
+    let _ = &analysis;
 }
 
 // ============================================================================
@@ -970,7 +967,12 @@ fn e2e_storm_logger_produces_valid_jsonl() {
     let lines: Vec<&str> = jsonl.lines().collect();
 
     // Should have: 1 start + 10 resize + 1 complete = 12 lines
-    assert_eq!(lines.len(), 12, "Expected 12 JSONL lines, got {}", lines.len());
+    assert_eq!(
+        lines.len(),
+        12,
+        "Expected 12 JSONL lines, got {}",
+        lines.len()
+    );
 
     // Every line should be valid JSON (basic check)
     for (i, line) in lines.iter().enumerate() {
@@ -1037,8 +1039,14 @@ fn e2e_suite_summary() {
         &[
             ("bead", "\"bd-1rz0.9\""),
             ("test_count", "\"21\""),
-            ("invariants", "\"CONTENT-1,GHOST-1,TEAR-1,DET-1,PIPE-1,BUDGET-1\""),
-            ("patterns", "\"burst,sweep,oscillate,pathological,mixed,custom\""),
+            (
+                "invariants",
+                "\"CONTENT-1,GHOST-1,TEAR-1,DET-1,PIPE-1,BUDGET-1\"",
+            ),
+            (
+                "patterns",
+                "\"burst,sweep,oscillate,pathological,mixed,custom\"",
+            ),
             ("frame_budget_us", &FRAME_BUDGET_US.to_string()),
         ],
     );

@@ -19,6 +19,7 @@ source "$LIB_DIR/common.sh"
 source "$LIB_DIR/logging.sh"
 
 REFLOW_SEED="${REFLOW_SEED:-42}"
+VOI_SEED="${VOI_SEED:-$REFLOW_SEED}"
 REFLOW_LOG_DIR="${E2E_LOG_DIR:-/tmp/ftui-e2e}"
 mkdir -p "$REFLOW_LOG_DIR"
 
@@ -26,8 +27,27 @@ REFLOW_ENV_JSONL="$REFLOW_LOG_DIR/reflow_env_$(date +%Y%m%d_%H%M%S).jsonl"
 cat > "$REFLOW_ENV_JSONL" << EOF
 {"event":"env","timestamp":"$(date -Iseconds)","seed":$REFLOW_SEED,"test":"reflow_telemetry"}
 {"event":"rust","rustc":"$(rustc --version 2>/dev/null || echo 'N/A')","cargo":"$(cargo --version 2>/dev/null || echo 'N/A')"}
+{"event":"capabilities","term":"${TERM:-}","colorterm":"${COLORTERM:-}","tmux":"${TMUX:-}","zellij":"${ZELLIJ:-}","kitty_window_id":"${KITTY_WINDOW_ID:-}","term_program":"${TERM_PROGRAM:-}"}
+{"event":"voi_env","timestamp":"$(date -Iseconds)","seed":$VOI_SEED,"test":"voi_sampling"}
 {"event":"git","commit":"$(git rev-parse HEAD 2>/dev/null || echo 'N/A')","branch":"$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')"}
 EOF
+
+compute_checksum() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$file" | cut -d' ' -f1 | head -c 16
+        elif command -v md5sum >/dev/null 2>&1; then
+            md5sum "$file" | cut -d' ' -f1 | head -c 16
+        else
+            local size
+            size=$(wc -c < "$file")
+            printf "%08x%08x" "$size" "$(head -c 64 "$file" | cksum | cut -d' ' -f1)"
+        fi
+    else
+        echo "0000000000000000"
+    fi
+}
 
 run_case() {
     local name="$1"
@@ -184,6 +204,27 @@ test_latest_wins() {
     return 1
 }
 
+# Test: VOI sampling JSONL output (deterministic)
+test_voi_sampling_policy() {
+    log_test_start "reflow_voi_sampling"
+
+    local output
+    output=$(VOI_SEED="$VOI_SEED" cargo test -p ftui-runtime voi_sampling::tests::e2e_deterministic_jsonl -- --nocapture 2>&1 || true)
+
+    if ! echo "$output" | grep -q "test.*ok"; then
+        log_debug "VOI sampling test output: $output"
+        return 1
+    fi
+
+    local jsonl_path="$REFLOW_LOG_DIR/voi_sampling_${VOI_SEED}_$(date +%Y%m%d_%H%M%S).jsonl"
+    echo "$output" | grep '^{"event":"voi_' > "$jsonl_path" || true
+
+    local checksum
+    checksum=$(compute_checksum "$jsonl_path")
+    echo "{\"event\":\"voi_sampling\",\"seed\":$VOI_SEED,\"jsonl\":\"$jsonl_path\",\"checksum\":\"sha256:$checksum\"}" >> "$REFLOW_ENV_JSONL"
+    return 0
+}
+
 # Summary report
 generate_summary() {
     local passed=$1
@@ -212,6 +253,7 @@ run_case "reflow_latency_bounds" test_latency_bounds && PASSES=$((PASSES + 1)) |
 run_case "reflow_property_invariants" test_property_invariants && PASSES=$((PASSES + 1)) || FAILURES=$((FAILURES + 1))
 run_case "reflow_coalesce_time" test_coalesce_time && PASSES=$((PASSES + 1)) || FAILURES=$((FAILURES + 1))
 run_case "reflow_latest_wins" test_latest_wins && PASSES=$((PASSES + 1)) || FAILURES=$((FAILURES + 1))
+run_case "reflow_voi_sampling" test_voi_sampling_policy && PASSES=$((PASSES + 1)) || FAILURES=$((FAILURES + 1))
 
 generate_summary "$PASSES" "$FAILURES"
 

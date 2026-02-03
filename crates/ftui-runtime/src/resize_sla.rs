@@ -48,6 +48,7 @@ use std::time::Instant;
 
 use crate::conformal_alert::{AlertConfig, AlertDecision, AlertStats, ConformalAlert};
 use crate::resize_coalescer::{DecisionLog, TelemetryHooks};
+use crate::voi_sampling::{VoiConfig, VoiSampler, VoiSummary};
 
 /// Configuration for resize SLA monitoring.
 #[derive(Debug, Clone)]
@@ -80,6 +81,10 @@ pub struct SlaConfig {
     /// Hysteresis factor for alert boundary.
     /// Default: 1.1.
     pub hysteresis: f64,
+
+    /// Optional VOI sampling policy for latency measurements.
+    /// When set, latency observations are sampled via VOI decisions.
+    pub voi_sampling: Option<VoiConfig>,
 }
 
 impl Default for SlaConfig {
@@ -92,6 +97,7 @@ impl Default for SlaConfig {
             enable_logging: true,
             alert_cooldown: 10,
             hysteresis: 1.1,
+            voi_sampling: None,
         }
     }
 }
@@ -172,6 +178,7 @@ pub struct ResizeSlaMonitor {
     total_alerts: RefCell<u64>,
     last_alert: RefCell<Option<AlertDecision>>,
     logs: RefCell<Vec<SlaLogEntry>>,
+    sampler: RefCell<Option<VoiSampler>>,
 }
 
 impl ResizeSlaMonitor {
@@ -186,6 +193,7 @@ impl ResizeSlaMonitor {
             alert_cooldown: config.alert_cooldown,
             ..AlertConfig::default()
         };
+        let sampler = config.voi_sampling.clone().map(VoiSampler::new);
 
         Self {
             config,
@@ -194,6 +202,7 @@ impl ResizeSlaMonitor {
             total_alerts: RefCell::new(0),
             last_alert: RefCell::new(None),
             logs: RefCell::new(Vec::new()),
+            sampler: RefCell::new(sampler),
         }
     }
 
@@ -202,6 +211,17 @@ impl ResizeSlaMonitor {
         // Extract latency from coalesce_ms or time_since_render_ms
         let latency_ms = entry.coalesce_ms.unwrap_or(entry.time_since_render_ms);
         let applied_size = entry.applied_size?;
+        if let Some(ref mut sampler) = *self.sampler.borrow_mut() {
+            let decision = sampler.decide(entry.timestamp);
+            if !decision.should_sample {
+                return None;
+            }
+            let result = self.process_latency(latency_ms, applied_size, entry.forced);
+            let violated = latency_ms > self.config.target_latency_ms;
+            sampler.observe_at(violated, entry.timestamp);
+            return result;
+        }
+
         self.process_latency(latency_ms, applied_size, entry.forced)
     }
 
@@ -359,6 +379,7 @@ impl ResizeSlaMonitor {
         *self.total_alerts.borrow_mut() = 0;
         *self.last_alert.borrow_mut() = None;
         self.logs.borrow_mut().clear();
+        *self.sampler.borrow_mut() = self.config.voi_sampling.clone().map(VoiSampler::new);
     }
 
     /// Current threshold in milliseconds.
@@ -374,6 +395,19 @@ impl ResizeSlaMonitor {
     /// Number of calibration samples collected.
     pub fn calibration_count(&self) -> usize {
         self.alerter.borrow().calibration_count()
+    }
+
+    /// Sampling summary if VOI sampling is enabled.
+    pub fn sampling_summary(&self) -> Option<VoiSummary> {
+        self.sampler.borrow().as_ref().map(VoiSampler::summary)
+    }
+
+    /// Sampling logs rendered as JSONL (if enabled).
+    pub fn sampling_logs_to_jsonl(&self) -> Option<String> {
+        self.sampler
+            .borrow()
+            .as_ref()
+            .map(|sampler| sampler.logs_to_jsonl())
     }
 }
 
@@ -408,6 +442,7 @@ pub fn make_sla_hooks(config: SlaConfig) -> (TelemetryHooks, Arc<Mutex<ResizeSla
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resize_coalescer::Regime;
 
     fn test_config() -> SlaConfig {
         SlaConfig {
@@ -418,6 +453,24 @@ mod tests {
             enable_logging: true,
             alert_cooldown: 0,
             hysteresis: 1.0,
+            voi_sampling: None,
+        }
+    }
+
+    fn sample_decision_log(now: Instant, latency_ms: f64) -> DecisionLog {
+        DecisionLog {
+            timestamp: now,
+            elapsed_ms: 0.0,
+            event_idx: 1,
+            dt_ms: 0.0,
+            event_rate: 0.0,
+            regime: Regime::Steady,
+            action: "apply",
+            pending_size: None,
+            applied_size: Some((80, 24)),
+            time_since_render_ms: latency_ms,
+            coalesce_ms: Some(latency_ms),
+            forced: false,
         }
     }
 
@@ -710,5 +763,46 @@ mod tests {
         assert!((m1 - m2).abs() < 1e-10, "Mean must be deterministic");
         assert!((t1 - t2).abs() < 1e-10, "Threshold must be deterministic");
         assert_eq!(a1, a2, "Alert count must be deterministic");
+    }
+
+    #[test]
+    fn voi_sampling_skips_when_policy_says_no() {
+        let mut config = test_config();
+        config.voi_sampling = Some(VoiConfig {
+            sample_cost: 10.0,
+            max_interval_events: 0,
+            max_interval_ms: 0,
+            ..VoiConfig::default()
+        });
+        let monitor = ResizeSlaMonitor::new(config);
+
+        let entry = sample_decision_log(Instant::now(), 12.0);
+        let result = monitor.on_decision(&entry);
+        assert!(result.is_none(), "Sampling should skip under high cost");
+
+        let summary = monitor.summary();
+        assert_eq!(summary.total_events, 0);
+        let sampling = monitor.sampling_summary().expect("sampling summary");
+        assert_eq!(sampling.total_events, 1);
+    }
+
+    #[test]
+    fn voi_sampling_forced_sample_records_event() {
+        let mut config = test_config();
+        config.voi_sampling = Some(VoiConfig {
+            sample_cost: 10.0,
+            max_interval_events: 1,
+            ..VoiConfig::default()
+        });
+        let monitor = ResizeSlaMonitor::new(config);
+
+        let entry = sample_decision_log(Instant::now(), 12.0);
+        let result = monitor.on_decision(&entry);
+        assert!(result.is_some());
+
+        let summary = monitor.summary();
+        assert_eq!(summary.total_events, 1);
+        let sampling = monitor.sampling_summary().expect("sampling summary");
+        assert_eq!(sampling.total_samples, 1);
     }
 }

@@ -120,3 +120,33 @@ All tasks are complete. The codebase has been extensively refactored for Unicode
 **Issue:** `usize` widths from `unicode-width` were cast to `u16` using truncating `as u16` cast, causing incorrect width calculations for extremely long lines (> 65535 columns).
 **Fix:**
     - Replaced `as u16` with saturating cast (`.min(u16::MAX as usize) as u16`).
+
+## 77. Grid Gap Calculation Overflow
+**File:** `crates/ftui-layout/src/grid.rs`
+**Issue:** `Grid` layout calculated gaps as `num_rows * gap` instead of `(num_rows - 1) * gap`, causing layout overflow when multiple rows were used.
+**Fix:**
+    - Updated calculation to `(num_rows - 1) * gap` (checking for >0 rows).
+
+## 78. Text Wrapping Infinite Loop (Word Mode)
+**File:** `crates/ftui-text/src/text.rs`
+**Issue:** `wrap_line_words` (greedy wrap) could enter an infinite loop when a single character (e.g. CJK width 2) was wider than the available width (e.g. 1) and no progress was made.
+**Fix:**
+    - Added a fallback path that forces progress by splitting the character or consuming it even if it overflows, preventing the infinite loop.
+
+## 79. TextInput Max Length Insertion
+**File:** `crates/ftui-widgets/src/input.rs`
+**Issue:** `TextInput` checked `max_length` before inserting, but combining characters don't increase the character count (grapheme count remains same). This prevented valid input of combining marks at max length.
+**Fix:**
+    - Refactored `insert_char` to optimistically insert the character, check the new grapheme count, and revert if it exceeds the limit.
+
+## 80. Markup Depth Limit (DoS Prevention)
+**File:** `crates/ftui-text/src/markup.rs`
+**Issue:** Recursive markup parsing could cause stack overflow with malicious input.
+**Fix:**
+    - Added recursion depth limit (50) and `MarkupError::DepthLimitExceeded`.
+
+## 81. Text Wrapping Infinite Loop (Char Mode)
+**File:** `crates/ftui-text/src/text.rs`
+**Issue:** `wrap_line_chars` contained the same infinite loop vulnerability as `wrap_line_words` when a grapheme width exceeded the available line width.
+**Fix:**
+    - Applied the same forced-progress fallback logic to `wrap_line_chars`.

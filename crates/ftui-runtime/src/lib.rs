@@ -39,6 +39,7 @@ pub mod subscription;
 pub mod terminal_writer;
 pub mod undo;
 pub mod validation_pipeline;
+pub mod voi_sampling;
 
 pub mod reactive;
 pub mod schedule_trace;
@@ -95,6 +96,9 @@ pub use undo::{
 pub use validation_pipeline::{
     LedgerEntry, PipelineConfig, PipelineResult, PipelineSummary, ValidationOutcome,
     ValidationPipeline, ValidatorStats,
+};
+pub use voi_sampling::{
+    VoiConfig, VoiDecision, VoiLogEntry, VoiObservation, VoiSampler, VoiSummary,
 };
 
 // State persistence

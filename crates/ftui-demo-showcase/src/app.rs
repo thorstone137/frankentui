@@ -307,6 +307,8 @@ pub enum ScreenId {
     SnapshotPlayer,
     /// Performance HUD + Render Budget Visualizer (bd-3k3x).
     PerformanceHud,
+    /// Internationalization demo (bd-ic6i.5).
+    I18nDemo,
 }
 
 impl ScreenId {
@@ -339,6 +341,7 @@ impl ScreenId {
         Self::ThemeStudio,
         Self::SnapshotPlayer,
         Self::PerformanceHud,
+        Self::I18nDemo,
     ];
 
     /// 0-based index in the ALL array.
@@ -388,6 +391,7 @@ impl ScreenId {
             Self::ThemeStudio => "Theme Studio",
             Self::SnapshotPlayer => "Snapshot Player",
             Self::PerformanceHud => "Performance HUD",
+            Self::I18nDemo => "i18n Demo",
         }
     }
 
@@ -421,6 +425,7 @@ impl ScreenId {
             Self::ThemeStudio => "Themes",
             Self::SnapshotPlayer => "Snapshot",
             Self::PerformanceHud => "PerfHUD",
+            Self::I18nDemo => "i18n",
         }
     }
 
@@ -454,6 +459,7 @@ impl ScreenId {
             Self::ThemeStudio => "ThemeStudio",
             Self::SnapshotPlayer => "SnapshotPlayer",
             Self::PerformanceHud => "PerformanceHud",
+            Self::I18nDemo => "I18nDemo",
         }
     }
 
@@ -529,9 +535,11 @@ pub struct ScreenStates {
     pub snapshot_player: screens::snapshot_player::SnapshotPlayer,
     /// Performance HUD + Render Budget Visualizer screen state (bd-3k3x).
     pub performance_hud: screens::performance_hud::PerformanceHud,
+    /// Internationalization demo screen state (bd-ic6i.5).
+    pub i18n_demo: screens::i18n_demo::I18nDemo,
     /// Tracks whether each screen has errored during rendering.
     /// Indexed by `ScreenId::index()`.
-    screen_errors: [Option<String>; 27],
+    screen_errors: [Option<String>; 28],
 }
 
 impl ScreenStates {
@@ -620,6 +628,9 @@ impl ScreenStates {
             ScreenId::PerformanceHud => {
                 self.performance_hud.update(event);
             }
+            ScreenId::I18nDemo => {
+                self.i18n_demo.update(event);
+            }
         }
     }
 
@@ -653,6 +664,7 @@ impl ScreenStates {
         self.theme_studio.tick(tick_count);
         self.snapshot_player.tick(tick_count);
         self.performance_hud.tick(tick_count);
+        self.i18n_demo.tick(tick_count);
     }
 
     fn apply_theme(&mut self) {
@@ -709,6 +721,7 @@ impl ScreenStates {
                 ScreenId::ThemeStudio => self.theme_studio.view(frame, area),
                 ScreenId::SnapshotPlayer => self.snapshot_player.view(frame, area),
                 ScreenId::PerformanceHud => self.performance_hud.view(frame, area),
+                ScreenId::I18nDemo => self.i18n_demo.view(frame, area),
             }
         }));
 

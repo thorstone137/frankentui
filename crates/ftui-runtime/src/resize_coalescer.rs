@@ -838,7 +838,7 @@ impl ResizeCoalescer {
 
         for entry in &self.logs {
             match entry.action {
-                "apply" | "apply_forced" => {
+                "apply" | "apply_forced" | "apply_immediate" => {
                     summary.apply_count += 1;
                     if entry.forced {
                         summary.forced_apply_count += 1;
@@ -988,11 +988,12 @@ impl ResizeCoalescer {
 
         let time_since_render_ms = now.duration_since(self.last_render).as_secs_f64() * 1000.0;
 
-        let applied_size = if action == "apply" || action == "apply_forced" || action == "apply_immediate" {
-            Some(self.last_applied)
-        } else {
-            None
-        };
+        let applied_size =
+            if action == "apply" || action == "apply_forced" || action == "apply_immediate" {
+                Some(self.last_applied)
+            } else {
+                None
+            };
 
         self.logs.push(DecisionLog {
             timestamp: now,
@@ -1304,12 +1305,16 @@ mod tests {
         // Wait for coalesce delay
         let action = c.tick_at(base + Duration::from_millis(60));
 
-        match action {
-            CoalesceAction::ApplyResize { width, height, .. } => {
-                assert_eq!((width, height), (110, 50), "Should apply latest size");
-            }
-            _ => panic!("Expected ApplyResize, got {:?}", action),
-        }
+        let (width, height) = if let CoalesceAction::ApplyResize { width, height, .. } = action {
+            (width, height)
+        } else {
+            assert!(
+                matches!(action, CoalesceAction::ApplyResize { .. }),
+                "Expected ApplyResize, got {action:?}"
+            );
+            return;
+        };
+        assert_eq!((width, height), (110, 50), "Should apply latest size");
     }
 
     #[test]
@@ -1325,14 +1330,19 @@ mod tests {
         // Wait past hard deadline
         let action = c.tick_at(base + Duration::from_millis(150));
 
-        match action {
-            CoalesceAction::ApplyResize {
-                forced_by_deadline, ..
-            } => {
-                assert!(forced_by_deadline, "Should be forced by deadline");
-            }
-            _ => panic!("Expected ApplyResize, got {:?}", action),
-        }
+        let forced_by_deadline = if let CoalesceAction::ApplyResize {
+            forced_by_deadline, ..
+        } = action
+        {
+            forced_by_deadline
+        } else {
+            assert!(
+                matches!(action, CoalesceAction::ApplyResize { .. }),
+                "Expected ApplyResize, got {action:?}"
+            );
+            return;
+        };
+        assert!(forced_by_deadline, "Should be forced by deadline");
     }
 
     #[test]
@@ -1367,6 +1377,29 @@ mod tests {
     }
 
     #[test]
+    fn record_external_apply_updates_state_and_logs() {
+        let config = test_config();
+        let mut c = ResizeCoalescer::new(config.clone(), (80, 24));
+
+        let base = Instant::now();
+        c.handle_resize_at(100, 40, base);
+        c.record_external_apply(120, 50, base + Duration::from_millis(5));
+
+        assert!(!c.has_pending());
+        assert_eq!(c.last_applied(), (120, 50));
+
+        let summary = c.decision_summary();
+        assert_eq!(summary.apply_count, 1);
+        assert_eq!(summary.last_applied, (120, 50));
+        assert!(
+            c.logs()
+                .iter()
+                .any(|entry| entry.action == "apply_immediate"),
+            "record_external_apply should emit apply_immediate decision"
+        );
+    }
+
+    #[test]
     fn coalesce_time_tracked() {
         let config = test_config();
         let mut c = ResizeCoalescer::new(config.clone(), (80, 24));
@@ -1376,13 +1409,17 @@ mod tests {
         c.handle_resize_at(100, 40, base);
         let action = c.tick_at(base + Duration::from_millis(50));
 
-        match action {
-            CoalesceAction::ApplyResize { coalesce_time, .. } => {
-                assert!(coalesce_time >= Duration::from_millis(40));
-                assert!(coalesce_time <= Duration::from_millis(60));
-            }
-            _ => panic!("Expected ApplyResize"),
-        }
+        let coalesce_time = if let CoalesceAction::ApplyResize { coalesce_time, .. } = action {
+            coalesce_time
+        } else {
+            assert!(
+                matches!(action, CoalesceAction::ApplyResize { .. }),
+                "Expected ApplyResize"
+            );
+            return;
+        };
+        assert!(coalesce_time >= Duration::from_millis(40));
+        assert!(coalesce_time <= Duration::from_millis(60));
     }
 
     #[test]

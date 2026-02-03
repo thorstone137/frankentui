@@ -452,3 +452,56 @@ JSONL fields include:
   bd-1rz0.2.3 (anytime-valid decision rule).
 - The implementation should live in `ftui-runtime` with minimal coupling.
 - Use `RenderBudget` to enforce hard deadlines.
+
+---
+
+## 14) VOI Sampling Policy (bd-1rz0.28)
+
+Resize telemetry can be expensive under storms. We therefore sample
+latency measurements using a value-of-information (VOI) policy with
+anytime-valid safety guarantees.
+
+### Model + Priors
+- Each resize measurement yields a violation indicator:
+  `X_t = 1 ⇔ latency > target_latency_ms`.
+- Prior: `p ~ Beta(α, β)` (default α=β=1).
+- Posterior update: `α ← α + X_t`, `β ← β + (1−X_t)`.
+
+### VOI (Expected Variance Reduction)
+Let `Var[p]` be the Beta posterior variance. The expected variance after
+one additional sample is:
+
+```
+E[Var | one sample] =
+  p̂ · Var[Beta(α+1,β)] + (1−p̂) · Var[Beta(α,β+1)]
+VOI = Var[p] − E[Var | one sample]
+```
+
+### E-Process Boundary Proximity
+- Track wealth `W_t` using the same Bernoulli stream for anytime-valid control.
+- Increase sampling when `log W_t` is near the threshold `log(1/α)`.
+
+### Decision Rule (Explainable)
+- Forced: if max interval exceeded ⇒ sample.
+- Guard: if min interval not met ⇒ skip.
+- Otherwise: sample iff `score ≥ cost`, where:
+
+```
+score = VOI × value_scale × (1 + boundary_weight × boundary_score)
+boundary_score = 1 / (1 + |log W_t − log W*|)
+```
+
+Evidence ledger fields:
+- `voi_gain`, `score`, `cost`, `log_bayes_factor`
+- `posterior_mean`, `posterior_variance`
+- `e_value`, `e_threshold`
+- `events_since_sample`, `time_since_sample_ms`
+- `reason` (forced / min_interval / voi_ge_cost / voi_lt_cost)
+
+### Implementation
+- `crates/ftui-runtime/src/voi_sampling.rs`
+- Integrated into `ResizeSlaMonitor` via optional config.
+
+### E2E Determinism
+- Tests emit JSONL with `seed`, `decision`, and `checksum` fields.
+- Deterministic mode uses `VOI_SEED`.

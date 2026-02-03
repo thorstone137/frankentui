@@ -850,6 +850,22 @@ fn wrap_line_chars(line: &Line, width: usize) -> Vec<Line> {
             }
 
             let (left, right) = remaining.split_at_cell(available);
+
+            // Force progress if the first grapheme is too wide for `available`
+            // and we are at the start of a line (so we can't wrap further).
+            let (left, right) =
+                if left.is_empty() && current.is_empty() && !remaining.is_empty() {
+                    let first_w = remaining
+                        .as_str()
+                        .graphemes(true)
+                        .next()
+                        .map(|g| g.width())
+                        .unwrap_or(1);
+                    remaining.split_at_cell(first_w.max(1))
+                } else {
+                    (left, right)
+                };
+
             if !left.is_empty() {
                 push_span_merged(&mut current, left);
             }

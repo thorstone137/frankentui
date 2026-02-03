@@ -5,20 +5,20 @@
 │Frame 1/50                                    ││Size: 40x15                   │
 │                                              ││Changes: 600 cells            │
 │                                              ││Memory: 9600 bytes            │
-│Hello, World!                                 ││Checksum: 3862ed5d09afa616    │
+│Hello, World!                                 ││Checksum: d824a111a221fa16    │
 │                                              ││Render: 100µs                 │
 │                                              ││                              │
-│                                              ││Chain hash: dd450fd0e104be5d  │
+│                                              ││Chain hash: e374497cb34d825d  │
 │                                              ││Markers: 0                    │
 │                                              ││Marked: No                    │
 │                                              ││                              │
 │                                              ││── Controls ──                │
 │                                              ││Space: Play/Pause             │
-│                                              ││←/→: Step                     │
-│█                                             ││Home/End: First/Last          │
+│                                              ││←/→ or h/l: Step              │
+│█                                             ││Home/End or g/G: First/Last   │
 │                                              ││M: Toggle marker              │
 │                                              ││R: Toggle record              │
 │                                              ││C: Clear                      │
-│                                              ││                              │
+│                                              ││D: Diagnostics                │
 │                                              ││                              │
 ╰──────────────────────────────────────────────╯╰──────────────────────────────╯

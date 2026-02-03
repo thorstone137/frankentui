@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 ftui-core = { path = "../ftui-core", features = ["caps-probe"] }
+ftui-i18n = { path = "../ftui-i18n" }
 ftui-render = { path = "../ftui-render" }
 ftui-style = { path = "../ftui-style" }
 ftui-text = { path = "../ftui-text", features = ["markup"] }

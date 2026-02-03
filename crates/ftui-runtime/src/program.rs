@@ -2245,6 +2245,12 @@ mod tests {
     }
 
     #[test]
+    fn resize_behavior_uses_coalescer_flag() {
+        assert!(ResizeBehavior::Throttled.uses_coalescer());
+        assert!(!ResizeBehavior::Immediate.uses_coalescer());
+    }
+
+    #[test]
     fn nested_cmd_msg_executes_recursively() {
         // Verify that Cmd::Msg triggers recursive update
         use crate::simulator::ProgramSimulator;

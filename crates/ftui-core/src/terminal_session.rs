@@ -81,6 +81,7 @@ use crate::event::Event;
 
 const KITTY_KEYBOARD_ENABLE: &[u8] = b"\x1b[>15u";
 const KITTY_KEYBOARD_DISABLE: &[u8] = b"\x1b[<u";
+const SYNC_END: &[u8] = b"\x1b[?2026l";
 
 #[cfg(unix)]
 use signal_hook::consts::signal::{SIGINT, SIGTERM, SIGWINCH};
@@ -416,6 +417,10 @@ pub fn best_effort_cleanup_for_exit() {
 
 fn best_effort_cleanup() {
     let mut stdout = io::stdout();
+
+    // End synchronized output first to ensure any buffered content (like panic messages)
+    // is flushed to the terminal.
+    let _ = stdout.write_all(SYNC_END);
 
     let _ = TerminalSession::disable_kitty_keyboard(&mut stdout);
     let _ = crossterm::execute!(stdout, crossterm::event::DisableFocusChange);

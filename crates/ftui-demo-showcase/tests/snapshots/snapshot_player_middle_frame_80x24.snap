@@ -5,20 +5,20 @@
 │Frame 26/50                                   ││Size: 40x15                   │
 │                                              ││Changes: 32 cells             │
 │                                              ││Memory: 9600 bytes            │
-│                                              ││Checksum: 8cd4c3448a38a1d4    │
+│                                              ││Checksum: e9a070bb16b11fd4    │
 │                                              ││Render: 350µs                 │
 │                                              ││                              │
-│                                              ││Chain hash: 9be612b140524b5d  │
+│                                              ││Chain hash: e374497cb34d825d  │
 │                                              ││Markers: 0                    │
 │     FrankenTUI Demo                          ││Marked: No                    │
 │                                              ││                              │
 │                                              ││── Controls ──                │
 │                                              ││Space: Play/Pause             │
-│                                              ││←/→: Step                     │
-│          █                                   ││Home/End: First/Last          │
+│                                              ││←/→ or h/l: Step              │
+│          █                                   ││Home/End or g/G: First/Last   │
 │━━━━━━━━━━━━━━━━━━━━                          ││M: Toggle marker              │
 │                                              ││R: Toggle record              │
 │                                              ││C: Clear                      │
-│                                              ││                              │
+│                                              ││D: Diagnostics                │
 │                                              ││                              │
 ╰──────────────────────────────────────────────╯╰──────────────────────────────╯

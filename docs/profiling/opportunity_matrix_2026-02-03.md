@@ -143,3 +143,27 @@ cargo bench -p ftui-layout --bench layout_bench
 # Compare with baseline
 cargo bench -p ftui-render --bench diff_bench -- --baseline baseline_2026-02-03
 ```
+
+---
+
+## VOI Sampling Policy (bd-1rz0.28)
+
+**Baseline (hyperfine):** `cargo test -p ftui-runtime perf_voi_sampling_budget -- --nocapture`
+
+- p50: 166.456ms
+- p95: 172.368ms
+- p99: 246.832ms
+
+**Flamegraph:** failed due to `perf_event_paranoid=4` (no perf access).
+
+### Opportunity Matrix (Blocked)
+Profiling blocked; no reliable hotspots yet. Retry once perf access is enabled.
+
+| ID | Opportunity | Impact | Confidence | Effort | Score | Recommendation |
+|----|-------------|--------|------------|--------|-------|----------------|
+| O1 | Reduce decision struct cloning | 3 | 3 | 2 | 4.5 | Re-evaluate after flamegraph |
+| O2 | Inline VOI math helpers | 2 | 2 | 1 | 4.0 | Re-evaluate after flamegraph |
+
+### Notes
+- Flamegraph command: `cargo flamegraph -p ftui-runtime --unit-test -o docs/profiling/bd-1rz0.28/voi_sampling_flamegraph.svg -- perf_voi_sampling_budget --nocapture`
+- Enable perf access via `perf_event_paranoid` or `CAP_PERFMON` to capture hotspots.

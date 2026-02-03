@@ -2535,4 +2535,283 @@ mod tests {
         // This test passes if it compiles - it's documentation-as-code
         // (Assertion removed as it was always true)
     }
+
+    // =========================================================================
+    // Stress/Performance Regression Tests (bd-17h9.4)
+    // =========================================================================
+
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::Instant;
+
+    fn inspector_seed() -> u64 {
+        std::env::var("INSPECTOR_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42)
+    }
+
+    fn next_u32(seed: &mut u64) -> u32 {
+        let mut x = *seed;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *seed = x;
+        (x >> 32) as u32
+    }
+
+    fn rand_range(seed: &mut u64, min: u16, max: u16) -> u16 {
+        if min >= max {
+            return min;
+        }
+        let span = (max - min) as u32 + 1;
+        let n = next_u32(seed) % span;
+        min + n as u16
+    }
+
+    fn random_rect(seed: &mut u64, area: Rect) -> Rect {
+        let max_w = area.width.max(1);
+        let max_h = area.height.max(1);
+        let w = rand_range(seed, 1, max_w);
+        let h = rand_range(seed, 1, max_h);
+        let max_x = area.x + area.width.saturating_sub(w);
+        let max_y = area.y + area.height.saturating_sub(h);
+        let x = rand_range(seed, area.x, max_x);
+        let y = rand_range(seed, area.y, max_y);
+        Rect::new(x, y, w, h)
+    }
+
+    fn build_widget_tree(
+        seed: &mut u64,
+        depth: u8,
+        max_depth: u8,
+        breadth: u8,
+        area: Rect,
+        count: &mut usize,
+    ) -> WidgetInfo {
+        *count += 1;
+        let name = format!("Widget_{depth}_{}", *count);
+        let mut node = WidgetInfo::new(name, area).with_depth(depth);
+
+        if depth < max_depth {
+            for _ in 0..breadth {
+                let child_area = random_rect(seed, area);
+                let child = build_widget_tree(
+                    seed,
+                    depth + 1,
+                    max_depth,
+                    breadth,
+                    child_area,
+                    count,
+                );
+                node.add_child(child);
+            }
+        }
+
+        node
+    }
+
+    fn build_stress_state(
+        seed: &mut u64,
+        roots: usize,
+        max_depth: u8,
+        breadth: u8,
+        area: Rect,
+    ) -> (InspectorState, usize) {
+        let mut state = InspectorState::default();
+        state.mode = InspectorMode::Full;
+        state.show_hits = true;
+        state.show_bounds = true;
+        state.show_names = true;
+        state.show_detail_panel = true;
+        state.hover_pos = Some((area.x + 1, area.y + 1));
+
+        let mut count = 0usize;
+        for _ in 0..roots {
+            let root_area = random_rect(seed, area);
+            let widget = build_widget_tree(seed, 0, max_depth, breadth, root_area, &mut count);
+            state.register_widget(widget);
+        }
+
+        (state, count)
+    }
+
+    fn populate_hit_grid(
+        frame: &mut Frame,
+        seed: &mut u64,
+        count: usize,
+        area: Rect,
+    ) -> usize {
+        for idx in 0..count {
+            let region = match idx % 6 {
+                0 => HitRegion::Content,
+                1 => HitRegion::Border,
+                2 => HitRegion::Scrollbar,
+                3 => HitRegion::Handle,
+                4 => HitRegion::Button,
+                _ => HitRegion::Link,
+            };
+            let rect = random_rect(seed, area);
+            frame.register_hit(rect, HitId::new((idx + 1) as u32), region, idx as HitData);
+        }
+        count
+    }
+
+    fn buffer_checksum(frame: &Frame) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for y in 0..frame.buffer.height() {
+            for x in 0..frame.buffer.width() {
+                if let Some(cell) = frame.buffer.get(x, y) {
+                    cell.hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
+
+    fn log_jsonl(event: &str, fields: &[(&str, String)]) {
+        let mut parts = Vec::with_capacity(fields.len() + 1);
+        parts.push(format!(r#""event":"{event}""#));
+        parts.extend(fields.iter().map(|(k, v)| format!(r#""{k}":{v}"#)));
+        eprintln!("{{{}}}", parts.join(","));
+    }
+
+    #[test]
+    fn inspector_stress_large_tree_renders() {
+        let mut seed = inspector_seed();
+        let area = Rect::new(0, 0, 160, 48);
+        let (state, widget_count) = build_stress_state(&mut seed, 6, 3, 3, area);
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::with_hit_grid(area.width, area.height, &mut pool);
+        let hit_count = populate_hit_grid(&mut frame, &mut seed, 800, area);
+
+        let overlay = InspectorOverlay::new(&state);
+        overlay.render(area, &mut frame);
+
+        let checksum = buffer_checksum(&frame);
+        log_jsonl(
+            "inspector_stress_render",
+            &[
+                ("seed", seed.to_string()),
+                ("widgets", widget_count.to_string()),
+                ("hit_regions", hit_count.to_string()),
+                ("checksum", format!(r#""0x{checksum:016x}""#)),
+            ],
+        );
+
+        assert!(checksum != 0, "Rendered buffer checksum should be non-zero");
+    }
+
+    #[test]
+    fn inspector_stress_checksum_is_deterministic() {
+        let seed = inspector_seed();
+        let area = Rect::new(0, 0, 140, 40);
+
+        let checksum_a = {
+            let mut seed = seed;
+            let (state, _) = build_stress_state(&mut seed, 5, 3, 3, area);
+            let mut pool = GraphemePool::new();
+            let mut frame = Frame::with_hit_grid(area.width, area.height, &mut pool);
+            populate_hit_grid(&mut frame, &mut seed, 600, area);
+            InspectorOverlay::new(&state).render(area, &mut frame);
+            buffer_checksum(&frame)
+        };
+
+        let checksum_b = {
+            let mut seed = seed;
+            let (state, _) = build_stress_state(&mut seed, 5, 3, 3, area);
+            let mut pool = GraphemePool::new();
+            let mut frame = Frame::with_hit_grid(area.width, area.height, &mut pool);
+            populate_hit_grid(&mut frame, &mut seed, 600, area);
+            InspectorOverlay::new(&state).render(area, &mut frame);
+            buffer_checksum(&frame)
+        };
+
+        log_jsonl(
+            "inspector_stress_determinism",
+            &[
+                ("seed", seed.to_string()),
+                ("checksum_a", format!(r#""0x{checksum_a:016x}""#)),
+                ("checksum_b", format!(r#""0x{checksum_b:016x}""#)),
+            ],
+        );
+
+        assert_eq!(
+            checksum_a, checksum_b,
+            "Stress render checksum should be deterministic"
+        );
+    }
+
+    #[test]
+    fn inspector_perf_budget_overlay() {
+        let seed = inspector_seed();
+        let area = Rect::new(0, 0, 160, 48);
+        let iterations = 40usize;
+        let budget_p95_us = 15_000u64;
+
+        let mut timings = Vec::with_capacity(iterations);
+        let mut checksums = Vec::with_capacity(iterations);
+
+        for i in 0..iterations {
+            let mut seed = seed.wrapping_add(i as u64);
+            let (state, widget_count) = build_stress_state(&mut seed, 6, 3, 3, area);
+            let mut pool = GraphemePool::new();
+            let mut frame = Frame::with_hit_grid(area.width, area.height, &mut pool);
+            let hit_count = populate_hit_grid(&mut frame, &mut seed, 800, area);
+
+            let start = Instant::now();
+            InspectorOverlay::new(&state).render(area, &mut frame);
+            let elapsed_us = start.elapsed().as_micros() as u64;
+            timings.push(elapsed_us);
+
+            let checksum = buffer_checksum(&frame);
+            checksums.push(checksum);
+
+            if i == 0 {
+                log_jsonl(
+                    "inspector_perf_sample",
+                    &[
+                        ("seed", seed.to_string()),
+                        ("widgets", widget_count.to_string()),
+                        ("hit_regions", hit_count.to_string()),
+                        ("timing_us", elapsed_us.to_string()),
+                        ("checksum", format!(r#""0x{checksum:016x}""#)),
+                    ],
+                );
+            }
+        }
+
+        let mut sorted = timings.clone();
+        sorted.sort_unstable();
+        let p95 = sorted[sorted.len() * 95 / 100];
+        let p99 = sorted[sorted.len() * 99 / 100];
+        let avg = timings.iter().sum::<u64>() as f64 / timings.len() as f64;
+
+        let mut seq_hasher = DefaultHasher::new();
+        for checksum in &checksums {
+            checksum.hash(&mut seq_hasher);
+        }
+        let seq_checksum = seq_hasher.finish();
+
+        log_jsonl(
+            "inspector_perf_budget",
+            &[
+                ("seed", seed.to_string()),
+                ("iterations", iterations.to_string()),
+                ("avg_us", format!("{:.2}", avg)),
+                ("p95_us", p95.to_string()),
+                ("p99_us", p99.to_string()),
+                ("budget_p95_us", budget_p95_us.to_string()),
+                ("sequence_checksum", format!(r#""0x{seq_checksum:016x}""#)),
+            ],
+        );
+
+        assert!(
+            p95 <= budget_p95_us,
+            "Inspector overlay p95 {}µs exceeds budget {}µs",
+            p95,
+            budget_p95_us
+        );
+    }
 }

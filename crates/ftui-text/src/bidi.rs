@@ -190,9 +190,7 @@ impl BidiSegment {
 
     /// Check if the character at `logical` index is part of an RTL run.
     pub fn is_rtl(&self, logical: usize) -> bool {
-        self.levels
-            .get(logical)
-            .is_some_and(|level| level.is_rtl())
+        self.levels.get(logical).is_some_and(|level| level.is_rtl())
     }
 
     /// Move cursor one step to the right in visual order.
@@ -325,11 +323,7 @@ impl BidiSegment {
         // Start with identity permutation.
         let mut order: Vec<usize> = (0..n).collect();
 
-        let max_level = char_levels
-            .iter()
-            .map(|l| l.number())
-            .max()
-            .unwrap_or(0);
+        let max_level = char_levels.iter().map(|l| l.number()).max().unwrap_or(0);
 
         // Find lowest odd level (minimum 1 since we only reverse odd+ levels).
         let min_odd_level = char_levels
@@ -606,8 +600,7 @@ mod tests {
 
     #[test]
     fn resolve_levels_pure_rtl() {
-        let levels =
-            resolve_levels("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", ParagraphDirection::Auto);
+        let levels = resolve_levels("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", ParagraphDirection::Auto);
         assert!(!levels.is_empty());
         for level in &levels {
             assert!(level.is_rtl(), "Expected RTL level, got {:?}", level);
@@ -719,10 +712,7 @@ mod tests {
         assert_eq!(seg.runs[0].direction, Direction::Rtl);
 
         // Visual string should match reorder() output.
-        assert_eq!(
-            seg.visual_string(),
-            "\u{05DD}\u{05D5}\u{05DC}\u{05E9}"
-        );
+        assert_eq!(seg.visual_string(), "\u{05DD}\u{05D5}\u{05DC}\u{05E9}");
     }
 
     #[test]
@@ -764,7 +754,10 @@ mod tests {
         // In an RTL paragraph, numbers maintain LTR order.
         let visual = seg.visual_string();
         // The visual string should have 123 in correct order.
-        assert!(visual.contains("123"), "Numbers should stay in LTR order: {visual}");
+        assert!(
+            visual.contains("123"),
+            "Numbers should stay in LTR order: {visual}"
+        );
 
         // The number characters themselves should resolve to LTR embedding.
         // (Their levels are even = LTR, but within an RTL paragraph they
@@ -796,7 +789,10 @@ mod tests {
         let mut sorted_vtl = seg.visual_to_logical.clone();
         sorted_vtl.sort();
         let expected: Vec<usize> = (0..seg.len()).collect();
-        assert_eq!(sorted_vtl, expected, "visual_to_logical must be a valid permutation");
+        assert_eq!(
+            sorted_vtl, expected,
+            "visual_to_logical must be a valid permutation"
+        );
     }
 
     #[test]

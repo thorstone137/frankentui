@@ -16,6 +16,7 @@ pub mod drag_drop;
 pub mod file_browser;
 pub mod form_validation;
 pub mod forms_input;
+pub mod i18n_demo;
 pub mod intrinsic_sizing;
 pub mod layout_lab;
 pub mod log_search;

@@ -5,21 +5,21 @@
 │Frame 6/50                                                            ││Size: 40x15                                   │
 │                                                                      ││Changes: 37 cells                             │
 │                                                                      ││Memory: 9600 bytes                            │
-│                                                                      ││Checksum: fffaa5c39061e8d0                    │
+│                                                                      ││Checksum: b7551f9efc9b72d0                    │
 │     Press Space to Play                                              ││Render: 150µs                                 │
 │                                                                      ││                                              │
-│                                                                      ││Chain hash: 19f95beaa579045d                  │
+│                                                                      ││Chain hash: e374497cb34d825d                  │
 │                                                                      ││Markers: 0                                    │
 │                                                                      ││Marked: No                                    │
 │                                                                      ││                                              │
 │                                                                      ││── Controls ──                                │
 │                                                                      ││Space: Play/Pause                             │
-│                                                                      ││←/→: Step                                     │
-│          █                                                           ││Home/End: First/Last                          │
+│                                                                      ││←/→ or h/l: Step                              │
+│          █                                                           ││Home/End or g/G: First/Last                   │
 │━━━━                                                                  ││M: Toggle marker                              │
 │                                                                      ││R: Toggle record                              │
 │                                                                      ││C: Clear                                      │
-│                                                                      ││                                              │
+│                                                                      ││D: Diagnostics                                │
 │                                                                      ││                                              │
 │                                                                      ││                                              │
 │                                                                      ││                                              │

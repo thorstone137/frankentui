@@ -5,21 +5,21 @@
 │Frame 50/50                                                           ││Size: 40x15                                   │
 │                                                                      ││Changes: 21 cells                             │
 │                                                                      ││Memory: 9600 bytes                            │
-│                                                                      ││Checksum: f34bb5f14ee2235a                    │
+│                                                                      ││Checksum: 548170b341839d5a                    │
 │                                                                      ││Render: 590µs                                 │
 │                                                                      ││                                              │
-│                                                                      ││Chain hash: aa5df5185a4cc35d                  │
+│                                                                      ││Chain hash: e374497cb34d825d                  │
 │                                                                      ││Markers: 0                                    │
 │                                                                      ││Marked: No                                    │
 │                                                                      ││                                              │
 │                                                                      ││── Controls ──                                │
 │                                                                      ││Space: Play/Pause                             │
-│         FrankenTUI Demo                                              ││←/→: Step                                     │
-│                  █                                                   ││Home/End: First/Last                          │
+│         FrankenTUI Demo                                              ││←/→ or h/l: Step                              │
+│                  █                                                   ││Home/End or g/G: First/Last                   │
 │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━                               ││M: Toggle marker                              │
 │                                                                      ││R: Toggle record                              │
 │                                                                      ││C: Clear                                      │
-│                                                                      ││                                              │
+│                                                                      ││D: Diagnostics                                │
 │                                                                      ││                                              │
 │                                                                      ││                                              │
 │                                                                      ││                                              │
