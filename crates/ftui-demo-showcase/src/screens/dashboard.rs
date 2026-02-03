@@ -13,7 +13,7 @@
 //!
 //! Dynamically reflowable from 40x10 to 200x50+.
 
-use std::cell::Cell;
+use std::cell::Cell as StdCell;
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -1468,13 +1468,13 @@ pub struct Dashboard {
 
     // Focus + hit testing
     focus: DashboardFocus,
-    layout_plasma: Cell<Rect>,
-    layout_charts: Cell<Rect>,
-    layout_code: Cell<Rect>,
-    layout_info: Cell<Rect>,
-    layout_text_fx: Cell<Rect>,
-    layout_activity: Cell<Rect>,
-    layout_markdown: Cell<Rect>,
+    layout_plasma: StdCell<Rect>,
+    layout_charts: StdCell<Rect>,
+    layout_code: StdCell<Rect>,
+    layout_info: StdCell<Rect>,
+    layout_text_fx: StdCell<Rect>,
+    layout_activity: StdCell<Rect>,
+    layout_markdown: StdCell<Rect>,
 }
 
 impl Default for Dashboard {

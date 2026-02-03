@@ -27,6 +27,8 @@ use ftui_widgets::scrollbar::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{HelpEntry, Screen};
+use crate::app::ScreenId;
+use crate::chrome;
 use crate::theme;
 
 /// Embedded SQLite amalgamation source.
@@ -452,6 +454,8 @@ impl CodeExplorer {
     fn focus_from_point(&mut self, x: u16, y: u16) {
         self.search_active = false;
         self.search_input.set_focused(false);
+        self.goto_active = false;
+        self.goto_input.set_focused(false);
         let input = self.layout_input.get();
         let code = self.layout_code.get();
         let info = self.layout_info.get();
