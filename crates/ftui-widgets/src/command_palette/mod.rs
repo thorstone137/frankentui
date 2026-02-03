@@ -279,6 +279,8 @@ struct ScoredItem {
 pub struct CommandPalette {
     /// Registered actions.
     actions: Vec<ActionItem>,
+    /// Cached lowercased titles for scoring.
+    titles_lower: Vec<String>,
     /// Current query text.
     query: String,
     /// Cursor position in the query (byte offset for simplicity).
@@ -315,6 +317,7 @@ impl CommandPalette {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
+            titles_lower: Vec::new(),
             query: String::new(),
             cursor: 0,
             selected: 0,
@@ -358,6 +361,7 @@ impl CommandPalette {
             item.description = Some(desc.to_string());
         }
         item.tags = tags.iter().map(|s| (*s).to_string()).collect();
+        self.titles_lower.push(item.title.to_lowercase());
         self.actions.push(item);
         self.generation = self.generation.wrapping_add(1);
         self
@@ -365,6 +369,7 @@ impl CommandPalette {
 
     /// Register an action item directly.
     pub fn register_action(&mut self, action: ActionItem) -> &mut Self {
+        self.titles_lower.push(action.title.to_lowercase());
         self.actions.push(action);
         self.generation = self.generation.wrapping_add(1);
         self
@@ -582,11 +587,23 @@ impl CommandPalette {
             None
         };
 
-        let titles: Vec<&str> = self.actions.iter().map(|a| a.title.as_str()).collect();
+        if self.titles_lower.len() != self.actions.len() {
+            self.titles_lower = self
+                .actions
+                .iter()
+                .map(|a| a.title.to_lowercase())
+                .collect();
+        }
 
-        let results = self
-            .scorer
-            .score_corpus(&self.query, &titles, Some(self.generation));
+        let titles: Vec<&str> = self.actions.iter().map(|a| a.title.as_str()).collect();
+        let titles_lower: Vec<&str> = self.titles_lower.iter().map(|t| t.as_str()).collect();
+
+        let results = self.scorer.score_corpus_with_lowered(
+            &self.query,
+            &titles,
+            &titles_lower,
+            Some(self.generation),
+        );
 
         self.filtered = results
             .into_iter()
