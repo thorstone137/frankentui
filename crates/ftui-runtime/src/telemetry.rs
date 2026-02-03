@@ -610,38 +610,307 @@ impl DecisionEvidence {
     }
 }
 
+// =============================================================================
+// Event Schema: Span and Event Names
+// =============================================================================
+//
+// This section defines the canonical event schema for FrankenTUI telemetry.
+// See `docs/spec/telemetry-events.md` for the full specification.
+
+/// Runtime phase span names (Elm/Bubbletea loop).
+pub mod spans {
+    /// Span for model initialization.
+    pub const PROGRAM_INIT: &str = "ftui.program.init";
+    /// Span for a single update cycle.
+    pub const PROGRAM_UPDATE: &str = "ftui.program.update";
+    /// Span for view rendering.
+    pub const PROGRAM_VIEW: &str = "ftui.program.view";
+    /// Span for subscription management.
+    pub const PROGRAM_SUBSCRIPTIONS: &str = "ftui.program.subscriptions";
+
+    /// Span for complete frame cycle.
+    pub const RENDER_FRAME: &str = "ftui.render.frame";
+    /// Span for buffer diff computation.
+    pub const RENDER_DIFF: &str = "ftui.render.diff";
+    /// Span for ANSI emission.
+    pub const RENDER_PRESENT: &str = "ftui.render.present";
+    /// Span for output flush.
+    pub const RENDER_FLUSH: &str = "ftui.render.flush";
+
+    /// Span for input event processing.
+    pub const INPUT_EVENT: &str = "ftui.input.event";
+    /// Span for macro playback.
+    pub const INPUT_MACRO: &str = "ftui.input.macro";
+}
+
+/// Decision event names (point-in-time auditable decisions).
+pub mod events {
+    /// Degradation level change event.
+    pub const DECISION_DEGRADATION: &str = "ftui.decision.degradation";
+    /// Capability fallback event.
+    pub const DECISION_FALLBACK: &str = "ftui.decision.fallback";
+    /// Resize handling decision event.
+    pub const DECISION_RESIZE: &str = "ftui.decision.resize";
+    /// Screen mode selection event.
+    pub const DECISION_SCREEN_MODE: &str = "ftui.decision.screen_mode";
+}
+
+/// Common field names for telemetry spans/events.
+pub mod fields {
+    // Common fields (attached to all spans)
+    /// Service name field.
+    pub const SERVICE_NAME: &str = "service.name";
+    /// Service version field.
+    pub const SERVICE_VERSION: &str = "service.version";
+    /// Telemetry SDK identifier.
+    pub const TELEMETRY_SDK: &str = "telemetry.sdk";
+    /// Host architecture field.
+    pub const HOST_ARCH: &str = "host.arch";
+    /// Process ID field.
+    pub const PROCESS_PID: &str = "process.pid";
+    /// Schema version field.
+    pub const SCHEMA_VERSION: &str = "ftui.schema_version";
+
+    // Duration fields (microseconds)
+    /// Duration in microseconds.
+    pub const DURATION_US: &str = "duration_us";
+
+    // Program phase fields
+    /// Model type name (verbose mode only).
+    pub const MODEL_TYPE: &str = "model_type";
+    /// Command count.
+    pub const CMD_COUNT: &str = "cmd_count";
+    /// Message type name (verbose mode only).
+    pub const MSG_TYPE: &str = "msg_type";
+    /// Command type name (verbose mode only).
+    pub const CMD_TYPE: &str = "cmd_type";
+    /// Widget count.
+    pub const WIDGET_COUNT: &str = "widget_count";
+    /// Active subscription count.
+    pub const ACTIVE_COUNT: &str = "active_count";
+    /// Subscriptions started.
+    pub const STARTED: &str = "started";
+    /// Subscriptions stopped.
+    pub const STOPPED: &str = "stopped";
+
+    // Render fields
+    /// Buffer width.
+    pub const WIDTH: &str = "width";
+    /// Buffer height.
+    pub const HEIGHT: &str = "height";
+    /// Number of changes in diff.
+    pub const CHANGES_COUNT: &str = "changes_count";
+    /// Rows skipped in diff.
+    pub const ROWS_SKIPPED: &str = "rows_skipped";
+    /// Bytes written to output.
+    pub const BYTES_WRITTEN: &str = "bytes_written";
+    /// Number of change runs.
+    pub const RUNS_COUNT: &str = "runs_count";
+    /// Sync mode used.
+    pub const SYNC_MODE: &str = "sync_mode";
+
+    // Decision fields
+    /// Degradation level.
+    pub const LEVEL: &str = "level";
+    /// Decision reason.
+    pub const REASON: &str = "reason";
+    /// Remaining budget.
+    pub const BUDGET_REMAINING: &str = "budget_remaining";
+    /// Capability name.
+    pub const CAPABILITY: &str = "capability";
+    /// Fallback target.
+    pub const FALLBACK_TO: &str = "fallback_to";
+    /// Strategy name.
+    pub const STRATEGY: &str = "strategy";
+    /// Debounce active flag.
+    pub const DEBOUNCE_ACTIVE: &str = "debounce_active";
+    /// Events coalesced flag.
+    pub const COALESCED: &str = "coalesced";
+    /// Screen mode.
+    pub const MODE: &str = "mode";
+    /// UI height.
+    pub const UI_HEIGHT: &str = "ui_height";
+    /// UI anchor position.
+    pub const ANCHOR: &str = "anchor";
+
+    // Input fields
+    /// Event type (no content!).
+    pub const EVENT_TYPE: &str = "event_type";
+    /// Macro ID.
+    pub const MACRO_ID: &str = "macro_id";
+    /// Event count.
+    pub const EVENT_COUNT: &str = "event_count";
+
+    // Decision evidence fields
+    /// Decision rule applied.
+    pub const DECISION_RULE: &str = "decision.rule";
+    /// Decision inputs (redacted).
+    pub const DECISION_INPUTS: &str = "decision.inputs";
+    /// Decision action taken.
+    pub const DECISION_ACTION: &str = "decision.action";
+    /// Decision confidence score.
+    pub const DECISION_CONFIDENCE: &str = "decision.confidence";
+}
+
+/// Redaction policy configuration.
+///
+/// Defines what categories of data are redacted and how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedactionLevel {
+    /// Full redaction: replace with placeholder.
+    Full,
+    /// Partial redaction: show type/count but not content.
+    Partial,
+    /// No redaction: emit as-is (verbose mode only).
+    None,
+}
+
+/// Categories of data for redaction policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataCategory {
+    /// User input content (key chars, text, passwords).
+    UserInput,
+    /// File paths and directories.
+    FilePath,
+    /// Environment variables (beyond allowed prefixes).
+    EnvVar,
+    /// Memory addresses and pointers.
+    MemoryAddress,
+    /// Process arguments.
+    ProcessArgs,
+    /// User identifiers (usernames, home dirs).
+    UserIdentifier,
+    /// Widget type names.
+    WidgetType,
+    /// Message type names.
+    MessageType,
+    /// Command type names.
+    CommandType,
+    /// Terminal capability details.
+    CapabilityDetails,
+}
+
+impl DataCategory {
+    /// Get the default redaction level for this category.
+    #[must_use]
+    pub const fn default_redaction(self) -> RedactionLevel {
+        match self {
+            // Hard redaction: never emit
+            Self::UserInput
+            | Self::FilePath
+            | Self::EnvVar
+            | Self::MemoryAddress
+            | Self::ProcessArgs
+            | Self::UserIdentifier => RedactionLevel::Full,
+            // Soft redaction: emit only in verbose mode
+            Self::WidgetType
+            | Self::MessageType
+            | Self::CommandType
+            | Self::CapabilityDetails => RedactionLevel::Partial,
+        }
+    }
+
+    /// Check if this category should be redacted in the current mode.
+    #[must_use]
+    pub fn should_redact(self) -> bool {
+        match self.default_redaction() {
+            RedactionLevel::Full => true,
+            RedactionLevel::Partial => !redact::is_verbose(),
+            RedactionLevel::None => false,
+        }
+    }
+}
+
+/// Allowed environment variable prefixes that are safe to emit.
+pub const ALLOWED_ENV_PREFIXES: &[&str] = &["OTEL_", "FTUI_"];
+
+/// Check if an environment variable name is safe to emit.
+#[must_use]
+pub fn is_safe_env_var(name: &str) -> bool {
+    ALLOWED_ENV_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
 /// Redaction utilities for telemetry.
 ///
 /// These functions implement the redaction policy defined in
 /// `docs/spec/telemetry-events.md`.
+///
+/// # Redaction Principles
+///
+/// 1. **Conservative by default**: Err on the side of not emitting.
+/// 2. **No PII**: Never emit user input content, file paths, or secrets.
+/// 3. **Structural only**: Emit types and counts, not values.
+/// 4. **Opt-in detail**: Verbose fields require `FTUI_TELEMETRY_VERBOSE=true`.
 pub mod redact {
     use std::path::Path;
 
+    // =========================================================================
+    // Hard Redaction (Never Emit)
+    // =========================================================================
+
     /// Redact a file path (never emit full paths).
+    ///
+    /// File paths may expose sensitive information about the user's
+    /// system structure, usernames, or project names.
     #[inline]
     pub fn path(_path: &Path) -> &'static str {
         "[redacted:path]"
     }
 
     /// Redact user input content (never emit).
+    ///
+    /// User input may contain passwords, personal information,
+    /// or other sensitive data.
     #[inline]
     pub fn content(_content: &str) -> &'static str {
         "[redacted:content]"
     }
 
     /// Redact a memory address.
+    ///
+    /// Memory addresses could be used for ASLR bypass attacks.
     #[inline]
     pub fn address<T>(_ptr: *const T) -> &'static str {
         "[redacted:address]"
     }
 
+    /// Redact an environment variable value.
+    ///
+    /// Environment variables often contain secrets and credentials.
+    #[inline]
+    pub fn env_var(_value: &str) -> &'static str {
+        "[redacted:env]"
+    }
+
+    /// Redact process arguments.
+    ///
+    /// Command-line arguments may contain passwords or sensitive flags.
+    #[inline]
+    pub fn process_args(_args: &[String]) -> &'static str {
+        "[redacted:args]"
+    }
+
+    /// Redact a username or user identifier.
+    #[inline]
+    pub fn username(_name: &str) -> &'static str {
+        "[redacted:user]"
+    }
+
+    // =========================================================================
+    // Safe Summarization (Always Allowed)
+    // =========================================================================
+
     /// Summarize a count without exposing content.
+    ///
+    /// Counts are safe because they don't reveal the actual data.
     #[inline]
     pub fn count<T>(items: &[T]) -> String {
         format!("{} items", items.len())
     }
 
-    /// Summarize byte size.
+    /// Summarize byte size in human-readable format.
+    ///
+    /// Byte sizes are safe as they're just numbers.
     #[inline]
     pub fn bytes(size: usize) -> String {
         if size < 1024 {
@@ -653,7 +922,36 @@ pub mod redact {
         }
     }
 
+    /// Summarize a duration in human-readable format.
+    ///
+    /// Durations are safe timing information.
+    #[inline]
+    pub fn duration_us(micros: u64) -> String {
+        if micros < 1000 {
+            format!("{micros}μs")
+        } else if micros < 1_000_000 {
+            format!("{:.2}ms", micros as f64 / 1000.0)
+        } else {
+            format!("{:.2}s", micros as f64 / 1_000_000.0)
+        }
+    }
+
+    /// Summarize dimensions (width x height).
+    ///
+    /// Buffer dimensions are safe structural information.
+    #[inline]
+    pub fn dimensions(width: u16, height: u16) -> String {
+        format!("{width}x{height}")
+    }
+
+    // =========================================================================
+    // Conditional Emission (Verbose Mode)
+    // =========================================================================
+
     /// Check if verbose telemetry is enabled.
+    ///
+    /// When `FTUI_TELEMETRY_VERBOSE=true`, additional fields are emitted
+    /// that would otherwise be redacted (widget types, message types, etc).
     #[inline]
     pub fn is_verbose() -> bool {
         std::env::var("FTUI_TELEMETRY_VERBOSE")
@@ -661,10 +959,72 @@ pub mod redact {
             .unwrap_or(false)
     }
 
-    /// Emit a field only if verbose mode is enabled.
+    /// Emit a value only if verbose mode is enabled.
+    ///
+    /// Returns `T::default()` when not in verbose mode.
     #[inline]
     pub fn if_verbose<T: Default>(value: T) -> T {
         if is_verbose() { value } else { T::default() }
+    }
+
+    /// Emit a string value only if verbose mode is enabled.
+    ///
+    /// Returns `"[verbose-only]"` when not in verbose mode.
+    #[inline]
+    pub fn verbose_str(value: &str) -> &str {
+        if is_verbose() { value } else { "[verbose-only]" }
+    }
+
+    /// Redact a type name unless in verbose mode.
+    ///
+    /// Type names can reveal internal architecture but are useful for debugging.
+    #[inline]
+    pub fn type_name(name: &str) -> &str {
+        if is_verbose() { name } else { "[type]" }
+    }
+
+    // =========================================================================
+    // Custom Field Handling
+    // =========================================================================
+
+    /// Check if a custom field name has a valid namespace prefix.
+    ///
+    /// Custom fields MUST use a namespace prefix (e.g., `app.`, `custom.`).
+    #[inline]
+    pub fn is_valid_custom_field(name: &str) -> bool {
+        name.starts_with("app.") || name.starts_with("custom.")
+    }
+
+    /// Prefix a custom field name if not already prefixed.
+    ///
+    /// Ensures all custom fields have proper namespacing.
+    pub fn prefix_custom_field(name: &str) -> String {
+        if is_valid_custom_field(name) {
+            name.to_string()
+        } else {
+            format!("app.{name}")
+        }
+    }
+
+    // =========================================================================
+    // Validation Helpers
+    // =========================================================================
+
+    /// Check if a string contains potentially sensitive patterns.
+    ///
+    /// Used to detect accidental PII in telemetry output.
+    pub fn contains_sensitive_pattern(s: &str) -> bool {
+        let lower = s.to_lowercase();
+        // Check for common sensitive patterns
+        lower.contains("password")
+            || lower.contains("secret")
+            || lower.contains("token")
+            || lower.contains("key=")
+            || lower.contains("api_key")
+            || lower.contains("auth")
+            || s.contains('@') // Email addresses
+            || s.starts_with('/') // Absolute paths
+            || s.contains("://") // URLs
     }
 }
 
@@ -814,5 +1174,211 @@ mod tests {
         assert_eq!(redact::bytes(500), "500 B");
         assert_eq!(redact::bytes(2048), "2.0 KB");
         assert_eq!(redact::bytes(1024 * 1024 + 512 * 1024), "1.5 MB");
+    }
+
+    // =========================================================================
+    // Event Schema Tests
+    // =========================================================================
+
+    #[test]
+    fn test_span_names_follow_convention() {
+        // All span names should start with "ftui."
+        assert!(spans::PROGRAM_INIT.starts_with("ftui."));
+        assert!(spans::PROGRAM_UPDATE.starts_with("ftui."));
+        assert!(spans::PROGRAM_VIEW.starts_with("ftui."));
+        assert!(spans::RENDER_FRAME.starts_with("ftui."));
+        assert!(spans::RENDER_DIFF.starts_with("ftui."));
+        assert!(spans::INPUT_EVENT.starts_with("ftui."));
+    }
+
+    #[test]
+    fn test_event_names_follow_convention() {
+        // All event names should start with "ftui.decision."
+        assert!(events::DECISION_DEGRADATION.starts_with("ftui.decision."));
+        assert!(events::DECISION_FALLBACK.starts_with("ftui.decision."));
+        assert!(events::DECISION_RESIZE.starts_with("ftui.decision."));
+        assert!(events::DECISION_SCREEN_MODE.starts_with("ftui.decision."));
+    }
+
+    #[test]
+    fn test_field_names_are_lowercase_with_dots() {
+        // Field names should be lowercase with dots or underscores
+        let check_field = |name: &str| {
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '.' || c == '_'),
+                "Field name '{}' contains invalid characters",
+                name
+            );
+        };
+        check_field(fields::DURATION_US);
+        check_field(fields::WIDTH);
+        check_field(fields::HEIGHT);
+        check_field(fields::DECISION_RULE);
+        check_field(fields::SERVICE_NAME);
+    }
+
+    // =========================================================================
+    // Data Category Tests
+    // =========================================================================
+
+    #[test]
+    fn test_hard_redaction_categories() {
+        // These should always be redacted
+        assert_eq!(DataCategory::UserInput.default_redaction(), RedactionLevel::Full);
+        assert_eq!(DataCategory::FilePath.default_redaction(), RedactionLevel::Full);
+        assert_eq!(DataCategory::EnvVar.default_redaction(), RedactionLevel::Full);
+        assert_eq!(DataCategory::MemoryAddress.default_redaction(), RedactionLevel::Full);
+        assert_eq!(DataCategory::ProcessArgs.default_redaction(), RedactionLevel::Full);
+        assert_eq!(DataCategory::UserIdentifier.default_redaction(), RedactionLevel::Full);
+    }
+
+    #[test]
+    fn test_soft_redaction_categories() {
+        // These should be redacted unless verbose mode
+        assert_eq!(DataCategory::WidgetType.default_redaction(), RedactionLevel::Partial);
+        assert_eq!(DataCategory::MessageType.default_redaction(), RedactionLevel::Partial);
+        assert_eq!(DataCategory::CommandType.default_redaction(), RedactionLevel::Partial);
+        assert_eq!(DataCategory::CapabilityDetails.default_redaction(), RedactionLevel::Partial);
+    }
+
+    #[test]
+    fn test_hard_redaction_always_redacts() {
+        // Hard redaction should always trigger, regardless of verbose mode
+        assert!(DataCategory::UserInput.should_redact());
+        assert!(DataCategory::FilePath.should_redact());
+        assert!(DataCategory::MemoryAddress.should_redact());
+    }
+
+    // =========================================================================
+    // Environment Variable Safety Tests
+    // =========================================================================
+
+    #[test]
+    fn test_safe_env_var_prefixes() {
+        assert!(is_safe_env_var("OTEL_EXPORTER_OTLP_ENDPOINT"));
+        assert!(is_safe_env_var("OTEL_SDK_DISABLED"));
+        assert!(is_safe_env_var("FTUI_TELEMETRY_VERBOSE"));
+        assert!(is_safe_env_var("FTUI_OTEL_HTTP_ENDPOINT"));
+    }
+
+    #[test]
+    fn test_unsafe_env_vars() {
+        assert!(!is_safe_env_var("HOME"));
+        assert!(!is_safe_env_var("PATH"));
+        assert!(!is_safe_env_var("AWS_SECRET_ACCESS_KEY"));
+        assert!(!is_safe_env_var("DATABASE_URL"));
+    }
+
+    // =========================================================================
+    // Enhanced Redaction Tests
+    // =========================================================================
+
+    #[test]
+    fn test_redact_env_var() {
+        assert_eq!(redact::env_var("secret_value"), "[redacted:env]");
+    }
+
+    #[test]
+    fn test_redact_process_args() {
+        let args = vec!["--password".to_string(), "secret123".to_string()];
+        assert_eq!(redact::process_args(&args), "[redacted:args]");
+    }
+
+    #[test]
+    fn test_redact_username() {
+        assert_eq!(redact::username("john_doe"), "[redacted:user]");
+    }
+
+    #[test]
+    fn test_redact_duration_us() {
+        assert_eq!(redact::duration_us(500), "500μs");
+        assert_eq!(redact::duration_us(1500), "1.50ms");
+        assert_eq!(redact::duration_us(1_500_000), "1.50s");
+    }
+
+    #[test]
+    fn test_redact_dimensions() {
+        assert_eq!(redact::dimensions(80, 24), "80x24");
+        assert_eq!(redact::dimensions(120, 40), "120x40");
+    }
+
+    #[test]
+    fn test_verbose_str() {
+        // Without verbose mode (default), should return placeholder
+        assert_eq!(redact::verbose_str("WidgetType"), "[verbose-only]");
+        // Note: Testing with verbose mode would require modifying env vars
+    }
+
+    #[test]
+    fn test_type_name_redaction() {
+        // Without verbose mode (default), should return placeholder
+        assert_eq!(redact::type_name("MyWidget"), "[type]");
+    }
+
+    // =========================================================================
+    // Custom Field Handling Tests
+    // =========================================================================
+
+    #[test]
+    fn test_valid_custom_field() {
+        assert!(redact::is_valid_custom_field("app.my_field"));
+        assert!(redact::is_valid_custom_field("custom.my_field"));
+        assert!(!redact::is_valid_custom_field("my_field"));
+        assert!(!redact::is_valid_custom_field("ftui.internal"));
+    }
+
+    #[test]
+    fn test_prefix_custom_field() {
+        // Already prefixed - should return as-is
+        assert_eq!(redact::prefix_custom_field("app.my_field"), "app.my_field");
+        assert_eq!(redact::prefix_custom_field("custom.my_field"), "custom.my_field");
+        // Not prefixed - should add app. prefix
+        assert_eq!(redact::prefix_custom_field("my_field"), "app.my_field");
+        assert_eq!(redact::prefix_custom_field("user_action"), "app.user_action");
+    }
+
+    // =========================================================================
+    // Sensitive Pattern Detection Tests
+    // =========================================================================
+
+    #[test]
+    fn test_contains_sensitive_pattern() {
+        // Should detect sensitive patterns
+        assert!(redact::contains_sensitive_pattern("password=secret"));
+        assert!(redact::contains_sensitive_pattern("API_KEY=abc123"));
+        assert!(redact::contains_sensitive_pattern("auth_token"));
+        assert!(redact::contains_sensitive_pattern("user@example.com"));
+        assert!(redact::contains_sensitive_pattern("/home/user/secret.txt"));
+        assert!(redact::contains_sensitive_pattern("https://example.com/api"));
+
+        // Should not flag safe strings
+        assert!(!redact::contains_sensitive_pattern("frame_count"));
+        assert!(!redact::contains_sensitive_pattern("widget_type"));
+        assert!(!redact::contains_sensitive_pattern("duration_us"));
+    }
+
+    // =========================================================================
+    // Invariant Tests
+    // =========================================================================
+
+    #[test]
+    fn test_schema_version_semver() {
+        // Schema version should be valid semver
+        let parts: Vec<&str> = SCHEMA_VERSION.split('.').collect();
+        assert_eq!(parts.len(), 3, "Schema version should have 3 parts");
+        for part in parts {
+            assert!(part.parse::<u32>().is_ok(), "Each part should be a number");
+        }
+    }
+
+    #[test]
+    fn test_redaction_placeholder_format() {
+        // All hard redaction placeholders should follow [redacted:category] format
+        assert!(redact::path(std::path::Path::new("/")).starts_with("[redacted:"));
+        assert!(redact::content("").starts_with("[redacted:"));
+        assert!(redact::address(std::ptr::null::<u8>()).starts_with("[redacted:"));
+        assert!(redact::env_var("").starts_with("[redacted:"));
+        assert!(redact::process_args(&[]).starts_with("[redacted:"));
+        assert!(redact::username("").starts_with("[redacted:"));
     }
 }

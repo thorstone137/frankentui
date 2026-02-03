@@ -93,8 +93,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             avg_hue = weighted_hue / total_weight;
         }
 
+        let denom = max(params.threshold - params.glow, 0.0001);
         let intensity = select(
-            (sum - params.glow) / (params.threshold - params.glow),
+            (sum - params.glow) / denom,
             1.0,
             sum > params.threshold
         );

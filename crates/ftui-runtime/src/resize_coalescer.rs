@@ -30,11 +30,46 @@
 //! - **Burst**: Rapid resize events — prioritize coalescing to reduce work
 //!
 //! Regime transitions are detected via event rate tracking with hysteresis.
+//!
+//! # Invariants
+//!
+//! - **Latest-wins**: the final resize in a burst is never dropped.
+//! - **Bounded latency**: pending resizes apply within `hard_deadline_ms`.
+//! - **Deterministic**: identical event sequences yield identical decisions.
+//!
+//! # Failure Modes
+//!
+//! | Condition | Behavior | Rationale |
+//! |-----------|----------|-----------|
+//! | `hard_deadline_ms = 0` | Apply immediately | Avoids zero-latency stall |
+//! | `rate_window_size < 2` | `event_rate = 0` | No divide-by-zero in rate |
+//! | No pending size | Return `None` | Avoids spurious applies |
+//!
+//! # Decision Rule (Explainable)
+//!
+//! 1) If `time_since_render ≥ hard_deadline_ms`, **apply** (forced).
+//! 2) If in **Steady** and `dt ≥ steady_delay_ms`, **apply**.
+//! 3) If `event_rate ≥ burst_enter_rate`, switch to **Burst**.
+//! 4) If in **Burst** and `event_rate < burst_exit_rate` for `cooldown_frames`,
+//!    switch to **Steady**.
+//! 5) Otherwise, **coalesce** and optionally show a placeholder.
 
 #![forbid(unsafe_code)]
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+
+/// FNV-1a 64-bit offset basis.
+const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+/// FNV-1a 64-bit prime.
+const FNV_PRIME: u64 = 0x100000001b3;
+
+fn fnv_hash_bytes(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= *byte as u64;
+        *hash = hash.wrapping_mul(FNV_PRIME);
+    }
+}
 
 /// Configuration for the resize coalescer.
 #[derive(Debug, Clone)]
@@ -83,6 +118,31 @@ impl Default for CoalescerConfig {
     }
 }
 
+impl CoalescerConfig {
+    /// Enable or disable decision logging.
+    #[must_use]
+    pub fn with_logging(mut self, enabled: bool) -> Self {
+        self.enable_logging = enabled;
+        self
+    }
+
+    /// Serialize configuration to JSONL format.
+    #[must_use]
+    pub fn to_jsonl(&self) -> String {
+        format!(
+            r#"{{"event":"config","steady_delay_ms":{},"burst_delay_ms":{},"hard_deadline_ms":{},"burst_enter_rate":{:.3},"burst_exit_rate":{:.3},"cooldown_frames":{},"rate_window_size":{},"logging_enabled":{}}}"#,
+            self.steady_delay_ms,
+            self.burst_delay_ms,
+            self.hard_deadline_ms,
+            self.burst_enter_rate,
+            self.burst_exit_rate,
+            self.cooldown_frames,
+            self.rate_window_size,
+            self.enable_logging
+        )
+    }
+}
+
 /// Action returned by the coalescer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoalesceAction {
@@ -113,11 +173,24 @@ pub enum Regime {
     Burst,
 }
 
+impl Regime {
+    /// Get the stable string representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Steady => "steady",
+            Self::Burst => "burst",
+        }
+    }
+}
+
 /// Decision log entry for observability.
 #[derive(Debug, Clone)]
 pub struct DecisionLog {
     /// Timestamp of the decision.
     pub timestamp: Instant,
+    /// Elapsed time since logging started (ms).
+    pub elapsed_ms: f64,
     /// Event index in session.
     pub event_idx: u64,
     /// Time since last event (ms).
@@ -130,10 +203,43 @@ pub struct DecisionLog {
     pub action: &'static str,
     /// Pending size (if any).
     pub pending_size: Option<(u16, u16)>,
+    /// Applied size (for apply decisions).
+    pub applied_size: Option<(u16, u16)>,
     /// Time since last render (ms).
     pub time_since_render_ms: f64,
     /// Was forced by deadline.
     pub forced: bool,
+}
+
+impl DecisionLog {
+    /// Serialize decision log to JSONL format.
+    #[must_use]
+    pub fn to_jsonl(&self) -> String {
+        let (pending_w, pending_h) = match self.pending_size {
+            Some((w, h)) => (w.to_string(), h.to_string()),
+            None => ("null".to_string(), "null".to_string()),
+        };
+        let (applied_w, applied_h) = match self.applied_size {
+            Some((w, h)) => (w.to_string(), h.to_string()),
+            None => ("null".to_string(), "null".to_string()),
+        };
+
+        format!(
+            r#"{{"event":"decision","idx":{},"elapsed_ms":{:.3},"dt_ms":{:.3},"event_rate":{:.3},"regime":"{}","action":"{}","pending_w":{},"pending_h":{},"applied_w":{},"applied_h":{},"time_since_render_ms":{:.3},"forced":{}}}"#,
+            self.event_idx,
+            self.elapsed_ms,
+            self.dt_ms,
+            self.event_rate,
+            self.regime.as_str(),
+            self.action,
+            pending_w,
+            pending_h,
+            applied_w,
+            applied_h,
+            self.time_since_render_ms,
+            self.forced
+        )
+    }
 }
 
 /// Adaptive resize stream coalescer.
@@ -170,6 +276,9 @@ pub struct ResizeCoalescer {
     /// Total event count.
     event_count: u64,
 
+    /// Logging start time for elapsed timestamps.
+    log_start: Option<Instant>,
+
     /// Decision logs (if logging enabled).
     logs: Vec<DecisionLog>,
 }
@@ -188,6 +297,7 @@ impl ResizeCoalescer {
             cooldown_remaining: 0,
             event_times: VecDeque::new(),
             event_count: 0,
+            log_start: None,
             logs: Vec::new(),
         }
     }
@@ -214,11 +324,12 @@ impl ResizeCoalescer {
 
         // Calculate dt
         let dt = self.last_event.map(|t| now.duration_since(t));
+        let dt_ms = dt.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
         self.last_event = Some(now);
 
         // If no pending, and this matches current size, no action needed
         if self.pending_size.is_none() && (width, height) == self.last_applied {
-            self.log_decision(now, "skip_same_size", false);
+            self.log_decision(now, "skip_same_size", false, Some(dt_ms));
             return CoalesceAction::None;
         }
 
@@ -245,7 +356,7 @@ impl ResizeCoalescer {
             return self.apply_pending_at(now, false);
         }
 
-        self.log_decision(now, "coalesce", false);
+        self.log_decision(now, "coalesce", false, Some(dt_ms));
         CoalesceAction::ShowPlaceholder
     }
 
@@ -351,6 +462,7 @@ impl ResizeCoalescer {
     /// Clear decision logs.
     pub fn clear_logs(&mut self) {
         self.logs.clear();
+        self.log_start = None;
     }
 
     /// Get statistics about the coalescer.
@@ -362,6 +474,95 @@ impl ResizeCoalescer {
             has_pending: self.pending_size.is_some(),
             last_applied: self.last_applied,
         }
+    }
+
+    /// Export decision logs as JSONL (one entry per line).
+    #[must_use]
+    pub fn decision_logs_jsonl(&self) -> String {
+        self.logs
+            .iter()
+            .map(|entry| entry.to_jsonl())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Compute a deterministic checksum of decision logs.
+    #[must_use]
+    pub fn decision_checksum(&self) -> u64 {
+        let mut hash = FNV_OFFSET_BASIS;
+        for entry in &self.logs {
+            fnv_hash_bytes(&mut hash, &entry.event_idx.to_le_bytes());
+            fnv_hash_bytes(&mut hash, &entry.elapsed_ms.to_bits().to_le_bytes());
+            fnv_hash_bytes(&mut hash, &entry.dt_ms.to_bits().to_le_bytes());
+            fnv_hash_bytes(&mut hash, &entry.event_rate.to_bits().to_le_bytes());
+            fnv_hash_bytes(
+                &mut hash,
+                &[match entry.regime {
+                    Regime::Steady => 0u8,
+                    Regime::Burst => 1u8,
+                }],
+            );
+            fnv_hash_bytes(&mut hash, entry.action.as_bytes());
+            fnv_hash_bytes(&mut hash, &[0u8]); // separator
+
+            fnv_hash_bytes(&mut hash, &[entry.pending_size.is_some() as u8]);
+            if let Some((w, h)) = entry.pending_size {
+                fnv_hash_bytes(&mut hash, &w.to_le_bytes());
+                fnv_hash_bytes(&mut hash, &h.to_le_bytes());
+            }
+
+            fnv_hash_bytes(&mut hash, &[entry.applied_size.is_some() as u8]);
+            if let Some((w, h)) = entry.applied_size {
+                fnv_hash_bytes(&mut hash, &w.to_le_bytes());
+                fnv_hash_bytes(&mut hash, &h.to_le_bytes());
+            }
+
+            fnv_hash_bytes(&mut hash, &entry.time_since_render_ms.to_bits().to_le_bytes());
+            fnv_hash_bytes(&mut hash, &[entry.forced as u8]);
+        }
+        hash
+    }
+
+    /// Compute checksum as hex string.
+    #[must_use]
+    pub fn decision_checksum_hex(&self) -> String {
+        format!("{:016x}", self.decision_checksum())
+    }
+
+    /// Compute a summary of the decision log.
+    #[must_use]
+    pub fn decision_summary(&self) -> DecisionSummary {
+        let mut summary = DecisionSummary::default();
+        summary.decision_count = self.logs.len();
+        summary.last_applied = self.last_applied;
+        summary.regime = self.regime;
+
+        for entry in &self.logs {
+            match entry.action {
+                "apply" | "apply_forced" => {
+                    summary.apply_count += 1;
+                    if entry.forced {
+                        summary.forced_apply_count += 1;
+                    }
+                }
+                "coalesce" => summary.coalesce_count += 1,
+                "skip_same_size" => summary.skip_count += 1,
+                _ => {}
+            }
+        }
+
+        summary.checksum = self.decision_checksum();
+        summary
+    }
+
+    /// Export config + decision logs + summary as JSONL.
+    #[must_use]
+    pub fn evidence_to_jsonl(&self) -> String {
+        let mut lines = Vec::with_capacity(self.logs.len() + 2);
+        lines.push(self.config.to_jsonl());
+        lines.extend(self.logs.iter().map(DecisionLog::to_jsonl));
+        lines.push(self.decision_summary().to_jsonl());
+        lines.join("\n")
     }
 
     // --- Internal methods ---
@@ -380,7 +581,12 @@ impl ResizeCoalescer {
         self.last_applied = (width, height);
         self.last_render = now;
 
-        self.log_decision(now, if forced { "apply_forced" } else { "apply" }, forced);
+        self.log_decision(
+            now,
+            if forced { "apply_forced" } else { "apply" },
+            forced,
+            None,
+        );
 
         CoalesceAction::ApplyResize {
             width,
@@ -429,26 +635,51 @@ impl ResizeCoalescer {
         (self.event_times.len() as f64) / window_duration.as_secs_f64()
     }
 
-    fn log_decision(&mut self, now: Instant, action: &'static str, forced: bool) {
+    fn log_decision(
+        &mut self,
+        now: Instant,
+        action: &'static str,
+        forced: bool,
+        dt_ms_override: Option<f64>,
+    ) {
         if !self.config.enable_logging {
             return;
         }
 
-        let dt_ms = self
-            .last_event
+        if self.log_start.is_none() {
+            self.log_start = Some(now);
+        }
+
+        let elapsed_ms = self
+            .log_start
             .map(|t| now.duration_since(t).as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
+
+        let dt_ms = dt_ms_override
+            .or_else(|| {
+                self.last_event
+                    .map(|t| now.duration_since(t).as_secs_f64() * 1000.0)
+            })
             .unwrap_or(0.0);
 
         let time_since_render_ms = now.duration_since(self.last_render).as_secs_f64() * 1000.0;
 
+        let applied_size = if action == "apply" || action == "apply_forced" {
+            Some(self.last_applied)
+        } else {
+            None
+        };
+
         self.logs.push(DecisionLog {
             timestamp: now,
+            elapsed_ms,
             event_idx: self.event_count,
             dt_ms,
             event_rate: self.calculate_event_rate(now),
             regime: self.regime,
             action,
             pending_size: self.pending_size,
+            applied_size,
             time_since_render_ms,
             forced,
         });
@@ -468,6 +699,52 @@ pub struct CoalescerStats {
     pub has_pending: bool,
     /// Last applied size.
     pub last_applied: (u16, u16),
+}
+
+/// Summary of decision logs.
+#[derive(Debug, Clone, Default)]
+pub struct DecisionSummary {
+    /// Total number of decisions logged.
+    pub decision_count: usize,
+    /// Total apply decisions.
+    pub apply_count: usize,
+    /// Applies forced by deadline.
+    pub forced_apply_count: usize,
+    /// Total coalesce decisions.
+    pub coalesce_count: usize,
+    /// Total skip decisions.
+    pub skip_count: usize,
+    /// Final regime at summary time.
+    pub regime: Regime,
+    /// Last applied size.
+    pub last_applied: (u16, u16),
+    /// Checksum for the decision log.
+    pub checksum: u64,
+}
+
+impl DecisionSummary {
+    /// Checksum as hex string.
+    #[must_use]
+    pub fn checksum_hex(&self) -> String {
+        format!("{:016x}", self.checksum)
+    }
+
+    /// Serialize summary to JSONL format.
+    #[must_use]
+    pub fn to_jsonl(&self) -> String {
+        format!(
+            r#"{{"event":"summary","decisions":{},"applies":{},"forced_applies":{},"coalesces":{},"skips":{},"regime":"{}","last_w":{},"last_h":{},"checksum":"{}"}}"#,
+            self.decision_count,
+            self.apply_count,
+            self.forced_apply_count,
+            self.coalesce_count,
+            self.skip_count,
+            self.regime.as_str(),
+            self.last_applied.0,
+            self.last_applied.1,
+            self.checksum_hex()
+        )
+    }
 }
 
 #[cfg(test)]
@@ -657,6 +934,53 @@ mod tests {
 
         assert!(!c.logs().is_empty());
         assert_eq!(c.logs()[0].action, "coalesce");
+    }
+
+    #[test]
+    fn logging_jsonl_format() {
+        let mut config = test_config();
+        config.enable_logging = true;
+        let mut c = ResizeCoalescer::new(config, (80, 24));
+
+        c.handle_resize(100, 40);
+        let jsonl = c.logs()[0].to_jsonl();
+
+        assert!(jsonl.contains("\"event\":\"decision\""));
+        assert!(jsonl.contains("\"action\":\"coalesce\""));
+        assert!(jsonl.contains("\"regime\":\"steady\""));
+        assert!(jsonl.contains("\"pending_w\":100"));
+        assert!(jsonl.contains("\"pending_h\":40"));
+    }
+
+    #[test]
+    fn decision_checksum_is_stable() {
+        let mut config = test_config();
+        config.enable_logging = true;
+
+        let base = Instant::now();
+        let mut c1 = ResizeCoalescer::new(config.clone(), (80, 24));
+        let mut c2 = ResizeCoalescer::new(config, (80, 24));
+
+        for c in [&mut c1, &mut c2] {
+            c.handle_resize_at(90, 30, base);
+            c.handle_resize_at(100, 40, base + Duration::from_millis(10));
+            let _ = c.tick_at(base + Duration::from_millis(80));
+        }
+
+        assert_eq!(c1.decision_checksum(), c2.decision_checksum());
+    }
+
+    #[test]
+    fn evidence_jsonl_includes_summary() {
+        let mut config = test_config();
+        config.enable_logging = true;
+        let mut c = ResizeCoalescer::new(config, (80, 24));
+
+        c.handle_resize(100, 40);
+        let jsonl = c.evidence_to_jsonl();
+
+        assert!(jsonl.contains("\"event\":\"config\""));
+        assert!(jsonl.contains("\"event\":\"summary\""));
     }
 
     #[test]

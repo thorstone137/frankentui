@@ -72,8 +72,7 @@ pub enum ScreenId {
     ActionTimeline,
     /// Content-aware layout examples (bd-2dow.7).
     IntrinsicSizing,
-    /// Mouse event handling and hit-testing playground.
-    MousePlayground,
+    // TODO(bd-bksf): MousePlayground pending API integration
 }
 
 impl ScreenId {
@@ -97,7 +96,6 @@ impl ScreenId {
         Self::Notifications,
         Self::ActionTimeline,
         Self::IntrinsicSizing,
-        Self::MousePlayground,
     ];
 
     /// 0-based index in the ALL array.
@@ -138,7 +136,6 @@ impl ScreenId {
             Self::Notifications => "Notifications",
             Self::ActionTimeline => "Action Timeline",
             Self::IntrinsicSizing => "Intrinsic Sizing",
-            Self::MousePlayground => "Mouse Playground",
         }
     }
 
@@ -163,7 +160,6 @@ impl ScreenId {
             Self::Notifications => "Notify",
             Self::ActionTimeline => "Timeline",
             Self::IntrinsicSizing => "Sizing",
-            Self::MousePlayground => "Mouse",
         }
     }
 
@@ -188,7 +184,6 @@ impl ScreenId {
             Self::Notifications => "Notifications",
             Self::ActionTimeline => "ActionTimeline",
             Self::IntrinsicSizing => "IntrinsicSizing",
-            Self::MousePlayground => "MousePlayground",
         }
     }
 
@@ -246,11 +241,10 @@ pub struct ScreenStates {
     pub action_timeline: screens::action_timeline::ActionTimeline,
     /// Intrinsic sizing demo screen state (bd-2dow.7).
     pub intrinsic_sizing: screens::intrinsic_sizing::IntrinsicSizingDemo,
-    /// Mouse playground demo screen state (bd-bksf).
-    pub mouse_playground: screens::mouse_playground::MousePlayground,
+    // TODO(bd-bksf): mouse_playground pending API integration
     /// Tracks whether each screen has errored during rendering.
     /// Indexed by `ScreenId::index()`.
-    screen_errors: [Option<String>; 19],
+    screen_errors: [Option<String>; 18],
 }
 
 impl ScreenStates {
@@ -312,9 +306,6 @@ impl ScreenStates {
             ScreenId::IntrinsicSizing => {
                 self.intrinsic_sizing.update(event);
             }
-            ScreenId::MousePlayground => {
-                self.mouse_playground.update(event);
-            }
         }
     }
 
@@ -339,7 +330,6 @@ impl ScreenStates {
         self.notifications.tick(tick_count);
         self.action_timeline.tick(tick_count);
         self.intrinsic_sizing.tick(tick_count);
-        self.mouse_playground.tick(tick_count);
     }
 
     fn apply_theme(&mut self) {

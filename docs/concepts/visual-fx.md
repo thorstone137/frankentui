@@ -22,6 +22,18 @@ All visual FX APIs are opt-in via `ftui-extras` Cargo features:
 - `FTUI_FX_GPU_DISABLE=1` disables GPU usage even when `fx-gpu` is enabled.
 - `FTUI_FX_GPU_FORCE_FAIL=1` forces GPU init failure (test hook) and verifies silent CPU fallback.
 
+### GPU Spike Notes (bd-l8x9.11)
+
+Provisional conclusion:
+- **Go** for an optional GPU backend with strict silent fallback.
+- **Expected wins** are most likely at larger buffers (e.g., ≥ 120×40) where CPU per‑pixel work dominates.
+- **Risks**: device init latency and readback cost can erase gains at small sizes; keep CPU as default and gate GPU by size/feature.
+
+Proposed API shape:
+- Feature flag `fx-gpu` enables the backend.
+- Runtime kill‑switch via `FTUI_FX_GPU_DISABLE=1`.
+- One‑way disable: any GPU init/dispatch failure marks GPU unavailable for the process.
+
 ## Core API
 
 Core types live in `ftui_extras::visual_fx`:

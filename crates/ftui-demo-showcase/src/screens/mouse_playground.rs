@@ -9,6 +9,7 @@
 //! - Interactive widgets with click/hover feedback
 
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use ftui_core::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
@@ -162,7 +163,7 @@ impl MousePlayground {
 
         // Update hover with stabilization
         let raw_target = self.hit_test(x, y);
-        let stabilized = self.hover_stabilizer.update(raw_target, x, y);
+        let stabilized = self.hover_stabilizer.update(raw_target, (x, y), Instant::now());
 
         // Update hovered state on targets
         if stabilized != self.current_hover {
@@ -247,7 +248,7 @@ impl Screen for MousePlayground {
     fn view(&self, frame: &mut Frame, area: Rect) {
         // Main layout: left panel (targets) + right panel (event log)
         let chunks =
-            Flex::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).split(area);
+            Flex::horizontal([Constraint::Percentage(60.0), Constraint::Percentage(40.0)]).split(area);
 
         let left_area = chunks[0];
         let right_area = chunks[1];
@@ -265,7 +266,7 @@ impl Screen for MousePlayground {
         self.render_target_grid(frame, inner_left);
 
         // --- Right Panel: Event Log + Stats ---
-        let right_chunks = Flex::vertical([Constraint::Percentage(70), Constraint::Percentage(30)])
+        let right_chunks = Flex::vertical([Constraint::Percentage(70.0), Constraint::Percentage(30.0)])
             .split(right_area);
 
         // Event log

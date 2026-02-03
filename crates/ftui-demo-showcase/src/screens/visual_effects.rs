@@ -2566,6 +2566,267 @@ impl VisualEffectsScreen {
         plasma_backdrop.set_effect_opacity(0.6);
         *self.plasma_backdrop.borrow_mut() = plasma_backdrop;
     }
+
+    /// Start a transition overlay for text effects.
+    fn start_text_effects_transition(&mut self) {
+        self.transition.start_with_gradient(
+            self.text_effects.current_effect_name(),
+            self.text_effects.current_effect_description(),
+            ColorGradient::rainbow(),
+        );
+        self.transition.set_speed(0.05);
+    }
+
+    /// Render text effects demo area
+    fn render_text_effects(&self, frame: &mut Frame, area: Rect) {
+        if area.width < 10 || area.height < 5 {
+            return;
+        }
+
+        // Tab bar at top
+        let tab_bar_height = 2u16;
+        let tab_bar_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: tab_bar_height,
+        };
+        self.render_text_effects_tabs(frame, tab_bar_area);
+
+        // Demo content area
+        let content_area = Rect {
+            x: area.x,
+            y: area.y + tab_bar_height,
+            width: area.width,
+            height: area.height.saturating_sub(tab_bar_height + 3),
+        };
+        self.render_text_effects_demo(frame, content_area);
+
+        // Help bar at bottom
+        let help_area = Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(2),
+            width: area.width,
+            height: 2,
+        };
+        self.render_text_effects_help(frame, help_area);
+    }
+
+    /// Render tab bar for text effects
+    fn render_text_effects_tabs(&self, frame: &mut Frame, area: Rect) {
+        let mut text = String::with_capacity(area.width as usize);
+        text.push_str(" ");
+
+        for (i, tab) in TextEffectsTab::ALL.iter().enumerate() {
+            let is_active = *tab == self.text_effects.tab;
+            let name = tab.name();
+
+            if is_active {
+                text.push_str(&format!("[{}] ", name));
+            } else {
+                text.push_str(&format!(" {}  ", name));
+            }
+
+            if i < 5 {
+                text.push_str("│");
+            }
+        }
+
+        let style = Style::new().bold().fg(PackedRgba::rgb(200, 200, 255));
+        let para = Paragraph::new(text).style(style);
+        para.render(area, frame);
+
+        // Render tab numbers hint on second line
+        if area.height > 1 {
+            let hint_area = Rect {
+                y: area.y + 1,
+                height: 1,
+                ..area
+            };
+            let hint = " [1-6] Switch tabs │ [Space] Cycle effect │ [t] Canvas mode";
+            let hint_para = Paragraph::new(hint)
+                .style(Style::new().fg(PackedRgba::rgb(120, 120, 150)));
+            hint_para.render(hint_area, frame);
+        }
+    }
+
+    /// Render the main text effects demo content
+    fn render_text_effects_demo(&self, frame: &mut Frame, area: Rect) {
+        let effect = self.text_effects.build_effect();
+        let demo_text = self.text_effects.demo_text;
+
+        // Center the demo text
+        let text_y = area.y + area.height / 2;
+        let text_x = area.x + (area.width.saturating_sub(demo_text.len() as u16)) / 2;
+        let text_area = Rect {
+            x: text_x,
+            y: text_y,
+            width: area.width.saturating_sub(text_x - area.x),
+            height: 3,
+        };
+
+        // Handle special typography effects
+        match self.text_effects.tab {
+            TextEffectsTab::Typography => {
+                self.render_typography_demo(frame, text_area, demo_text);
+            }
+            TextEffectsTab::SpecialFx if self.text_effects.effect_idx >= 2 => {
+                // Scanline and Matrix effects
+                self.render_special_fx_demo(frame, text_area, demo_text);
+            }
+            _ => {
+                // Standard StyledText rendering
+                let styled = StyledText::new(demo_text)
+                    .style(Style::new().bold())
+                    .effect(effect)
+                    .time(self.text_effects.time);
+                styled.render(text_area, frame);
+            }
+        }
+
+        // Effect info below
+        let info_y = text_y + 3;
+        if info_y < area.y + area.height {
+            let info_area = Rect {
+                x: area.x + 2,
+                y: info_y,
+                width: area.width.saturating_sub(4),
+                height: 2,
+            };
+            let effect_name = self.text_effects.current_effect_name();
+            let info = format!(
+                "Effect: {} │ Tab: {} │ Index: {}/{}",
+                effect_name,
+                self.text_effects.tab.name(),
+                self.text_effects.effect_idx + 1,
+                self.text_effects.tab.effect_count()
+            );
+            let info_para = Paragraph::new(info)
+                .style(Style::new().fg(PackedRgba::rgb(150, 180, 200)));
+            info_para.render(info_area, frame);
+        }
+    }
+
+    /// Render typography-specific demos (Shadow, Glow, Mirror, ASCII)
+    fn render_typography_demo(&self, frame: &mut Frame, area: Rect, text: &str) {
+        match self.text_effects.effect_idx {
+            0 => {
+                // Shadow effect - render shadow first, then main text
+                let shadow_offset = 1;
+                let shadow_area = Rect {
+                    x: area.x + shadow_offset,
+                    y: area.y + 1,
+                    ..area
+                };
+                let shadow_styled = StyledText::new(text)
+                    .style(Style::new().fg(PackedRgba::rgb(50, 50, 80)));
+                shadow_styled.render(shadow_area, frame);
+
+                let main_styled = StyledText::new(text)
+                    .style(Style::new().bold().fg(PackedRgba::rgb(255, 255, 255)));
+                main_styled.render(area, frame);
+            }
+            1 => {
+                // Glow effect
+                let glow_effect = TextEffect::PulsingGlow {
+                    color: PackedRgba::rgb(100, 200, 255),
+                    speed: 1.5,
+                };
+                let styled = StyledText::new(text)
+                    .style(Style::new().bold())
+                    .effect(glow_effect)
+                    .time(self.text_effects.time);
+                styled.render(area, frame);
+            }
+            2 => {
+                // Outline effect - approximated with bright text
+                let outline_styled = StyledText::new(text)
+                    .style(Style::new().bold().fg(PackedRgba::rgb(255, 255, 100)));
+                outline_styled.render(area, frame);
+            }
+            3 => {
+                // Mirror reflection
+                let reflection = Reflection::new(text, 0.5, PackedRgba::rgb(100, 150, 200));
+                let main_styled = StyledText::new(text)
+                    .style(Style::new().bold().fg(PackedRgba::rgb(200, 220, 255)));
+                main_styled.render(area, frame);
+
+                // Render reflection below
+                if area.height > 2 {
+                    let reflect_area = Rect {
+                        y: area.y + 1,
+                        height: area.height.saturating_sub(1),
+                        ..area
+                    };
+                    reflection.render(reflect_area, frame);
+                }
+            }
+            _ => {
+                // ASCII Art
+                let ascii = AsciiArtText::new(text, AsciiArtStyle::Block);
+                let ascii_styled = ascii.styled()
+                    .effect(TextEffect::RainbowGradient { speed: 0.3 })
+                    .time(self.text_effects.time);
+                ascii_styled.render(area, frame);
+            }
+        }
+    }
+
+    /// Render special FX demos (scanline, matrix style)
+    fn render_special_fx_demo(&self, frame: &mut Frame, area: Rect, text: &str) {
+        match self.text_effects.effect_idx {
+            2 => {
+                // Scanline effect - alternate brightness
+                let scanline_time = (self.text_effects.time * 10.0) as usize;
+                let brightness = if scanline_time % 2 == 0 { 255u8 } else { 180u8 };
+                let styled = StyledText::new(text)
+                    .style(Style::new().bold().fg(PackedRgba::rgb(brightness, brightness, brightness)));
+                styled.render(area, frame);
+            }
+            _ => {
+                // Matrix style - green on black
+                let matrix_effect = TextEffect::HorizontalGradient {
+                    gradient: ColorGradient::new(vec![
+                        PackedRgba::rgb(0, 100, 0),
+                        PackedRgba::rgb(0, 255, 0),
+                        PackedRgba::rgb(100, 255, 100),
+                    ]),
+                };
+                let styled = StyledText::new(text)
+                    .style(Style::new().bold())
+                    .effect(matrix_effect)
+                    .time(self.text_effects.time);
+                styled.render(area, frame);
+            }
+        }
+    }
+
+    /// Render help bar for text effects
+    fn render_text_effects_help(&self, frame: &mut Frame, area: Rect) {
+        let help_text = match self.text_effects.tab {
+            TextEffectsTab::Combinations => {
+                format!(
+                    "Combos: [1]Gradient:{} [2]Anim:{} [3]Typo:{} [4]FX:{}",
+                    if self.text_effects.combo_enabled[0] { "ON" } else { "off" },
+                    if self.text_effects.combo_enabled[1] { "ON" } else { "off" },
+                    if self.text_effects.combo_enabled[2] { "ON" } else { "off" },
+                    if self.text_effects.combo_enabled[3] { "ON" } else { "off" },
+                )
+            }
+            _ => {
+                format!(
+                    "FPS: {:.1} │ Time: {:.2} │ Easing: {:?}",
+                    self.fps,
+                    self.text_effects.time,
+                    self.text_effects.easing
+                )
+            }
+        };
+
+        let help_para = Paragraph::new(format!(" {} │ [e] Easing │ [t] Canvas mode", help_text))
+            .style(Style::new().fg(PackedRgba::rgb(100, 100, 130)));
+        help_para.render(area, frame);
+    }
 }
 
 impl Screen for VisualEffectsScreen {
@@ -2578,29 +2839,113 @@ impl Screen for VisualEffectsScreen {
             ..
         }) = event
         {
-            match code {
-                KeyCode::Left | KeyCode::Char('h') => {
-                    self.effect = self.effect.prev();
-                    self.start_transition();
-                }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') => {
-                    // Space and Right both switch to next effect
-                    self.effect = self.effect.next();
-                    self.start_transition();
-                }
-                KeyCode::Char('p') => {
-                    // 'p' cycles sub-options (palette, shape, etc.)
-                    match self.effect {
-                        EffectType::Shape3D => {
-                            self.shape3d.shape = self.shape3d.shape.next();
+            // 't' toggles between Canvas and TextEffects modes
+            if matches!(code, KeyCode::Char('t')) {
+                self.demo_mode = match self.demo_mode {
+                    DemoMode::Canvas => DemoMode::TextEffects,
+                    DemoMode::TextEffects => DemoMode::Canvas,
+                };
+                return Cmd::None;
+            }
+
+            match self.demo_mode {
+                DemoMode::Canvas => {
+                    // Canvas mode key handling (original behavior)
+                    match code {
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            self.effect = self.effect.prev();
+                            self.start_transition();
                         }
-                        EffectType::Plasma => {
-                            self.cycle_plasma_palette();
+                        KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') => {
+                            self.effect = self.effect.next();
+                            self.start_transition();
+                        }
+                        KeyCode::Char('p') => {
+                            match self.effect {
+                                EffectType::Shape3D => {
+                                    self.shape3d.shape = self.shape3d.shape.next();
+                                }
+                                EffectType::Plasma => {
+                                    self.cycle_plasma_palette();
+                                }
+                                _ => {}
+                            }
                         }
                         _ => {}
                     }
                 }
-                _ => {}
+                DemoMode::TextEffects => {
+                    // Text effects mode key handling
+                    match code {
+                        // 1-6 keys switch tabs
+                        KeyCode::Char('1') => {
+                            if self.text_effects.tab == TextEffectsTab::Combinations {
+                                self.text_effects.toggle_combo(0);
+                            } else if let Some(tab) = TextEffectsTab::from_key(1) {
+                                self.text_effects.tab = tab;
+                                self.text_effects.effect_idx = 0;
+                                self.start_text_effects_transition();
+                            }
+                        }
+                        KeyCode::Char('2') => {
+                            if self.text_effects.tab == TextEffectsTab::Combinations {
+                                self.text_effects.toggle_combo(1);
+                            } else if let Some(tab) = TextEffectsTab::from_key(2) {
+                                self.text_effects.tab = tab;
+                                self.text_effects.effect_idx = 0;
+                                self.start_text_effects_transition();
+                            }
+                        }
+                        KeyCode::Char('3') => {
+                            if self.text_effects.tab == TextEffectsTab::Combinations {
+                                self.text_effects.toggle_combo(2);
+                            } else if let Some(tab) = TextEffectsTab::from_key(3) {
+                                self.text_effects.tab = tab;
+                                self.text_effects.effect_idx = 0;
+                                self.start_text_effects_transition();
+                            }
+                        }
+                        KeyCode::Char('4') => {
+                            if self.text_effects.tab == TextEffectsTab::Combinations {
+                                self.text_effects.toggle_combo(3);
+                            } else if let Some(tab) = TextEffectsTab::from_key(4) {
+                                self.text_effects.tab = tab;
+                                self.text_effects.effect_idx = 0;
+                                self.start_text_effects_transition();
+                            }
+                        }
+                        KeyCode::Char('5') => {
+                            if let Some(tab) = TextEffectsTab::from_key(5) {
+                                self.text_effects.tab = tab;
+                                self.text_effects.effect_idx = 0;
+                                self.start_text_effects_transition();
+                            }
+                        }
+                        KeyCode::Char('6') => {
+                            if let Some(tab) = TextEffectsTab::from_key(6) {
+                                self.text_effects.tab = tab;
+                                self.text_effects.effect_idx = 0;
+                                self.start_text_effects_transition();
+                            }
+                        }
+                        // Space cycles effects within tab
+                        KeyCode::Char(' ') | KeyCode::Right => {
+                            self.text_effects.next_effect();
+                            self.start_text_effects_transition();
+                        }
+                        // 'e' cycles easing functions
+                        KeyCode::Char('e') => {
+                            self.text_effects.easing_mode = !self.text_effects.easing_mode;
+                            self.text_effects.next_easing();
+                        }
+                        // 'c' jumps to combinations tab
+                        KeyCode::Char('c') => {
+                            self.text_effects.tab = TextEffectsTab::Combinations;
+                            self.start_text_effects_transition();
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
         Cmd::None
@@ -2609,6 +2954,23 @@ impl Screen for VisualEffectsScreen {
     fn view(&self, frame: &mut Frame, area: Rect) {
         if area.width < 10 || area.height < 5 {
             return;
+        }
+
+        // Branch based on demo mode
+        match self.demo_mode {
+            DemoMode::TextEffects => {
+                // Render text effects demo
+                self.render_text_effects(frame, area);
+
+                // Render transition overlay if active
+                if self.transition.is_visible() {
+                    self.transition.overlay().render(area, frame);
+                }
+                return;
+            }
+            DemoMode::Canvas => {
+                // Continue with canvas rendering below
+            }
         }
 
         // Header with effect name, controls, and FPS stats
@@ -2632,7 +2994,7 @@ impl Screen for VisualEffectsScreen {
             self.max_frame_time_us / 1000.0
         );
         let header_text = format!(
-            " {} │ ←/→ Switch{}{}",
+            " {} │ ←/→ Switch │ [t] Text FX{}{}",
             self.effect.name(),
             space_hint,
             fps_stats
@@ -2779,25 +3141,60 @@ impl Screen for VisualEffectsScreen {
         }
         self.spin_lattice.update();
 
+        // Update text effects animation (bd-2b82)
+        self.text_effects.tick();
+
         // Update transition overlay animation
         self.transition.tick();
     }
 
     fn keybindings(&self) -> Vec<HelpEntry> {
-        vec![
-            HelpEntry {
-                key: "Space/→",
-                action: "Next effect",
-            },
-            HelpEntry {
-                key: "←",
-                action: "Prev effect",
-            },
-            HelpEntry {
-                key: "p",
-                action: "Cycle options",
-            },
-        ]
+        match self.demo_mode {
+            DemoMode::Canvas => {
+                vec![
+                    HelpEntry {
+                        key: "Space/→",
+                        action: "Next effect",
+                    },
+                    HelpEntry {
+                        key: "←",
+                        action: "Prev effect",
+                    },
+                    HelpEntry {
+                        key: "p",
+                        action: "Cycle options",
+                    },
+                    HelpEntry {
+                        key: "t",
+                        action: "Text Effects mode",
+                    },
+                ]
+            }
+            DemoMode::TextEffects => {
+                vec![
+                    HelpEntry {
+                        key: "1-6",
+                        action: "Switch tab",
+                    },
+                    HelpEntry {
+                        key: "Space",
+                        action: "Next effect",
+                    },
+                    HelpEntry {
+                        key: "e",
+                        action: "Cycle easing",
+                    },
+                    HelpEntry {
+                        key: "c",
+                        action: "Combos tab",
+                    },
+                    HelpEntry {
+                        key: "t",
+                        action: "Canvas mode",
+                    },
+                ]
+            }
+        }
     }
 
     fn title(&self) -> &'static str {
