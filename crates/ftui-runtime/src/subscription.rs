@@ -203,6 +203,11 @@ impl<M: Send + 'static> SubscriptionManager<M> {
             running.stop();
         }
     }
+
+    /// Returns the number of active subscriptions.
+    pub(crate) fn active_count(&self) -> usize {
+        self.active.len()
+    }
 }
 
 impl<M: Send + 'static> Drop for SubscriptionManager<M> {

@@ -478,7 +478,7 @@ impl<W: Write> TerminalWriter<W> {
             ScreenMode::AltScreen => "altscreen",
         };
         let _span = info_span!(
-            "present_ui",
+            "ftui.render.present",
             mode = mode_str,
             width = buffer.width(),
             height = buffer.height(),
@@ -511,7 +511,7 @@ impl<W: Write> TerminalWriter<W> {
             ScreenMode::AltScreen => "altscreen",
         };
         let _span = info_span!(
-            "present_ui",
+            "ftui.render.present",
             mode = mode_str,
             width = buffer.width(),
             height = buffer.height(),
@@ -548,7 +548,7 @@ impl<W: Write> TerminalWriter<W> {
 
         // Activate scroll region if strategy calls for it
         {
-            let _span = debug_span!("scroll_region").entered();
+            let _span = debug_span!("ftui.render.scroll_region").entered();
             if visible_height > 0 {
                 match self.inline_strategy {
                     InlineStrategy::ScrollRegion => {
@@ -579,7 +579,7 @@ impl<W: Write> TerminalWriter<W> {
         if visible_height > 0 {
             // Move to UI anchor and clear UI region
             {
-                let _span = debug_span!("clear_ui", rows = visible_height).entered();
+                let _span = debug_span!("ftui.render.clear_ui", rows = visible_height).entered();
                 write!(self.writer(), "\x1b[{};1H", ui_y_start.saturating_add(1))?;
                 self.clear_rows(ui_y_start, visible_height)?;
                 write!(self.writer(), "\x1b[{};1H", ui_y_start.saturating_add(1))?;
@@ -587,7 +587,7 @@ impl<W: Write> TerminalWriter<W> {
 
             // Compute diff
             let diff = {
-                let _span = debug_span!("diff_compute").entered();
+                let _span = debug_span!("ftui.render.diff_compute").entered();
                 if let Some(ref prev) = self.prev_buffer {
                     if prev.width() == buffer.width() && prev.height() == buffer.height() {
                         BufferDiff::compute(prev, buffer)
@@ -601,7 +601,7 @@ impl<W: Write> TerminalWriter<W> {
 
             // Emit diff
             {
-                let _span = debug_span!("emit").entered();
+                let _span = debug_span!("ftui.render.emit").entered();
                 self.emit_diff(buffer, &diff, Some(visible_height), ui_y_start)?;
             }
         }
@@ -677,7 +677,7 @@ impl<W: Write> TerminalWriter<W> {
         use ftui_render::cell::{CellAttrs, StyleFlags};
 
         let runs = diff.runs();
-        let _span = debug_span!("emit_diff", run_count = runs.len()).entered();
+        let _span = debug_span!("ftui.render.emit_diff", run_count = runs.len()).entered();
 
         let mut current_style: Option<(
             ftui_render::cell::PackedRgba,

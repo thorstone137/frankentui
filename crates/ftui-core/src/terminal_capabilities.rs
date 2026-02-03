@@ -1689,4 +1689,304 @@ mod tests {
         assert!(!caps.true_color, "COLORTERM=yes is not truecolor");
         assert!(caps.colors_256, "TERM=xterm-256color implies 256");
     }
+
+    // ====== Capability Profiles (bd-k4lj.2) ======
+
+    #[test]
+    fn profile_enum_as_str() {
+        assert_eq!(TerminalProfile::Modern.as_str(), "modern");
+        assert_eq!(TerminalProfile::Xterm256Color.as_str(), "xterm-256color");
+        assert_eq!(TerminalProfile::Vt100.as_str(), "vt100");
+        assert_eq!(TerminalProfile::Dumb.as_str(), "dumb");
+        assert_eq!(TerminalProfile::Tmux.as_str(), "tmux");
+        assert_eq!(TerminalProfile::Screen.as_str(), "screen");
+        assert_eq!(TerminalProfile::Kitty.as_str(), "kitty");
+    }
+
+    #[test]
+    fn profile_enum_from_str() {
+        assert_eq!(
+            TerminalProfile::from_str("modern"),
+            Some(TerminalProfile::Modern)
+        );
+        assert_eq!(
+            TerminalProfile::from_str("xterm-256color"),
+            Some(TerminalProfile::Xterm256Color)
+        );
+        assert_eq!(
+            TerminalProfile::from_str("xterm256color"),
+            Some(TerminalProfile::Xterm256Color)
+        );
+        assert_eq!(
+            TerminalProfile::from_str("DUMB"),
+            Some(TerminalProfile::Dumb)
+        );
+        assert_eq!(TerminalProfile::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn profile_all_predefined() {
+        let all = TerminalProfile::all_predefined();
+        assert!(all.len() >= 10);
+        assert!(all.contains(&TerminalProfile::Modern));
+        assert!(all.contains(&TerminalProfile::Dumb));
+        assert!(!all.contains(&TerminalProfile::Custom));
+        assert!(!all.contains(&TerminalProfile::Detected));
+    }
+
+    #[test]
+    fn profile_modern_has_all_features() {
+        let caps = TerminalCapabilities::modern();
+        assert_eq!(caps.profile(), TerminalProfile::Modern);
+        assert_eq!(caps.profile_name(), Some("modern"));
+        assert!(caps.true_color);
+        assert!(caps.colors_256);
+        assert!(caps.sync_output);
+        assert!(caps.osc8_hyperlinks);
+        assert!(caps.scroll_region);
+        assert!(caps.kitty_keyboard);
+        assert!(caps.focus_events);
+        assert!(caps.bracketed_paste);
+        assert!(caps.mouse_sgr);
+        assert!(caps.osc52_clipboard);
+        assert!(!caps.in_any_mux());
+    }
+
+    #[test]
+    fn profile_xterm_256color() {
+        let caps = TerminalCapabilities::xterm_256color();
+        assert_eq!(caps.profile(), TerminalProfile::Xterm256Color);
+        assert!(!caps.true_color);
+        assert!(caps.colors_256);
+        assert!(!caps.sync_output);
+        assert!(!caps.osc8_hyperlinks);
+        assert!(caps.scroll_region);
+        assert!(caps.bracketed_paste);
+        assert!(caps.mouse_sgr);
+    }
+
+    #[test]
+    fn profile_xterm_basic() {
+        let caps = TerminalCapabilities::xterm();
+        assert_eq!(caps.profile(), TerminalProfile::Xterm);
+        assert!(!caps.true_color);
+        assert!(!caps.colors_256);
+        assert!(caps.scroll_region);
+    }
+
+    #[test]
+    fn profile_vt100_minimal() {
+        let caps = TerminalCapabilities::vt100();
+        assert_eq!(caps.profile(), TerminalProfile::Vt100);
+        assert!(!caps.true_color);
+        assert!(!caps.colors_256);
+        assert!(caps.scroll_region);
+        assert!(!caps.bracketed_paste);
+        assert!(!caps.mouse_sgr);
+    }
+
+    #[test]
+    fn profile_dumb_no_features() {
+        let caps = TerminalCapabilities::dumb();
+        assert_eq!(caps.profile(), TerminalProfile::Dumb);
+        assert!(!caps.true_color);
+        assert!(!caps.colors_256);
+        assert!(!caps.scroll_region);
+        assert!(!caps.bracketed_paste);
+        assert!(!caps.mouse_sgr);
+        assert!(!caps.use_sync_output());
+        assert!(!caps.use_scroll_region());
+    }
+
+    #[test]
+    fn profile_tmux_mux_flags() {
+        let caps = TerminalCapabilities::tmux();
+        assert_eq!(caps.profile(), TerminalProfile::Tmux);
+        assert!(caps.in_tmux);
+        assert!(!caps.in_screen);
+        assert!(!caps.in_zellij);
+        assert!(caps.in_any_mux());
+        // Mux policies kick in
+        assert!(!caps.use_sync_output());
+        assert!(!caps.use_scroll_region());
+        assert!(!caps.use_hyperlinks());
+    }
+
+    #[test]
+    fn profile_screen_mux_flags() {
+        let caps = TerminalCapabilities::screen();
+        assert_eq!(caps.profile(), TerminalProfile::Screen);
+        assert!(!caps.in_tmux);
+        assert!(caps.in_screen);
+        assert!(caps.in_any_mux());
+        assert!(caps.needs_passthrough_wrap());
+    }
+
+    #[test]
+    fn profile_zellij_mux_flags() {
+        let caps = TerminalCapabilities::zellij();
+        assert_eq!(caps.profile(), TerminalProfile::Zellij);
+        assert!(caps.in_zellij);
+        assert!(caps.in_any_mux());
+        // Zellij has true color and focus events
+        assert!(caps.true_color);
+        assert!(caps.focus_events);
+        // But no passthrough wrap needed
+        assert!(!caps.needs_passthrough_wrap());
+    }
+
+    #[test]
+    fn profile_kitty_full_features() {
+        let caps = TerminalCapabilities::kitty();
+        assert_eq!(caps.profile(), TerminalProfile::Kitty);
+        assert!(caps.true_color);
+        assert!(caps.sync_output);
+        assert!(caps.kitty_keyboard);
+        assert!(caps.osc8_hyperlinks);
+    }
+
+    #[test]
+    fn profile_windows_console() {
+        let caps = TerminalCapabilities::windows_console();
+        assert_eq!(caps.profile(), TerminalProfile::WindowsConsole);
+        assert!(caps.true_color);
+        assert!(caps.osc8_hyperlinks);
+        assert!(caps.focus_events);
+    }
+
+    #[test]
+    fn profile_linux_console() {
+        let caps = TerminalCapabilities::linux_console();
+        assert_eq!(caps.profile(), TerminalProfile::LinuxConsole);
+        assert!(!caps.true_color);
+        assert!(!caps.colors_256);
+        assert!(caps.scroll_region);
+    }
+
+    #[test]
+    fn from_profile_roundtrip() {
+        for profile in TerminalProfile::all_predefined() {
+            let caps = TerminalCapabilities::from_profile(*profile);
+            assert_eq!(caps.profile(), *profile);
+        }
+    }
+
+    #[test]
+    fn detected_profile_has_none_name() {
+        let caps = TerminalCapabilities::detect();
+        assert_eq!(caps.profile(), TerminalProfile::Detected);
+        assert_eq!(caps.profile_name(), None);
+    }
+
+    #[test]
+    fn basic_has_dumb_profile() {
+        let caps = TerminalCapabilities::basic();
+        assert_eq!(caps.profile(), TerminalProfile::Dumb);
+    }
+
+    // ====== Capability Profile Builder ======
+
+    #[test]
+    fn builder_starts_empty() {
+        let caps = CapabilityProfileBuilder::new().build();
+        assert_eq!(caps.profile(), TerminalProfile::Custom);
+        assert!(!caps.true_color);
+        assert!(!caps.colors_256);
+        assert!(!caps.sync_output);
+        assert!(!caps.scroll_region);
+        assert!(!caps.mouse_sgr);
+    }
+
+    #[test]
+    fn builder_set_colors() {
+        let caps = CapabilityProfileBuilder::new()
+            .true_color(true)
+            .colors_256(true)
+            .build();
+        assert!(caps.true_color);
+        assert!(caps.colors_256);
+    }
+
+    #[test]
+    fn builder_set_advanced() {
+        let caps = CapabilityProfileBuilder::new()
+            .sync_output(true)
+            .osc8_hyperlinks(true)
+            .scroll_region(true)
+            .build();
+        assert!(caps.sync_output);
+        assert!(caps.osc8_hyperlinks);
+        assert!(caps.scroll_region);
+    }
+
+    #[test]
+    fn builder_set_mux() {
+        let caps = CapabilityProfileBuilder::new()
+            .in_tmux(true)
+            .in_screen(false)
+            .in_zellij(false)
+            .build();
+        assert!(caps.in_tmux);
+        assert!(!caps.in_screen);
+        assert!(caps.in_any_mux());
+    }
+
+    #[test]
+    fn builder_set_input() {
+        let caps = CapabilityProfileBuilder::new()
+            .kitty_keyboard(true)
+            .focus_events(true)
+            .bracketed_paste(true)
+            .mouse_sgr(true)
+            .build();
+        assert!(caps.kitty_keyboard);
+        assert!(caps.focus_events);
+        assert!(caps.bracketed_paste);
+        assert!(caps.mouse_sgr);
+    }
+
+    #[test]
+    fn builder_set_clipboard() {
+        let caps = CapabilityProfileBuilder::new()
+            .osc52_clipboard(true)
+            .build();
+        assert!(caps.osc52_clipboard);
+    }
+
+    #[test]
+    fn builder_from_profile() {
+        let caps = CapabilityProfileBuilder::from_profile(TerminalProfile::Modern)
+            .sync_output(false) // Override one setting
+            .build();
+        // Should have modern features except sync_output
+        assert!(caps.true_color);
+        assert!(caps.colors_256);
+        assert!(!caps.sync_output); // Overridden
+        assert!(caps.osc8_hyperlinks);
+        // But profile becomes Custom
+        assert_eq!(caps.profile(), TerminalProfile::Custom);
+    }
+
+    #[test]
+    fn builder_chain_multiple() {
+        let caps = TerminalCapabilities::builder()
+            .colors_256(true)
+            .bracketed_paste(true)
+            .mouse_sgr(true)
+            .scroll_region(true)
+            .build();
+        assert!(caps.colors_256);
+        assert!(caps.bracketed_paste);
+        assert!(caps.mouse_sgr);
+        assert!(caps.scroll_region);
+        assert!(!caps.true_color);
+        assert!(!caps.sync_output);
+    }
+
+    #[test]
+    fn builder_default() {
+        let builder = CapabilityProfileBuilder::default();
+        let caps = builder.build();
+        assert_eq!(caps.profile(), TerminalProfile::Custom);
+    }
 }

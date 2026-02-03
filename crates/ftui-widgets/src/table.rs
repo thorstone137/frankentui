@@ -1011,4 +1011,65 @@ mod tests {
             Table::new(Vec::<Row>::new(), [Constraint::Fixed(5)]).header(Row::new(["Header"]));
         assert!(header_only.has_intrinsic_size());
     }
+
+    // --- Stateful Persistence tests ---
+
+    use crate::stateful::Stateful;
+
+    #[test]
+    fn table_state_with_persistence_id() {
+        let state = TableState::default().with_persistence_id("my-table");
+        assert_eq!(state.persistence_id(), Some("my-table"));
+    }
+
+    #[test]
+    fn table_state_default_no_persistence_id() {
+        let state = TableState::default();
+        assert_eq!(state.persistence_id(), None);
+    }
+
+    #[test]
+    fn table_state_save_restore_round_trip() {
+        let mut state = TableState::default().with_persistence_id("test");
+        state.select(Some(5));
+        state.offset = 3;
+
+        let saved = state.save_state();
+        assert_eq!(saved.selected, Some(5));
+        assert_eq!(saved.offset, 3);
+
+        // Reset state
+        state.select(None);
+        state.offset = 0;
+        assert_eq!(state.selected, None);
+        assert_eq!(state.offset, 0);
+
+        // Restore
+        state.restore_state(saved);
+        assert_eq!(state.selected, Some(5));
+        assert_eq!(state.offset, 3);
+    }
+
+    #[test]
+    fn table_state_key_uses_persistence_id() {
+        let state = TableState::default().with_persistence_id("main-data-table");
+        let key = state.state_key();
+        assert_eq!(key.widget_type, "Table");
+        assert_eq!(key.instance_id, "main-data-table");
+    }
+
+    #[test]
+    fn table_state_key_default_when_no_id() {
+        let state = TableState::default();
+        let key = state.state_key();
+        assert_eq!(key.widget_type, "Table");
+        assert_eq!(key.instance_id, "default");
+    }
+
+    #[test]
+    fn table_persist_state_default() {
+        let persist = TablePersistState::default();
+        assert_eq!(persist.selected, None);
+        assert_eq!(persist.offset, 0);
+    }
 }

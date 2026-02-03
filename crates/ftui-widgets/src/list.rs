@@ -6,6 +6,7 @@
 
 use crate::block::Block;
 use crate::measurable::{MeasurableWidget, SizeConstraints};
+use crate::stateful::{StateKey, Stateful};
 use crate::undo_support::{ListUndoExt, UndoSupport, UndoWidgetId};
 use crate::{StatefulWidget, Widget, draw_text_span, draw_text_span_with_link, set_style_area};
 use ftui_core::geometry::{Rect, Size};
@@ -121,6 +122,8 @@ pub struct ListState {
     pub selected: Option<usize>,
     /// Scroll offset (first visible item index).
     pub offset: usize,
+    /// Optional persistence ID for state saving/restoration.
+    persistence_id: Option<String>,
 }
 
 impl ListState {
@@ -135,6 +138,61 @@ impl ListState {
     /// Return the currently selected item index.
     pub fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    /// Create a new ListState with a persistence ID for state saving.
+    #[must_use]
+    pub fn with_persistence_id(mut self, id: impl Into<String>) -> Self {
+        self.persistence_id = Some(id.into());
+        self
+    }
+
+    /// Get the persistence ID, if set.
+    #[must_use]
+    pub fn persistence_id(&self) -> Option<&str> {
+        self.persistence_id.as_deref()
+    }
+}
+
+// ============================================================================
+// Stateful Persistence Implementation
+// ============================================================================
+
+/// Persistable state for a [`ListState`].
+///
+/// Contains the user-facing state that should survive sessions.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(
+    feature = "state-persistence",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct ListPersistState {
+    /// Selected item index.
+    pub selected: Option<usize>,
+    /// Scroll offset (first visible item).
+    pub offset: usize,
+}
+
+impl Stateful for ListState {
+    type State = ListPersistState;
+
+    fn state_key(&self) -> StateKey {
+        StateKey::new(
+            "List",
+            self.persistence_id.as_deref().unwrap_or("default"),
+        )
+    }
+
+    fn save_state(&self) -> ListPersistState {
+        ListPersistState {
+            selected: self.selected,
+            offset: self.offset,
+        }
+    }
+
+    fn restore_state(&mut self, state: ListPersistState) {
+        self.selected = state.selected;
+        self.offset = state.offset;
     }
 }
 

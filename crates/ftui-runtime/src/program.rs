@@ -256,6 +256,33 @@ impl<M> Cmd<M> {
     pub fn restore_state() -> Self {
         Self::RestoreState
     }
+
+    /// Count the number of atomic commands in this command.
+    ///
+    /// Returns 0 for None, 1 for atomic commands, and recursively counts for Batch/Sequence.
+    pub fn count(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Batch(cmds) | Self::Sequence(cmds) => cmds.iter().map(Self::count).sum(),
+            _ => 1,
+        }
+    }
+
+    /// Return a human-readable type name for this command variant.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Quit => "Quit",
+            Self::Batch(_) => "Batch",
+            Self::Sequence(_) => "Sequence",
+            Self::Msg(_) => "Msg",
+            Self::Tick(_) => "Tick",
+            Self::Log(_) => "Log",
+            Self::Task(_) => "Task",
+            Self::SaveState => "SaveState",
+            Self::RestoreState => "RestoreState",
+        }
+    }
 }
 
 /// Resize handling behavior for the runtime.

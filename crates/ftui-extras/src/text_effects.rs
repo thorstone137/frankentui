@@ -2287,7 +2287,6 @@ impl StyledText {
             | TextEffect::Shake { .. }
             | TextEffect::Cascade { .. }
             | TextEffect::Cursor { .. }
-            | TextEffect::Scanline { .. }
             | TextEffect::Reveal { .. } => base,
 
             TextEffect::RevealMask {

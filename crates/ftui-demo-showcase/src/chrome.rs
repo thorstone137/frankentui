@@ -4,7 +4,7 @@
 
 use ftui_core::geometry::Rect;
 use ftui_render::frame::{Frame, HitId};
-use ftui_style::Style;
+use ftui_style::{Style, StyleFlags};
 use ftui_text::{Line, Span, Text};
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
