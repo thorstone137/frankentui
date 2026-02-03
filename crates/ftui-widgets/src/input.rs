@@ -543,6 +543,7 @@ impl TextInput {
         if cursor_visual >= scroll + viewport_width {
             scroll = cursor_visual - viewport_width + 1;
         }
+        self.scroll_cells.set(scroll);
         scroll
     }
 }
