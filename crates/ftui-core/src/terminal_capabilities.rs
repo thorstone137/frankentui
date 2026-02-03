@@ -32,7 +32,7 @@
 //! ```
 //! use ftui_core::terminal_capabilities::CapabilityProfileBuilder;
 //!
-//! let custom = CapabilityProfileBuilder::new("custom")
+//! let custom = CapabilityProfileBuilder::new()
 //!     .colors_256(true)
 //!     .true_color(true)
 //!     .mouse_sgr(true)

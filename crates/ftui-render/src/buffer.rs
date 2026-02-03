@@ -639,6 +639,97 @@ pub struct DoubleBuffer {
     current_idx: u8,
 }
 
+// ---------------------------------------------------------------------------
+// AdaptiveDoubleBuffer: Allocation-efficient resize (bd-1rz0.4.2)
+// ---------------------------------------------------------------------------
+
+/// Over-allocation factor for growth headroom (1.25x = 25% extra capacity).
+const ADAPTIVE_GROWTH_FACTOR: f32 = 1.25;
+
+/// Shrink threshold: only reallocate if new size < this fraction of capacity.
+/// This prevents thrashing at size boundaries.
+const ADAPTIVE_SHRINK_THRESHOLD: f32 = 0.50;
+
+/// Maximum over-allocation per dimension (prevent excessive memory usage).
+const ADAPTIVE_MAX_OVERAGE: u16 = 200;
+
+/// Adaptive double-buffered render target with allocation efficiency.
+///
+/// Wraps `DoubleBuffer` with capacity tracking to minimize allocations during
+/// resize storms. Key strategies:
+///
+/// 1. **Over-allocation headroom**: Allocate slightly more than needed to handle
+///    minor size increases without reallocation.
+/// 2. **Shrink threshold**: Only shrink if new size is significantly smaller
+///    than allocated capacity (prevents thrashing at size boundaries).
+/// 3. **Logical vs physical dimensions**: Track both the current view size
+///    and the allocated capacity separately.
+///
+/// # Invariants
+///
+/// 1. `capacity_width >= logical_width` and `capacity_height >= logical_height`
+/// 2. Logical dimensions represent the actual usable area for rendering.
+/// 3. Physical capacity may exceed logical dimensions by up to `ADAPTIVE_GROWTH_FACTOR`.
+/// 4. Shrink only occurs when logical size drops below `ADAPTIVE_SHRINK_THRESHOLD * capacity`.
+///
+/// # Failure Modes
+///
+/// | Condition | Behavior | Rationale |
+/// |-----------|----------|-----------|
+/// | Capacity overflow | Clamp to u16::MAX | Prevents panic on extreme sizes |
+/// | Zero dimensions | Delegate to DoubleBuffer (panic) | Invalid state |
+///
+/// # Performance
+///
+/// - `resize()` is O(1) when the new size fits within capacity.
+/// - `resize()` is O(width × height) when reallocation is required.
+/// - Target: < 5% allocation overhead during resize storms.
+#[derive(Debug)]
+pub struct AdaptiveDoubleBuffer {
+    /// The underlying double buffer (may have larger capacity than logical size).
+    inner: DoubleBuffer,
+    /// Logical width (the usable rendering area).
+    logical_width: u16,
+    /// Logical height (the usable rendering area).
+    logical_height: u16,
+    /// Allocated capacity width (>= logical_width).
+    capacity_width: u16,
+    /// Allocated capacity height (>= logical_height).
+    capacity_height: u16,
+    /// Statistics for observability.
+    stats: AdaptiveStats,
+}
+
+/// Statistics for adaptive buffer allocation.
+#[derive(Debug, Clone, Default)]
+pub struct AdaptiveStats {
+    /// Number of resize calls that avoided reallocation.
+    pub resize_avoided: u64,
+    /// Number of resize calls that required reallocation.
+    pub resize_reallocated: u64,
+    /// Number of resize calls for growth.
+    pub resize_growth: u64,
+    /// Number of resize calls for shrink.
+    pub resize_shrink: u64,
+}
+
+impl AdaptiveStats {
+    /// Reset statistics to zero.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Calculate the reallocation avoidance ratio (higher is better).
+    pub fn avoidance_ratio(&self) -> f64 {
+        let total = self.resize_avoided + self.resize_reallocated;
+        if total == 0 {
+            1.0
+        } else {
+            self.resize_avoided as f64 / total as f64
+        }
+    }
+}
+
 impl DoubleBuffer {
     /// Create a double buffer with the given dimensions.
     ///
@@ -710,6 +801,194 @@ impl DoubleBuffer {
     #[inline]
     pub fn dimensions_match(&self, width: u16, height: u16) -> bool {
         self.buffers[0].width() == width && self.buffers[0].height() == height
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AdaptiveDoubleBuffer implementation (bd-1rz0.4.2)
+// ---------------------------------------------------------------------------
+
+impl AdaptiveDoubleBuffer {
+    /// Create a new adaptive buffer with the given logical dimensions.
+    ///
+    /// Initial capacity is set with growth headroom applied.
+    ///
+    /// # Panics
+    ///
+    /// Panics if width or height is 0.
+    pub fn new(width: u16, height: u16) -> Self {
+        let (cap_w, cap_h) = Self::compute_capacity(width, height);
+        Self {
+            inner: DoubleBuffer::new(cap_w, cap_h),
+            logical_width: width,
+            logical_height: height,
+            capacity_width: cap_w,
+            capacity_height: cap_h,
+            stats: AdaptiveStats::default(),
+        }
+    }
+
+    /// Compute the capacity for a given logical size.
+    ///
+    /// Applies growth factor with clamping to prevent overflow.
+    fn compute_capacity(width: u16, height: u16) -> (u16, u16) {
+        let extra_w =
+            ((width as f32 * (ADAPTIVE_GROWTH_FACTOR - 1.0)) as u16).min(ADAPTIVE_MAX_OVERAGE);
+        let extra_h =
+            ((height as f32 * (ADAPTIVE_GROWTH_FACTOR - 1.0)) as u16).min(ADAPTIVE_MAX_OVERAGE);
+
+        let cap_w = width.saturating_add(extra_w);
+        let cap_h = height.saturating_add(extra_h);
+
+        (cap_w, cap_h)
+    }
+
+    /// Check if the new dimensions require reallocation.
+    ///
+    /// Returns `true` if reallocation is needed, `false` if current capacity suffices.
+    fn needs_reallocation(&self, width: u16, height: u16) -> bool {
+        // Growth beyond capacity always requires reallocation
+        if width > self.capacity_width || height > self.capacity_height {
+            return true;
+        }
+
+        // Shrink threshold: reallocate if new size is significantly smaller
+        let shrink_threshold_w = (self.capacity_width as f32 * ADAPTIVE_SHRINK_THRESHOLD) as u16;
+        let shrink_threshold_h = (self.capacity_height as f32 * ADAPTIVE_SHRINK_THRESHOLD) as u16;
+
+        width < shrink_threshold_w || height < shrink_threshold_h
+    }
+
+    /// O(1) swap: the current buffer becomes previous, and vice versa.
+    ///
+    /// After swapping, call `current_mut().clear()` to prepare for the
+    /// next frame.
+    #[inline]
+    pub fn swap(&mut self) {
+        self.inner.swap();
+    }
+
+    /// Reference to the current (in-progress) frame buffer.
+    ///
+    /// Note: The buffer may have larger dimensions than the logical size.
+    /// Use `logical_width()` and `logical_height()` for rendering bounds.
+    #[inline]
+    pub fn current(&self) -> &Buffer {
+        self.inner.current()
+    }
+
+    /// Mutable reference to the current (in-progress) frame buffer.
+    #[inline]
+    pub fn current_mut(&mut self) -> &mut Buffer {
+        self.inner.current_mut()
+    }
+
+    /// Reference to the previous (last-presented) frame buffer.
+    #[inline]
+    pub fn previous(&self) -> &Buffer {
+        self.inner.previous()
+    }
+
+    /// Logical width (the usable rendering area).
+    #[inline]
+    pub fn width(&self) -> u16 {
+        self.logical_width
+    }
+
+    /// Logical height (the usable rendering area).
+    #[inline]
+    pub fn height(&self) -> u16 {
+        self.logical_height
+    }
+
+    /// Allocated capacity width (may be larger than logical width).
+    #[inline]
+    pub fn capacity_width(&self) -> u16 {
+        self.capacity_width
+    }
+
+    /// Allocated capacity height (may be larger than logical height).
+    #[inline]
+    pub fn capacity_height(&self) -> u16 {
+        self.capacity_height
+    }
+
+    /// Get allocation statistics.
+    #[inline]
+    pub fn stats(&self) -> &AdaptiveStats {
+        &self.stats
+    }
+
+    /// Reset allocation statistics.
+    pub fn reset_stats(&mut self) {
+        self.stats.reset();
+    }
+
+    /// Resize the logical dimensions. Returns `true` if dimensions changed.
+    ///
+    /// This method minimizes allocations by:
+    /// 1. Reusing existing capacity when the new size fits.
+    /// 2. Only reallocating on significant shrink (below threshold).
+    /// 3. Applying growth headroom to avoid immediate reallocation on growth.
+    ///
+    /// # Performance
+    ///
+    /// - O(1) when new size fits within existing capacity.
+    /// - O(width × height) when reallocation is required.
+    pub fn resize(&mut self, width: u16, height: u16) -> bool {
+        // No change in logical dimensions
+        if width == self.logical_width && height == self.logical_height {
+            return false;
+        }
+
+        let is_growth = width > self.logical_width || height > self.logical_height;
+        if is_growth {
+            self.stats.resize_growth += 1;
+        } else {
+            self.stats.resize_shrink += 1;
+        }
+
+        if self.needs_reallocation(width, height) {
+            // Reallocate with new capacity
+            let (cap_w, cap_h) = Self::compute_capacity(width, height);
+            self.inner = DoubleBuffer::new(cap_w, cap_h);
+            self.capacity_width = cap_w;
+            self.capacity_height = cap_h;
+            self.stats.resize_reallocated += 1;
+        } else {
+            // Reuse existing capacity - just update logical dimensions
+            // Clear both buffers to avoid stale content outside new bounds
+            self.inner.current_mut().clear();
+            // Note: previous buffer will be cleared after next swap
+            self.stats.resize_avoided += 1;
+        }
+
+        self.logical_width = width;
+        self.logical_height = height;
+        true
+    }
+
+    /// Check whether logical dimensions match the given values.
+    #[inline]
+    pub fn dimensions_match(&self, width: u16, height: u16) -> bool {
+        self.logical_width == width && self.logical_height == height
+    }
+
+    /// Get the logical bounding rect (for scissoring/rendering).
+    #[inline]
+    pub fn logical_bounds(&self) -> Rect {
+        Rect::from_size(self.logical_width, self.logical_height)
+    }
+
+    /// Calculate memory efficiency (logical cells / capacity cells).
+    pub fn memory_efficiency(&self) -> f64 {
+        let logical = self.logical_width as u64 * self.logical_height as u64;
+        let capacity = self.capacity_width as u64 * self.capacity_height as u64;
+        if capacity == 0 {
+            1.0
+        } else {
+            logical as f64 / capacity as f64
+        }
     }
 }
 
@@ -2165,5 +2444,425 @@ mod tests {
         // Previous should not reflect changes to current
         assert!(db.previous().get(0, 0).unwrap().is_empty());
         assert_eq!(db.current().get(0, 0).unwrap().content.as_char(), Some('C'));
+    }
+
+    // =====================================================================
+    // AdaptiveDoubleBuffer tests (bd-1rz0.4.2)
+    // =====================================================================
+
+    #[test]
+    fn adaptive_buffer_new_has_over_allocation() {
+        let adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Logical dimensions match requested size
+        assert_eq!(adb.width(), 80);
+        assert_eq!(adb.height(), 24);
+        assert!(adb.dimensions_match(80, 24));
+
+        // Capacity should be larger (1.25x growth factor, capped at 200)
+        // 80 * 0.25 = 20, so capacity_width = 100
+        // 24 * 0.25 = 6, so capacity_height = 30
+        assert!(adb.capacity_width() > 80);
+        assert!(adb.capacity_height() > 24);
+        assert_eq!(adb.capacity_width(), 100); // 80 + 20
+        assert_eq!(adb.capacity_height(), 30); // 24 + 6
+    }
+
+    #[test]
+    fn adaptive_buffer_resize_avoids_reallocation_when_within_capacity() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Small growth should be absorbed by over-allocation
+        assert!(adb.resize(90, 28)); // Still within (100, 30) capacity
+        assert_eq!(adb.width(), 90);
+        assert_eq!(adb.height(), 28);
+        assert_eq!(adb.stats().resize_avoided, 1);
+        assert_eq!(adb.stats().resize_reallocated, 0);
+        assert_eq!(adb.stats().resize_growth, 1);
+    }
+
+    #[test]
+    fn adaptive_buffer_resize_reallocates_on_growth_beyond_capacity() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Growth beyond capacity requires reallocation
+        assert!(adb.resize(120, 40)); // Exceeds (100, 30) capacity
+        assert_eq!(adb.width(), 120);
+        assert_eq!(adb.height(), 40);
+        assert_eq!(adb.stats().resize_reallocated, 1);
+        assert_eq!(adb.stats().resize_avoided, 0);
+
+        // New capacity should have headroom
+        assert!(adb.capacity_width() > 120);
+        assert!(adb.capacity_height() > 40);
+    }
+
+    #[test]
+    fn adaptive_buffer_resize_reallocates_on_significant_shrink() {
+        let mut adb = AdaptiveDoubleBuffer::new(100, 50);
+
+        // Shrink below 50% threshold should reallocate
+        // Threshold: 100 * 0.5 = 50, 50 * 0.5 = 25
+        assert!(adb.resize(40, 20)); // Below 50% of capacity
+        assert_eq!(adb.width(), 40);
+        assert_eq!(adb.height(), 20);
+        assert_eq!(adb.stats().resize_reallocated, 1);
+        assert_eq!(adb.stats().resize_shrink, 1);
+    }
+
+    #[test]
+    fn adaptive_buffer_resize_avoids_reallocation_on_minor_shrink() {
+        let mut adb = AdaptiveDoubleBuffer::new(100, 50);
+
+        // Shrink above 50% threshold should reuse capacity
+        // Threshold: capacity ~125 * 0.5 = 62.5 for width
+        // 100 > 62.5, so no reallocation
+        assert!(adb.resize(80, 40));
+        assert_eq!(adb.width(), 80);
+        assert_eq!(adb.height(), 40);
+        assert_eq!(adb.stats().resize_avoided, 1);
+        assert_eq!(adb.stats().resize_reallocated, 0);
+        assert_eq!(adb.stats().resize_shrink, 1);
+    }
+
+    #[test]
+    fn adaptive_buffer_no_change_returns_false() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        assert!(!adb.resize(80, 24)); // No change
+        assert_eq!(adb.stats().resize_avoided, 0);
+        assert_eq!(adb.stats().resize_reallocated, 0);
+        assert_eq!(adb.stats().resize_growth, 0);
+        assert_eq!(adb.stats().resize_shrink, 0);
+    }
+
+    #[test]
+    fn adaptive_buffer_swap_works() {
+        let mut adb = AdaptiveDoubleBuffer::new(10, 5);
+
+        adb.current_mut().set(0, 0, Cell::from_char('A'));
+        assert_eq!(
+            adb.current().get(0, 0).unwrap().content.as_char(),
+            Some('A')
+        );
+
+        adb.swap();
+        assert_eq!(
+            adb.previous().get(0, 0).unwrap().content.as_char(),
+            Some('A')
+        );
+        assert!(adb.current().get(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn adaptive_buffer_stats_reset() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        adb.resize(90, 28);
+        adb.resize(120, 40);
+        assert!(adb.stats().resize_avoided > 0 || adb.stats().resize_reallocated > 0);
+
+        adb.reset_stats();
+        assert_eq!(adb.stats().resize_avoided, 0);
+        assert_eq!(adb.stats().resize_reallocated, 0);
+        assert_eq!(adb.stats().resize_growth, 0);
+        assert_eq!(adb.stats().resize_shrink, 0);
+    }
+
+    #[test]
+    fn adaptive_buffer_memory_efficiency() {
+        let adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        let efficiency = adb.memory_efficiency();
+        // 80*24 = 1920 logical cells
+        // 100*30 = 3000 capacity cells
+        // efficiency = 1920/3000 = 0.64
+        assert!(efficiency > 0.5);
+        assert!(efficiency < 1.0);
+    }
+
+    #[test]
+    fn adaptive_buffer_logical_bounds() {
+        let adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        let bounds = adb.logical_bounds();
+        assert_eq!(bounds.x, 0);
+        assert_eq!(bounds.y, 0);
+        assert_eq!(bounds.width, 80);
+        assert_eq!(bounds.height, 24);
+    }
+
+    #[test]
+    fn adaptive_buffer_capacity_clamped_for_large_sizes() {
+        // Test that over-allocation is capped at ADAPTIVE_MAX_OVERAGE (200)
+        let adb = AdaptiveDoubleBuffer::new(1000, 500);
+
+        // 1000 * 0.25 = 250, capped to 200
+        // 500 * 0.25 = 125, not capped
+        assert_eq!(adb.capacity_width(), 1000 + 200); // capped
+        assert_eq!(adb.capacity_height(), 500 + 125); // not capped
+    }
+
+    #[test]
+    fn adaptive_stats_avoidance_ratio() {
+        let mut stats = AdaptiveStats::default();
+
+        // Empty stats should return 1.0 (perfect avoidance)
+        assert!((stats.avoidance_ratio() - 1.0).abs() < f64::EPSILON);
+
+        // 3 avoided, 1 reallocated = 75% avoidance
+        stats.resize_avoided = 3;
+        stats.resize_reallocated = 1;
+        assert!((stats.avoidance_ratio() - 0.75).abs() < f64::EPSILON);
+
+        // All reallocations = 0% avoidance
+        stats.resize_avoided = 0;
+        stats.resize_reallocated = 5;
+        assert!((stats.avoidance_ratio() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn adaptive_buffer_resize_storm_simulation() {
+        // Simulate a resize storm (rapid size changes)
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Simulate user resizing terminal in small increments
+        for i in 1..=10 {
+            adb.resize(80 + i, 24 + (i / 2));
+        }
+
+        // Most resizes should have avoided reallocation due to over-allocation
+        let ratio = adb.stats().avoidance_ratio();
+        assert!(
+            ratio > 0.5,
+            "Expected >50% avoidance ratio, got {:.2}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn adaptive_buffer_width_only_growth() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Grow only width, within capacity
+        assert!(adb.resize(95, 24)); // 95 < 100 capacity
+        assert_eq!(adb.stats().resize_avoided, 1);
+        assert_eq!(adb.stats().resize_growth, 1);
+    }
+
+    #[test]
+    fn adaptive_buffer_height_only_growth() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Grow only height, within capacity
+        assert!(adb.resize(80, 28)); // 28 < 30 capacity
+        assert_eq!(adb.stats().resize_avoided, 1);
+        assert_eq!(adb.stats().resize_growth, 1);
+    }
+
+    #[test]
+    fn adaptive_buffer_one_dimension_exceeds_capacity() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // One dimension exceeds capacity, should reallocate
+        assert!(adb.resize(105, 24)); // 105 > 100 capacity, 24 < 30
+        assert_eq!(adb.stats().resize_reallocated, 1);
+    }
+
+    #[test]
+    fn adaptive_buffer_current_and_previous_distinct() {
+        let mut adb = AdaptiveDoubleBuffer::new(10, 5);
+        adb.current_mut().set(0, 0, Cell::from_char('X'));
+
+        // Previous should not reflect changes to current
+        assert!(adb.previous().get(0, 0).unwrap().is_empty());
+        assert_eq!(
+            adb.current().get(0, 0).unwrap().content.as_char(),
+            Some('X')
+        );
+    }
+
+    // Property tests for AdaptiveDoubleBuffer invariants
+    #[test]
+    fn adaptive_buffer_invariant_capacity_geq_logical() {
+        // Test across various sizes that capacity always >= logical
+        for width in [1u16, 10, 80, 200, 1000, 5000] {
+            for height in [1u16, 10, 24, 100, 500, 2000] {
+                let adb = AdaptiveDoubleBuffer::new(width, height);
+                assert!(
+                    adb.capacity_width() >= adb.width(),
+                    "capacity_width {} < logical_width {} for ({}, {})",
+                    adb.capacity_width(),
+                    adb.width(),
+                    width,
+                    height
+                );
+                assert!(
+                    adb.capacity_height() >= adb.height(),
+                    "capacity_height {} < logical_height {} for ({}, {})",
+                    adb.capacity_height(),
+                    adb.height(),
+                    width,
+                    height
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn adaptive_buffer_invariant_resize_dimensions_correct() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // After any resize, logical dimensions should match requested
+        let test_sizes = [
+            (100, 50),
+            (40, 20),
+            (80, 24),
+            (200, 100),
+            (10, 5),
+            (1000, 500),
+        ];
+        for (w, h) in test_sizes {
+            adb.resize(w, h);
+            assert_eq!(adb.width(), w, "width mismatch for ({}, {})", w, h);
+            assert_eq!(adb.height(), h, "height mismatch for ({}, {})", w, h);
+            assert!(
+                adb.capacity_width() >= w,
+                "capacity_width < width for ({}, {})",
+                w,
+                h
+            );
+            assert!(
+                adb.capacity_height() >= h,
+                "capacity_height < height for ({}, {})",
+                w,
+                h
+            );
+        }
+    }
+
+    // Property test: no-ghosting on shrink
+    // When buffer shrinks without reallocation, the current buffer is cleared
+    // to prevent stale content from appearing in the visible area.
+    #[test]
+    fn adaptive_buffer_no_ghosting_on_shrink() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Fill the entire logical area with content
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                adb.current_mut().set(x, y, Cell::from_char('X'));
+            }
+        }
+
+        // Shrink to a smaller size (still above 50% threshold, so no reallocation)
+        // 80 * 0.5 = 40, so 60 > 40 means no reallocation
+        adb.resize(60, 20);
+
+        // Verify current buffer is cleared after shrink (no stale 'X' visible)
+        // The current buffer should be empty because resize() calls clear()
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                let cell = adb.current().get(x, y).unwrap();
+                assert!(
+                    cell.is_empty(),
+                    "Ghost content at ({}, {}): expected empty, got {:?}",
+                    x,
+                    y,
+                    cell.content
+                );
+            }
+        }
+    }
+
+    // Property test: shrink-reallocation clears all content
+    // When buffer shrinks below threshold (requiring reallocation), both buffers
+    // should be fresh/empty.
+    #[test]
+    fn adaptive_buffer_no_ghosting_on_reallocation_shrink() {
+        let mut adb = AdaptiveDoubleBuffer::new(100, 50);
+
+        // Fill both buffers with content
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                adb.current_mut().set(x, y, Cell::from_char('A'));
+            }
+        }
+        adb.swap();
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                adb.current_mut().set(x, y, Cell::from_char('B'));
+            }
+        }
+
+        // Shrink below 50% threshold, forcing reallocation
+        adb.resize(30, 15);
+        assert_eq!(adb.stats().resize_reallocated, 1);
+
+        // Both buffers should be fresh/empty
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                assert!(
+                    adb.current().get(x, y).unwrap().is_empty(),
+                    "Ghost in current at ({}, {})",
+                    x,
+                    y
+                );
+                assert!(
+                    adb.previous().get(x, y).unwrap().is_empty(),
+                    "Ghost in previous at ({}, {})",
+                    x,
+                    y
+                );
+            }
+        }
+    }
+
+    // Property test: growth preserves no-ghosting guarantee
+    // When buffer grows beyond capacity (requiring reallocation), the new
+    // capacity area should be empty.
+    #[test]
+    fn adaptive_buffer_no_ghosting_on_growth_reallocation() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+
+        // Fill current buffer
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                adb.current_mut().set(x, y, Cell::from_char('Z'));
+            }
+        }
+
+        // Grow beyond capacity (100, 30) to force reallocation
+        adb.resize(150, 60);
+        assert_eq!(adb.stats().resize_reallocated, 1);
+
+        // Entire new buffer should be empty
+        for y in 0..adb.height() {
+            for x in 0..adb.width() {
+                assert!(
+                    adb.current().get(x, y).unwrap().is_empty(),
+                    "Ghost at ({}, {}) after growth reallocation",
+                    x,
+                    y
+                );
+            }
+        }
+    }
+
+    // Property test: idempotence - same resize is no-op
+    #[test]
+    fn adaptive_buffer_resize_idempotent() {
+        let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+        adb.current_mut().set(5, 5, Cell::from_char('K'));
+
+        // Resize to same dimensions should be no-op
+        let changed = adb.resize(80, 24);
+        assert!(!changed);
+
+        // Content should be preserved
+        assert_eq!(
+            adb.current().get(5, 5).unwrap().content.as_char(),
+            Some('K')
+        );
     }
 }

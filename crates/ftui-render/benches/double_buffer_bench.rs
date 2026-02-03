@@ -1,16 +1,24 @@
 //! Benchmarks for DoubleBuffer O(1) swap (bd-1rz0.4.4)
+//! and AdaptiveDoubleBuffer allocation efficiency (bd-1rz0.4.2)
 //!
-//! Performance budgets:
+//! ## Performance budgets
+//!
+//! ### DoubleBuffer
 //! - Swap: < 10ns (O(1) index flip)
 //! - Clone (baseline): ~70,000ns for 120x40
 //! - Clear: ~15,000ns for 120x40
+//! - Expected improvement: swap is ~10,000x faster than clone
 //!
-//! Expected improvement: swap is ~10,000x faster than clone.
+//! ### AdaptiveDoubleBuffer (bd-1rz0.4.2)
+//! - Resize (no realloc): < 20,000ns (clear only)
+//! - Resize (realloc): ~120,000ns for 120x40 (new DoubleBuffer allocation)
+//! - Resize storm avoidance: > 80% of resizes should avoid reallocation
+//! - Memory overhead: < 30% extra capacity
 //!
 //! Run with: cargo bench -p ftui-render --bench double_buffer_bench
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ftui_render::buffer::{Buffer, DoubleBuffer};
+use ftui_render::buffer::{AdaptiveDoubleBuffer, Buffer, DoubleBuffer};
 use std::hint::black_box;
 
 // =============================================================================
@@ -168,10 +176,183 @@ fn bench_frame_transition_simulation(c: &mut Criterion) {
     group.finish();
 }
 
+// =============================================================================
+// AdaptiveDoubleBuffer benchmarks (bd-1rz0.4.2)
+// =============================================================================
+
+fn bench_adaptive_resize_storm(c: &mut Criterion) {
+    let mut group = c.benchmark_group("adaptive_buffer/resize_storm");
+
+    // Simulate resize storm: rapid consecutive resizes
+    for base_size in [(80, 24), (120, 40)] {
+        let (w, h) = base_size;
+        let cells = w as u64 * h as u64;
+        group.throughput(Throughput::Elements(cells));
+
+        // AdaptiveDoubleBuffer: should reuse capacity for small changes
+        group.bench_with_input(
+            BenchmarkId::new("adaptive", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                let mut adb = AdaptiveDoubleBuffer::new(w, h);
+                b.iter(|| {
+                    // Simulate resize storm: +1, +2, +3, ..., +10
+                    for i in 1u16..=10 {
+                        adb.resize(w + i, h + (i / 2));
+                    }
+                    // Reset to original
+                    adb.resize(w, h);
+                    black_box(&adb);
+                })
+            },
+        );
+
+        // DoubleBuffer baseline: always reallocates
+        group.bench_with_input(
+            BenchmarkId::new("regular", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                let mut db = DoubleBuffer::new(w, h);
+                b.iter(|| {
+                    for i in 1u16..=10 {
+                        db.resize(w + i, h + (i / 2));
+                    }
+                    db.resize(w, h);
+                    black_box(&db);
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_adaptive_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("adaptive_buffer/ops");
+
+    for (w, h) in [(80, 24), (120, 40), (200, 60)] {
+        let cells = w as u64 * h as u64;
+        group.throughput(Throughput::Elements(cells));
+
+        // New allocation
+        group.bench_with_input(
+            BenchmarkId::new("new", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| b.iter(|| black_box(AdaptiveDoubleBuffer::new(w, h))),
+        );
+    }
+
+    // Resize without reallocation (within capacity)
+    let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+    group.bench_function("resize_within_capacity", |b| {
+        b.iter(|| {
+            adb.resize(90, 28); // Within 100x30 capacity
+            adb.resize(80, 24); // Reset
+            black_box(&adb);
+        })
+    });
+
+    // Resize with reallocation (beyond capacity)
+    let mut adb2 = AdaptiveDoubleBuffer::new(80, 24);
+    group.bench_function("resize_beyond_capacity", |b| {
+        b.iter(|| {
+            adb2.resize(150, 60); // Beyond 100x30 capacity
+            adb2.resize(80, 24); // Reset and shrink (below threshold)
+            black_box(&adb2);
+        })
+    });
+
+    // Swap operation (should be identical to DoubleBuffer)
+    let mut adb3 = AdaptiveDoubleBuffer::new(120, 40);
+    group.bench_function("swap_120x40", |b| {
+        b.iter(|| {
+            adb3.swap();
+            black_box(&adb3);
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_adaptive_vs_regular_frame_transition(c: &mut Criterion) {
+    let mut group = c.benchmark_group("adaptive_buffer/frame_transition");
+
+    for (w, h) in [(80, 24), (120, 40)] {
+        let cells = w as u64 * h as u64;
+        group.throughput(Throughput::Elements(cells));
+
+        // Adaptive buffer frame transition
+        group.bench_with_input(
+            BenchmarkId::new("adaptive_swap_clear", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                let mut adb = AdaptiveDoubleBuffer::new(w, h);
+                b.iter(|| {
+                    adb.swap();
+                    adb.current_mut().clear();
+                    black_box(&adb);
+                })
+            },
+        );
+
+        // Regular DoubleBuffer frame transition (for comparison)
+        group.bench_with_input(
+            BenchmarkId::new("regular_swap_clear", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                let mut db = DoubleBuffer::new(w, h);
+                b.iter(|| {
+                    db.swap();
+                    db.current_mut().clear();
+                    black_box(&db);
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark to measure allocation avoidance ratio under resize storm.
+/// This is an observability check, not a timing benchmark.
+fn bench_adaptive_avoidance_ratio(c: &mut Criterion) {
+    let mut group = c.benchmark_group("adaptive_buffer/avoidance");
+
+    // Test various resize patterns
+    group.bench_function("small_increments_10x", |b| {
+        b.iter(|| {
+            let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+            for i in 1u16..=10 {
+                adb.resize(80 + i, 24 + (i / 3));
+            }
+            let stats = adb.stats().clone();
+            black_box((adb.stats().avoidance_ratio(), stats));
+        })
+    });
+
+    group.bench_function("oscillation_pattern", |b| {
+        b.iter(|| {
+            let mut adb = AdaptiveDoubleBuffer::new(80, 24);
+            // Oscillate between two sizes
+            for _ in 0..5 {
+                adb.resize(90, 28);
+                adb.resize(80, 24);
+            }
+            black_box(adb.stats().avoidance_ratio());
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_swap_vs_clone,
     bench_double_buffer_operations,
     bench_frame_transition_simulation,
+    bench_adaptive_resize_storm,
+    bench_adaptive_operations,
+    bench_adaptive_vs_regular_frame_transition,
+    bench_adaptive_avoidance_ratio,
 );
 criterion_main!(benches);
