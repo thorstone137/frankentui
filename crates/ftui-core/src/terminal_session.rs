@@ -74,8 +74,10 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
+use std::env;
 use std::io::{self, Write};
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use crate::event::Event;
 
@@ -246,10 +248,19 @@ impl TerminalSession {
         let mut stdout = io::stdout();
 
         if options.alternate_screen {
-            crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
+            // Enter alternate screen and explicitly clear it.
+            // Some terminals (including WezTerm) may show stale content in the
+            // alt-screen buffer without an explicit clear. We also position the
+            // cursor at the top-left to ensure a known initial state.
+            crossterm::execute!(
+                stdout,
+                crossterm::terminal::EnterAlternateScreen,
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+                crossterm::cursor::MoveTo(0, 0)
+            )?;
             session.alternate_screen_enabled = true;
             #[cfg(feature = "tracing")]
-            tracing::info!("alternate screen enabled");
+            tracing::info!("alternate screen enabled (with clear)");
         }
 
         if options.mouse_capture {
@@ -290,7 +301,24 @@ impl TerminalSession {
 
     /// Get the current terminal size (columns, rows).
     pub fn size(&self) -> io::Result<(u16, u16)> {
-        crossterm::terminal::size()
+        let (w, h) = crossterm::terminal::size()?;
+        if w > 1 && h > 1 {
+            return Ok((w, h));
+        }
+
+        // Some terminals briefly report 1x1 on startup; fall back to env vars when available.
+        if let Some((env_w, env_h)) = size_from_env() {
+            return Ok((env_w, env_h));
+        }
+
+        // Re-probe once after a short delay to catch terminals that report size late.
+        std::thread::sleep(Duration::from_millis(10));
+        let (w2, h2) = crossterm::terminal::size()?;
+        if w2 > 1 && h2 > 1 {
+            return Ok((w2, h2));
+        }
+
+        Ok((w, h))
     }
 
     /// Poll for an event with a timeout.
@@ -393,6 +421,16 @@ impl TerminalSession {
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         self.cleanup();
+    }
+}
+
+fn size_from_env() -> Option<(u16, u16)> {
+    let cols = env::var("COLUMNS").ok()?.parse::<u16>().ok()?;
+    let rows = env::var("LINES").ok()?.parse::<u16>().ok()?;
+    if cols > 1 && rows > 1 {
+        Some((cols, rows))
+    } else {
+        None
     }
 }
 
