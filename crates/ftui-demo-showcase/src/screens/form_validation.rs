@@ -218,10 +218,10 @@ impl FormValidationDemo {
             7,
             Box::new(|field| {
                 // Role selection required (not the placeholder)
-                if let FormField::Select { selected, .. } = field {
-                    if *selected == 0 {
-                        return Some("Please select a role".into());
-                    }
+                if let FormField::Select { selected, .. } = field
+                    && *selected == 0
+                {
+                    return Some("Please select a role".into());
                 }
                 None
             }),
@@ -230,10 +230,10 @@ impl FormValidationDemo {
             8,
             Box::new(|field| {
                 // Terms must be accepted
-                if let FormField::Checkbox { checked, .. } = field {
-                    if !*checked {
-                        return Some("You must accept the terms".into());
-                    }
+                if let FormField::Checkbox { checked, .. } = field
+                    && !*checked
+                {
+                    return Some("You must accept the terms".into());
                 }
                 None
             }),

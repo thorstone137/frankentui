@@ -43,6 +43,9 @@ SCREENS:
    16  Notifications      Toast notification system demo
    17  Action Timeline    Event timeline with filtering and severity
    18  Sizing             Content-aware intrinsic sizing demo
+   19  Text Editor        Advanced multi-line text editor with search
+   20  Mouse Playground   Mouse hit-testing and interaction demo
+   21  Form Validation    Comprehensive form validation demo
 
 KEYBINDINGS:
     1-9, 0          Switch to screens 1-10 by number
