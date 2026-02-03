@@ -4,12 +4,12 @@
 │  Lumen Light          │ │     fg::MUTED            #8CA0B4  6.1:1  AA                                                │
 │  Nordic Frost         │ │     fg::DISABLED         #3D4F5F  2.0:1  Fail                                              │
 │  High Contrast        │ │     bg::DEEP             #0A0E14  1.2:1  Fail                                              │
-│                       │ │▶    bg::BASE             #1A1F29  1.0:1  Fail                                              │
+│                       │ │     bg::BASE             #1A1F29  1.0:1  Fail                                              │
 │                       │ │     bg::SURFACE          #1E2430  1.1:1  Fail                                              │
 │                       │ │     bg::OVERLAY          #2D3746  1.4:1  Fail                                              │
 │                       │ │     bg::HIGHLIGHT        #3D4F5F  2.0:1  Fail                                              │
 │                       │ │     accent::PRIMARY      #00AAFF  6.4:1  AA                                                │
-│                       │ │     accent::SECONDARY    #FF00FF  5.3:1  AA                                                │
+│                       │ │▶    accent::SECONDARY    #FF00FF  5.3:1  AA                                                │
 │                       │ │     accent::SUCCESS      #6EFFC8  13.2:1 AAA                                               │
 │                       │ │     accent::WARNING      #FFE566  13.1:1 AAA                                               │
 │                       │ │     accent::ERROR        #FF3C6E  4.8:1  AA                                                │

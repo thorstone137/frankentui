@@ -147,10 +147,13 @@ impl A11yTestContext {
     fn render_and_snapshot(mut self, name: &str, width: u16, height: u16) {
         let setup_elapsed = self.setup_start.elapsed();
 
-        // Apply theme settings based on a11y
-        if self.app.a11y.high_contrast {
-            theme::set_theme(theme::ThemeId::Darcula);
-        }
+        // Always set theme state explicitly for test isolation
+        let theme_id = if self.app.a11y.high_contrast {
+            theme::ThemeId::Darcula
+        } else {
+            theme::ThemeId::CyberpunkAurora
+        };
+        theme::set_theme(theme_id);
         theme::set_motion_scale(if self.app.a11y.reduced_motion {
             0.0
         } else {
@@ -193,17 +196,21 @@ impl A11yTestContext {
     }
 }
 
-/// Helper for per-screen a11y testing
+/// Helper for per-screen a11y testing.
+/// Always sets theme state explicitly to ensure test isolation.
 fn render_screen_with_a11y<S: Screen>(
     screen: &S,
     a11y: &theme::A11ySettings,
     width: u16,
     height: u16,
 ) -> Frame<'static> {
-    // Apply a11y settings to theme
-    if a11y.high_contrast {
-        theme::set_theme(theme::ThemeId::Darcula);
-    }
+    // Always set theme state explicitly for test isolation
+    let theme_id = if a11y.high_contrast {
+        theme::ThemeId::Darcula
+    } else {
+        theme::ThemeId::CyberpunkAurora
+    };
+    theme::set_theme(theme_id);
     theme::set_motion_scale(if a11y.reduced_motion { 0.0 } else { 1.0 });
     theme::set_large_text(a11y.large_text);
 
@@ -647,6 +654,10 @@ fn a11y_settings_none_equals_default() {
 
 #[test]
 fn a11y_panel_visible_80x24() {
+    // Set theme explicitly for test isolation
+    theme::set_theme(theme::ThemeId::CyberpunkAurora);
+    theme::set_motion_scale(1.0);
+    theme::set_large_text(false);
     let mut app = AppModel::new();
     app.a11y_panel_visible = true;
     let mut pool = GraphemePool::new();
@@ -657,6 +668,10 @@ fn a11y_panel_visible_80x24() {
 
 #[test]
 fn a11y_panel_visible_120x40() {
+    // Set theme explicitly for test isolation
+    theme::set_theme(theme::ThemeId::CyberpunkAurora);
+    theme::set_motion_scale(1.0);
+    theme::set_large_text(false);
     let mut app = AppModel::new();
     app.a11y_panel_visible = true;
     let mut pool = GraphemePool::new();

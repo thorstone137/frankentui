@@ -1026,6 +1026,7 @@ impl StatefulWidget for Form {
             }
 
             let is_focused = i == state.focused;
+            let is_disabled = self.is_disabled(i);
 
             // Find error for this field
             let error_msg = state
@@ -1033,6 +1034,10 @@ impl StatefulWidget for Form {
                 .iter()
                 .find(|e| e.field == i)
                 .map(|e| e.message.as_str());
+            let has_error = error_msg.is_some();
+            let is_success = !has_error
+                && !is_disabled
+                && (state.is_touched(i) || state.is_dirty(i) || state.submitted);
 
             // Sync error display state
             if let Some(error_state) = state.error_states.get_mut(i) {
@@ -1047,34 +1052,71 @@ impl StatefulWidget for Form {
             if row_start >= state.scroll {
                 let y = area.y.saturating_add((row_start - state.scroll) as u16);
 
-                let label_style = if is_focused {
+                let label_style = if is_disabled {
+                    self.disabled_style
+                } else if has_error {
+                    self.error_style
+                } else if is_focused {
                     self.focused_style
+                } else if is_success {
+                    self.success_style
                 } else {
                     self.label_style
                 };
 
                 let label = field.label();
+                let label_space = label_w.saturating_sub(2);
+                let label_width =
+                    unicode_width::UnicodeWidthStr::width(label).min(label_space as usize) as u16;
+                let can_show_required =
+                    self.is_required(i) && label_width.saturating_add(2) <= label_space;
                 draw_str(
                     frame,
                     area.x,
                     y,
                     label,
                     label_style,
-                    label_w.saturating_sub(2),
+                    label_space,
                 );
+                if can_show_required {
+                    let star_x = area.x.saturating_add(label_width);
+                    draw_str(
+                        frame,
+                        star_x,
+                        y,
+                        " *",
+                        self.required_style,
+                        label_space.saturating_sub(label_width),
+                    );
+                }
 
                 // Draw ": " separator
-                let sep_x = area.x.saturating_add(
-                    unicode_width::UnicodeWidthStr::width(label)
-                        .min((label_w.saturating_sub(2)) as usize) as u16,
-                );
+                let label_render_width = if can_show_required {
+                    label_width.saturating_add(2)
+                } else {
+                    label_width
+                };
+                let sep_x = area.x.saturating_add(label_render_width);
                 draw_str(frame, sep_x, y, ": ", label_style, 2);
 
                 // Draw field value
-                let field_style = if is_focused {
+                let field_style = if is_disabled {
+                    self.disabled_style
+                } else if has_error {
+                    self.error_style
+                } else if is_focused {
                     self.focused_style
+                } else if is_success {
+                    self.success_style
                 } else {
                     self.style
+                };
+                let placeholder_style = if is_disabled {
+                    self.disabled_style
+                } else if has_error {
+                    self.error_style
+                } else {
+                    self.label_style
                 };
 
                 self.render_field(
@@ -1084,6 +1126,7 @@ impl StatefulWidget for Form {
                     y,
                     value_width,
                     field_style,
+                    placeholder_style,
                     is_focused,
                     state,
                 );
@@ -1118,6 +1161,7 @@ impl Form {
         y: u16,
         width: u16,
         style: Style,
+        placeholder_style: Style,
         is_focused: bool,
         state: &FormState,
     ) {
@@ -1127,7 +1171,7 @@ impl Form {
             } => {
                 if value.is_empty() {
                     if let Some(ph) = placeholder {
-                        draw_str(frame, x, y, ph, self.label_style, width);
+                        draw_str(frame, x, y, ph, placeholder_style, width);
                     }
                 } else {
                     draw_str(frame, x, y, value, style, width);

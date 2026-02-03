@@ -40,9 +40,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as FmtWrite;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::flicker_detection::{FlickerAnalysis, analyze_stream};
+use crate::flicker_detection::FlickerAnalysis;
 
 // ============================================================================
 // Configuration
