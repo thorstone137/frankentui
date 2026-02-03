@@ -158,6 +158,7 @@ impl<M: Send + 'static> SubscriptionManager<M> {
             if new_ids.contains(&running.id) {
                 remaining.push(running);
             } else {
+                crate::debug_trace!("stopping subscription: id={}", running.id);
                 tracing::debug!(sub_id = running.id, "Stopping subscription");
                 running.stop();
             }
@@ -172,6 +173,7 @@ impl<M: Send + 'static> SubscriptionManager<M> {
                 continue;
             }
 
+            crate::debug_trace!("starting subscription: id={}", id);
             tracing::debug!(sub_id = id, "Starting subscription");
             let (signal, trigger) = StopSignal::new();
             let sender = self.sender.clone();
@@ -266,12 +268,26 @@ impl<M: Send + 'static> Subscription<M> for Every<M> {
     }
 
     fn run(&self, sender: mpsc::Sender<M>, stop: StopSignal) {
+        let mut tick_count: u64 = 0;
+        crate::debug_trace!(
+            "Every subscription started: id={}, interval={:?}",
+            self.id,
+            self.interval
+        );
         loop {
             if stop.wait_timeout(self.interval) {
+                crate::debug_trace!(
+                    "Every subscription stopped: id={}, sent {} ticks",
+                    self.id,
+                    tick_count
+                );
                 break;
             }
+            tick_count += 1;
+            crate::debug_trace!("Every subscription tick {}: id={}", tick_count, self.id);
             let msg = (self.make_msg)();
             if sender.send(msg).is_err() {
+                crate::debug_trace!("Every subscription channel closed: id={}", self.id);
                 break;
             }
         }

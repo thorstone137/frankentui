@@ -468,10 +468,11 @@ impl<W: Write> TerminalWriter<W> {
     /// 3. Moves to UI region and clears it
     /// 4. Renders the buffer using the presenter
     /// 5. Restores cursor position
-    /// 6. Ends synchronized output
+    /// 6. Moves cursor to requested UI position (if any)
+    /// 7. Ends synchronized output
     ///
-    /// In AltScreen mode, this just renders the buffer.
-    pub fn present_ui(&mut self, buffer: &Buffer) -> io::Result<()> {
+    /// In AltScreen mode, this just renders the buffer and positions cursor.
+    pub fn present_ui(&mut self, buffer: &Buffer, cursor: Option<(u16, u16)>) -> io::Result<()> {
         let mode_str = match self.screen_mode {
             ScreenMode::Inline { .. } => "inline",
             ScreenMode::InlineAuto { .. } => "inline_auto",
@@ -486,12 +487,12 @@ impl<W: Write> TerminalWriter<W> {
         .entered();
 
         let result = match self.screen_mode {
-            ScreenMode::Inline { ui_height } => self.present_inline(buffer, ui_height),
+            ScreenMode::Inline { ui_height } => self.present_inline(buffer, ui_height, cursor),
             ScreenMode::InlineAuto { .. } => {
                 let ui_height = self.effective_ui_height();
-                self.present_inline(buffer, ui_height)
+                self.present_inline(buffer, ui_height, cursor)
             }
-            ScreenMode::AltScreen => self.present_altscreen(buffer),
+            ScreenMode::AltScreen => self.present_altscreen(buffer, cursor),
         };
 
         if result.is_ok() {
@@ -504,7 +505,11 @@ impl<W: Write> TerminalWriter<W> {
     ///
     /// Prefer this over [`present_ui`] when the caller has an owned buffer
     /// that won't be reused, as it avoids an O(width × height) clone.
-    pub fn present_ui_owned(&mut self, buffer: Buffer) -> io::Result<()> {
+    pub fn present_ui_owned(
+        &mut self,
+        buffer: Buffer,
+        cursor: Option<(u16, u16)>,
+    ) -> io::Result<()> {
         let mode_str = match self.screen_mode {
             ScreenMode::Inline { .. } => "inline",
             ScreenMode::InlineAuto { .. } => "inline_auto",
@@ -519,12 +524,12 @@ impl<W: Write> TerminalWriter<W> {
         .entered();
 
         let result = match self.screen_mode {
-            ScreenMode::Inline { ui_height } => self.present_inline(&buffer, ui_height),
+            ScreenMode::Inline { ui_height } => self.present_inline(&buffer, ui_height, cursor),
             ScreenMode::InlineAuto { .. } => {
                 let ui_height = self.effective_ui_height();
-                self.present_inline(&buffer, ui_height)
+                self.present_inline(&buffer, ui_height, cursor)
             }
-            ScreenMode::AltScreen => self.present_altscreen(&buffer),
+            ScreenMode::AltScreen => self.present_altscreen(&buffer, cursor),
         };
 
         if result.is_ok() {
@@ -538,7 +543,12 @@ impl<W: Write> TerminalWriter<W> {
     /// When the scroll-region strategy is active, DECSTBM is set to constrain
     /// log scrolling to the region above the UI. This prevents log output from
     /// overwriting the UI, reducing redraw work.
-    fn present_inline(&mut self, buffer: &Buffer, ui_height: u16) -> io::Result<()> {
+    fn present_inline(
+        &mut self,
+        buffer: &Buffer,
+        ui_height: u16,
+        cursor: Option<(u16, u16)>,
+    ) -> io::Result<()> {
         let visible_height = ui_height.min(self.term_height);
         let ui_y_start = self.ui_start_row();
         let current_region = InlineRegion {
@@ -614,6 +624,20 @@ impl<W: Write> TerminalWriter<W> {
         self.writer().write_all(CURSOR_RESTORE)?;
         self.cursor_saved = false;
 
+        // Apply requested cursor position (relative to UI)
+        if let Some((cx, cy)) = cursor {
+            if cy < visible_height {
+                // Move to UI start + cursor y
+                let abs_y = ui_y_start.saturating_add(cy);
+                write!(
+                    self.writer(),
+                    "\x1b[{};{}H",
+                    abs_y.saturating_add(1),
+                    cx.saturating_add(1)
+                )?;
+            }
+        }
+
         // End sync output
         if self.in_sync_block {
             self.writer().write_all(SYNC_END)?;
@@ -631,7 +655,7 @@ impl<W: Write> TerminalWriter<W> {
     }
 
     /// Present UI in alternate screen mode (simpler, no cursor gymnastics).
-    fn present_altscreen(&mut self, buffer: &Buffer) -> io::Result<()> {
+    fn present_altscreen(&mut self, buffer: &Buffer, cursor: Option<(u16, u16)>) -> io::Result<()> {
         let diff = {
             let _span = debug_span!("ftui.render.diff_compute").entered();
             if let Some(ref prev) = self.prev_buffer {
@@ -657,6 +681,30 @@ impl<W: Write> TerminalWriter<W> {
 
         // Reset style at end
         self.writer().write_all(b"\x1b[0m")?;
+
+        // Apply requested cursor position
+        if let Some((cx, cy)) = cursor {
+            write!(
+                self.writer(),
+                "\x1b[{};{}H",
+                cy.saturating_add(1),
+                cx.saturating_add(1)
+            )?;
+        } else {
+            // Hide cursor if not explicitly positioned?
+            // Usually widgets handle visibility, but if no position is requested,
+            // we should probably leave it where emit_diff left it, or hide it.
+            // But Frame usually has cursor_visible=true by default.
+            // If cursor is None, it means "don't show".
+            // However, we rely on Frame::cursor_visible for that?
+            // Frame logic:
+            // pub cursor_position: Option<(u16, u16)>,
+            // pub cursor_visible: bool,
+            //
+            // If cursor_position is None, we assume "hidden" or "don't care".
+            // Usually hidden. The writer has hide_cursor/show_cursor methods.
+            // But here we just position it.
+        }
 
         if self.capabilities.sync_output {
             self.writer().write_all(SYNC_END)?;

@@ -18,6 +18,7 @@
 pub mod allocation_budget;
 pub mod asciicast;
 pub mod conformal_alert;
+pub mod debug_trace;
 pub mod eprocess_throttle;
 pub mod flake_detector;
 pub mod input_fairness;

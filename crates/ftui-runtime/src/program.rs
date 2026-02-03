@@ -757,7 +757,11 @@ impl<M: Model, W: Write + Send> Program<M, W> {
         self.render_frame()?;
 
         // Main loop
+        let mut loop_count: u64 = 0;
         while self.running {
+            loop_count += 1;
+            crate::debug_trace!("main loop iteration {}", loop_count);
+
             // Poll for input with tick timeout
             let timeout = self.effective_timeout();
 
@@ -1003,6 +1007,10 @@ impl<M: Model, W: Write + Send> Program<M, W> {
     /// Process pending messages from subscriptions.
     fn process_subscription_messages(&mut self) -> io::Result<()> {
         let messages = self.subscriptions.drain_messages();
+        let msg_count = messages.len();
+        if msg_count > 0 {
+            crate::debug_trace!("processing {} subscription message(s)", msg_count);
+        }
         for msg in messages {
             let cmd = {
                 let _span = debug_span!(
@@ -1130,6 +1138,8 @@ impl<M: Model, W: Write + Send> Program<M, W> {
 
     /// Render a frame with budget tracking.
     fn render_frame(&mut self) -> io::Result<()> {
+        crate::debug_trace!("render_frame called");
+
         // Reset budget for new frame, potentially upgrading quality
         self.budget.next_frame();
 
@@ -1192,7 +1202,7 @@ impl<M: Model, W: Write + Send> Program<M, W> {
             let present_start = Instant::now();
             {
                 let _present_span = debug_span!("ftui.render.present").entered();
-                self.writer.present_ui_owned(buffer)?;
+                self.writer.present_ui_owned(buffer, None)?;
             }
             let present_elapsed = present_start.elapsed();
 
@@ -1360,7 +1370,7 @@ impl<M: Model, W: Write + Send> Program<M, W> {
             frame.buffer
         };
 
-        self.writer.present_ui_owned(buffer)?;
+        self.writer.present_ui_owned(buffer, None)?;
 
         Ok(())
     }
