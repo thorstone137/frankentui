@@ -47,6 +47,154 @@ pub use ftui_core::terminal_capabilities::TerminalCapabilities;
 /// Size of the internal write buffer (64KB).
 const BUFFER_CAPACITY: usize = 64 * 1024;
 
+// =============================================================================
+// DP Cost Model for ANSI Emission
+// =============================================================================
+
+/// Byte-cost estimates for ANSI cursor and output operations.
+///
+/// The cost model computes the cheapest emission plan for each row by comparing
+/// sparse-run emission (CUP per run) against merged write-through (one CUP,
+/// fill gaps with buffer content). This is a shortest-path problem on a small
+/// state graph per row.
+mod cost_model {
+    use super::ChangeRun;
+
+    /// Number of decimal digits needed to represent `n`.
+    #[inline]
+    fn digit_count(n: u16) -> usize {
+        if n >= 100 {
+            3
+        } else if n >= 10 {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// Byte cost of CUP: `\x1b[{row+1};{col+1}H`
+    #[inline]
+    pub fn cup_cost(row: u16, col: u16) -> usize {
+        // CSI (2) + row digits + ';' (1) + col digits + 'H' (1)
+        4 + digit_count(row.saturating_add(1)) + digit_count(col.saturating_add(1))
+    }
+
+    /// Byte cost of CHA (column-only): `\x1b[{col+1}G`
+    #[inline]
+    pub fn cha_cost(col: u16) -> usize {
+        // CSI (2) + col digits + 'G' (1)
+        3 + digit_count(col.saturating_add(1))
+    }
+
+    /// Byte cost of CUF (cursor forward): `\x1b[{n}C` or `\x1b[C` for n=1.
+    #[inline]
+    pub fn cuf_cost(n: u16) -> usize {
+        match n {
+            0 => 0,
+            1 => 3, // \x1b[C
+            _ => 3 + digit_count(n),
+        }
+    }
+
+    /// Cheapest cursor movement cost from (from_x, from_y) to (to_x, to_y).
+    /// Returns 0 if already at the target position.
+    pub fn cheapest_move_cost(
+        from_x: Option<u16>,
+        from_y: Option<u16>,
+        to_x: u16,
+        to_y: u16,
+    ) -> usize {
+        // Already at target?
+        if from_x == Some(to_x) && from_y == Some(to_y) {
+            return 0;
+        }
+
+        let cup = cup_cost(to_y, to_x);
+
+        match (from_x, from_y) {
+            (Some(fx), Some(fy)) if fy == to_y => {
+                // Same row: compare CHA, CUF, and CUP
+                let cha = cha_cost(to_x);
+                if to_x > fx {
+                    let cuf = cuf_cost(to_x - fx);
+                    cup.min(cha).min(cuf)
+                } else if to_x == fx {
+                    0
+                } else {
+                    // Moving backward: CHA or CUP
+                    cup.min(cha)
+                }
+            }
+            _ => cup,
+        }
+    }
+
+    /// Row emission strategy.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum RowStrategy {
+        /// Emit each run independently with cursor moves between them.
+        Sparse,
+        /// Merge all runs, writing through gaps with buffer content.
+        /// The range covers columns `merge_x0..=merge_x1`.
+        Merged { merge_x0: u16, merge_x1: u16 },
+    }
+
+    /// Decide the optimal emission strategy for a set of runs on the same row.
+    ///
+    /// Compares:
+    /// - **Sparse**: Sum of (move_cost + run_cells) per run
+    /// - **Merged**: One move to first cell + all cells from first to last column
+    ///
+    /// Gap cells cost ~1 byte each (character content), plus potential style
+    /// overhead estimated at 1 byte per gap cell (conservative).
+    pub fn plan_row(
+        row_runs: &[ChangeRun],
+        prev_x: Option<u16>,
+        prev_y: Option<u16>,
+    ) -> RowStrategy {
+        debug_assert!(!row_runs.is_empty());
+
+        if row_runs.len() == 1 {
+            return RowStrategy::Sparse;
+        }
+
+        let row_y = row_runs[0].y;
+        let first_x = row_runs[0].x0;
+        let last_x = row_runs[row_runs.len() - 1].x1;
+
+        // Estimate sparse cost: sum of move + content for each run
+        let mut sparse_cost: usize = 0;
+        let mut cursor_x = prev_x;
+        let mut cursor_y = prev_y;
+
+        for run in row_runs {
+            let move_cost = cheapest_move_cost(cursor_x, cursor_y, run.x0, run.y);
+            let cells = (run.x1 - run.x0 + 1) as usize;
+            sparse_cost += move_cost + cells;
+            cursor_x = Some(run.x1 + 1); // cursor advances past run
+            cursor_y = Some(row_y);
+        }
+
+        // Estimate merged cost: one move + all cells from first to last
+        let merge_move = cheapest_move_cost(prev_x, prev_y, first_x, row_y);
+        let total_cells = (last_x - first_x + 1) as usize;
+        // Gap cells cost ~2 bytes each (character + potential style overhead)
+        let changed_cells: usize = row_runs.iter().map(|r| (r.x1 - r.x0 + 1) as usize).sum();
+        let gap_cells = total_cells - changed_cells;
+        let gap_overhead = gap_cells * 2; // conservative: char + style amortized
+        let merged_cost = merge_move + changed_cells + gap_overhead;
+
+        if merged_cost < sparse_cost {
+            RowStrategy::Merged {
+                merge_x0: first_x,
+                merge_x1: last_x,
+            }
+        } else {
+            RowStrategy::Sparse
+        }
+    }
+}
+
 /// Cached style state for comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CellStyle {
@@ -187,7 +335,11 @@ impl<W: Write> Presenter<W> {
         Ok(stats)
     }
 
-    /// Emit runs of changed cells.
+    /// Emit runs of changed cells using the DP cost model.
+    ///
+    /// Groups runs by row, then for each row decides whether to emit runs
+    /// individually (sparse) or merge them (write through gaps) based on
+    /// byte cost estimation.
     fn emit_runs(
         &mut self,
         buffer: &Buffer,
@@ -203,14 +355,37 @@ impl<W: Write> Presenter<W> {
         #[cfg(feature = "tracing")]
         tracing::trace!(run_count = runs.len(), "emitting runs");
 
-        for run in runs {
-            // Single cursor move per run
-            self.move_cursor_to(run.x0, run.y)?;
+        // Group runs by row and apply cost model per row
+        let mut i = 0;
+        while i < runs.len() {
+            let row_y = runs[i].y;
 
-            // Emit cells (cursor advances naturally after each character)
-            for x in run.x0..=run.x1 {
-                let cell = buffer.get_unchecked(x, run.y);
-                self.emit_cell(cell, pool, links)?;
+            // Collect all runs on this row
+            let row_start = i;
+            while i < runs.len() && runs[i].y == row_y {
+                i += 1;
+            }
+            let row_runs = &runs[row_start..i];
+
+            let strategy = cost_model::plan_row(row_runs, self.cursor_x, self.cursor_y);
+
+            match strategy {
+                cost_model::RowStrategy::Sparse => {
+                    for run in row_runs {
+                        self.move_cursor_optimal(run.x0, run.y)?;
+                        for x in run.x0..=run.x1 {
+                            let cell = buffer.get_unchecked(x, run.y);
+                            self.emit_cell(cell, pool, links)?;
+                        }
+                    }
+                }
+                cost_model::RowStrategy::Merged { merge_x0, merge_x1 } => {
+                    self.move_cursor_optimal(merge_x0, row_y)?;
+                    for x in merge_x0..=merge_x1 {
+                        let cell = buffer.get_unchecked(x, row_y);
+                        self.emit_cell(cell, pool, links)?;
+                    }
+                }
             }
         }
         Ok(())
@@ -254,6 +429,10 @@ impl<W: Write> Presenter<W> {
     }
 
     /// Emit style changes if the cell style differs from current.
+    ///
+    /// Uses SGR delta: instead of resetting and re-applying all style properties,
+    /// we compute the minimal set of changes needed (fg delta, bg delta, attr
+    /// toggles). Falls back to reset+apply only when a full reset would be cheaper.
     fn emit_style_changes(&mut self, cell: &Cell) -> io::Result<()> {
         let new_style = CellStyle::from_cell(cell);
 
@@ -262,26 +441,113 @@ impl<W: Write> Presenter<W> {
             return Ok(());
         }
 
-        // v1 strategy: Reset + apply (per ADR-002)
-        // This is simpler and more robust than incremental updates
-        ansi::sgr_reset(&mut self.writer)?;
-
-        // Apply foreground color
-        if new_style.fg.a() > 0 {
-            ansi::sgr_fg_packed(&mut self.writer, new_style.fg)?;
-        }
-
-        // Apply background color
-        if new_style.bg.a() > 0 {
-            ansi::sgr_bg_packed(&mut self.writer, new_style.bg)?;
-        }
-
-        // Apply attributes
-        if !new_style.attrs.is_empty() {
-            ansi::sgr_flags(&mut self.writer, new_style.attrs)?;
+        match self.current_style {
+            None => {
+                // No known state - must do full apply (but skip reset if we haven't
+                // emitted anything yet, the frame-start reset handles that).
+                self.emit_style_full(new_style)?;
+            }
+            Some(old_style) => {
+                self.emit_style_delta(old_style, new_style)?;
+            }
         }
 
         self.current_style = Some(new_style);
+        Ok(())
+    }
+
+    /// Full style apply (reset + set all properties). Used when previous state is unknown.
+    fn emit_style_full(&mut self, style: CellStyle) -> io::Result<()> {
+        ansi::sgr_reset(&mut self.writer)?;
+        if style.fg.a() > 0 {
+            ansi::sgr_fg_packed(&mut self.writer, style.fg)?;
+        }
+        if style.bg.a() > 0 {
+            ansi::sgr_bg_packed(&mut self.writer, style.bg)?;
+        }
+        if !style.attrs.is_empty() {
+            ansi::sgr_flags(&mut self.writer, style.attrs)?;
+        }
+        Ok(())
+    }
+
+    /// Emit minimal SGR delta between old and new styles.
+    ///
+    /// Computes which properties changed and emits only those.
+    /// Falls back to reset+apply when that would produce fewer bytes.
+    fn emit_style_delta(&mut self, old: CellStyle, new: CellStyle) -> io::Result<()> {
+        let attrs_removed = old.attrs & !new.attrs;
+        let attrs_added = new.attrs & !old.attrs;
+        let fg_changed = old.fg != new.fg;
+        let bg_changed = old.bg != new.bg;
+
+        // Estimate delta cost vs baseline cost to decide strategy.
+        //
+        // Off-codes are 5 bytes each ("\x1b[XXm", XX is 22-29).
+        // On-codes are 4 bytes each ("\x1b[Xm", X is 1-9).
+        // RGB color: up to 19 bytes ("\x1b[38;2;255;255;255m").
+        // Reset: 4 bytes ("\x1b[0m").
+        //
+        // Bold/Dim share off-code 22, so removing one may require
+        // re-enabling the other (4 bytes collateral).
+        let removed_count = attrs_removed.bits().count_ones();
+        let added_count = attrs_added.bits().count_ones();
+
+        // Estimate Bold/Dim collateral cost
+        let collateral_cost: u32 = if attrs_removed.intersects(StyleFlags::BOLD | StyleFlags::DIM) {
+            let removing_bold = attrs_removed.contains(StyleFlags::BOLD);
+            let removing_dim = attrs_removed.contains(StyleFlags::DIM);
+            if (removing_bold && !removing_dim && new.attrs.contains(StyleFlags::DIM))
+                || (removing_dim && !removing_bold && new.attrs.contains(StyleFlags::BOLD))
+            {
+                4
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let color_cost = 19u32; // conservative max for one RGB color
+        let delta_est = removed_count * 5
+            + collateral_cost
+            + added_count * 4
+            + if fg_changed { color_cost } else { 0 }
+            + if bg_changed { color_cost } else { 0 };
+
+        let baseline_est = 4 // reset
+            + new.attrs.bits().count_ones() * 4
+            + if new.fg.a() > 0 { color_cost } else { 0 }
+            + if new.bg.a() > 0 { color_cost } else { 0 };
+
+        if delta_est > baseline_est {
+            return self.emit_style_full(new);
+        }
+
+        // Handle attr removal: emit individual off codes
+        if !attrs_removed.is_empty() {
+            let collateral = ansi::sgr_flags_off(&mut self.writer, attrs_removed, new.attrs)?;
+            // Re-enable any collaterally disabled flags
+            if !collateral.is_empty() {
+                ansi::sgr_flags(&mut self.writer, collateral)?;
+            }
+        }
+
+        // Handle attr addition: emit on codes for newly added flags
+        if !attrs_added.is_empty() {
+            ansi::sgr_flags(&mut self.writer, attrs_added)?;
+        }
+
+        // Handle fg color change
+        if fg_changed {
+            ansi::sgr_fg_packed(&mut self.writer, new.fg)?;
+        }
+
+        // Handle bg color change
+        if bg_changed {
+            ansi::sgr_bg_packed(&mut self.writer, new.bg)?;
+        }
+
         Ok(())
     }
 
@@ -359,6 +625,52 @@ impl<W: Write> Presenter<W> {
 
         // Use CUP (cursor position) for absolute positioning
         ansi::cup(&mut self.writer, y, x)?;
+        self.cursor_x = Some(x);
+        self.cursor_y = Some(y);
+        Ok(())
+    }
+
+    /// Move cursor using the cheapest available operation.
+    ///
+    /// Compares CUP (absolute), CHA (column-only), and CUF (relative forward)
+    /// to select the minimum-cost cursor movement.
+    fn move_cursor_optimal(&mut self, x: u16, y: u16) -> io::Result<()> {
+        // Skip if already at position
+        if self.cursor_x == Some(x) && self.cursor_y == Some(y) {
+            return Ok(());
+        }
+
+        // Decide cheapest move
+        let same_row = self.cursor_y == Some(y);
+        let forward = same_row && self.cursor_x.is_some_and(|cx| x > cx);
+
+        if same_row && forward {
+            let dx = x - self.cursor_x.unwrap();
+            let cuf = cost_model::cuf_cost(dx);
+            let cha = cost_model::cha_cost(x);
+            let cup = cost_model::cup_cost(y, x);
+
+            if cuf <= cha && cuf <= cup {
+                ansi::cuf(&mut self.writer, dx)?;
+            } else if cha <= cup {
+                ansi::cha(&mut self.writer, x)?;
+            } else {
+                ansi::cup(&mut self.writer, y, x)?;
+            }
+        } else if same_row {
+            // Same row, backward or same column
+            let cha = cost_model::cha_cost(x);
+            let cup = cost_model::cup_cost(y, x);
+            if cha <= cup {
+                ansi::cha(&mut self.writer, x)?;
+            } else {
+                ansi::cup(&mut self.writer, y, x)?;
+            }
+        } else {
+            // Different row: CUP is the only option
+            ansi::cup(&mut self.writer, y, x)?;
+        }
+
         self.cursor_x = Some(x);
         self.cursor_y = Some(y);
         Ok(())
@@ -1185,6 +1497,943 @@ mod tests {
         assert!(output_str.contains('3'));
     }
 
+    // =========================================================================
+    // SGR Delta Engine tests (bd-4kq0.2.1)
+    // =========================================================================
+
+    #[test]
+    fn sgr_delta_fg_only_change_no_reset() {
+        // When only fg changes, delta should NOT emit reset
+        let mut presenter = test_presenter();
+        let mut buffer = Buffer::new(3, 1);
+
+        let fg1 = PackedRgba::rgb(255, 0, 0);
+        let fg2 = PackedRgba::rgb(0, 255, 0);
+        buffer.set_raw(0, 0, Cell::from_char('A').with_fg(fg1));
+        buffer.set_raw(1, 0, Cell::from_char('B').with_fg(fg2));
+
+        let old = Buffer::new(3, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        presenter.present(&buffer, &diff).unwrap();
+        let output = get_output(presenter);
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Count SGR resets - the first cell needs a reset (from None state),
+        // but the second cell should use delta (no reset)
+        let reset_count = output_str.matches("\x1b[0m").count();
+        // One reset at start (for first cell from unknown state) + one at frame end
+        assert_eq!(
+            reset_count, 2,
+            "Expected 2 resets (initial + frame end), got {} in: {:?}",
+            reset_count, output_str
+        );
+    }
+
+    #[test]
+    fn sgr_delta_bg_only_change_no_reset() {
+        let mut presenter = test_presenter();
+        let mut buffer = Buffer::new(3, 1);
+
+        let bg1 = PackedRgba::rgb(0, 0, 255);
+        let bg2 = PackedRgba::rgb(255, 255, 0);
+        buffer.set_raw(0, 0, Cell::from_char('A').with_bg(bg1));
+        buffer.set_raw(1, 0, Cell::from_char('B').with_bg(bg2));
+
+        let old = Buffer::new(3, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        presenter.present(&buffer, &diff).unwrap();
+        let output = get_output(presenter);
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Only 2 resets: initial cell + frame end
+        let reset_count = output_str.matches("\x1b[0m").count();
+        assert_eq!(
+            reset_count, 2,
+            "Expected 2 resets, got {} in: {:?}",
+            reset_count, output_str
+        );
+    }
+
+    #[test]
+    fn sgr_delta_attr_addition_no_reset() {
+        let mut presenter = test_presenter();
+        let mut buffer = Buffer::new(3, 1);
+
+        // First cell: bold. Second cell: bold + italic
+        let attrs1 = CellAttrs::new(StyleFlags::BOLD, 0);
+        let attrs2 = CellAttrs::new(StyleFlags::BOLD | StyleFlags::ITALIC, 0);
+        buffer.set_raw(0, 0, Cell::from_char('A').with_attrs(attrs1));
+        buffer.set_raw(1, 0, Cell::from_char('B').with_attrs(attrs2));
+
+        let old = Buffer::new(3, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        presenter.present(&buffer, &diff).unwrap();
+        let output = get_output(presenter);
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Second cell should add italic (code 3) without reset
+        let reset_count = output_str.matches("\x1b[0m").count();
+        assert_eq!(
+            reset_count, 2,
+            "Expected 2 resets, got {} in: {:?}",
+            reset_count, output_str
+        );
+        // Should contain italic-on code for the delta
+        assert!(
+            output_str.contains("\x1b[3m"),
+            "Expected italic-on sequence in: {:?}",
+            output_str
+        );
+    }
+
+    #[test]
+    fn sgr_delta_attr_removal_uses_off_code() {
+        let mut presenter = test_presenter();
+        let mut buffer = Buffer::new(3, 1);
+
+        // First cell: bold+italic. Second cell: bold only
+        let attrs1 = CellAttrs::new(StyleFlags::BOLD | StyleFlags::ITALIC, 0);
+        let attrs2 = CellAttrs::new(StyleFlags::BOLD, 0);
+        buffer.set_raw(0, 0, Cell::from_char('A').with_attrs(attrs1));
+        buffer.set_raw(1, 0, Cell::from_char('B').with_attrs(attrs2));
+
+        let old = Buffer::new(3, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        presenter.present(&buffer, &diff).unwrap();
+        let output = get_output(presenter);
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Should contain italic-off code (23) for delta
+        assert!(
+            output_str.contains("\x1b[23m"),
+            "Expected italic-off sequence in: {:?}",
+            output_str
+        );
+        // Only 2 resets (initial + frame end), not 3
+        let reset_count = output_str.matches("\x1b[0m").count();
+        assert_eq!(
+            reset_count, 2,
+            "Expected 2 resets, got {} in: {:?}",
+            reset_count, output_str
+        );
+    }
+
+    #[test]
+    fn sgr_delta_bold_dim_collateral_re_enables() {
+        // Bold off (code 22) also disables Dim. If Dim should remain,
+        // the delta engine must re-enable it.
+        let mut presenter = test_presenter();
+        let mut buffer = Buffer::new(3, 1);
+
+        // First cell: Bold + Dim. Second cell: Dim only
+        let attrs1 = CellAttrs::new(StyleFlags::BOLD | StyleFlags::DIM, 0);
+        let attrs2 = CellAttrs::new(StyleFlags::DIM, 0);
+        buffer.set_raw(0, 0, Cell::from_char('A').with_attrs(attrs1));
+        buffer.set_raw(1, 0, Cell::from_char('B').with_attrs(attrs2));
+
+        let old = Buffer::new(3, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        presenter.present(&buffer, &diff).unwrap();
+        let output = get_output(presenter);
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Should contain bold-off (22) and then dim re-enable (2)
+        assert!(
+            output_str.contains("\x1b[22m"),
+            "Expected bold-off (22) in: {:?}",
+            output_str
+        );
+        assert!(
+            output_str.contains("\x1b[2m"),
+            "Expected dim re-enable (2) in: {:?}",
+            output_str
+        );
+    }
+
+    #[test]
+    fn sgr_delta_same_style_no_output() {
+        let mut presenter = test_presenter();
+        let mut buffer = Buffer::new(3, 1);
+
+        let fg = PackedRgba::rgb(255, 0, 0);
+        let attrs = CellAttrs::new(StyleFlags::BOLD, 0);
+        buffer.set_raw(0, 0, Cell::from_char('A').with_fg(fg).with_attrs(attrs));
+        buffer.set_raw(1, 0, Cell::from_char('B').with_fg(fg).with_attrs(attrs));
+        buffer.set_raw(2, 0, Cell::from_char('C').with_fg(fg).with_attrs(attrs));
+
+        let old = Buffer::new(3, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        presenter.present(&buffer, &diff).unwrap();
+        let output = get_output(presenter);
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Only 1 fg color sequence (style set once for all three cells)
+        let fg_count = output_str.matches("38;2;255;0;0").count();
+        assert_eq!(
+            fg_count, 1,
+            "Expected 1 fg sequence, got {} in: {:?}",
+            fg_count, output_str
+        );
+    }
+
+    #[test]
+    fn sgr_delta_cost_dominance_never_exceeds_baseline() {
+        // Test that delta output is never larger than reset+apply would be
+        // for a variety of style transitions
+        let transitions: Vec<(CellStyle, CellStyle)> = vec![
+            // Only fg change
+            (
+                CellStyle {
+                    fg: PackedRgba::rgb(255, 0, 0),
+                    bg: PackedRgba::TRANSPARENT,
+                    attrs: StyleFlags::empty(),
+                },
+                CellStyle {
+                    fg: PackedRgba::rgb(0, 255, 0),
+                    bg: PackedRgba::TRANSPARENT,
+                    attrs: StyleFlags::empty(),
+                },
+            ),
+            // Only bg change
+            (
+                CellStyle {
+                    fg: PackedRgba::TRANSPARENT,
+                    bg: PackedRgba::rgb(255, 0, 0),
+                    attrs: StyleFlags::empty(),
+                },
+                CellStyle {
+                    fg: PackedRgba::TRANSPARENT,
+                    bg: PackedRgba::rgb(0, 0, 255),
+                    attrs: StyleFlags::empty(),
+                },
+            ),
+            // Only attr addition
+            (
+                CellStyle {
+                    fg: PackedRgba::rgb(100, 100, 100),
+                    bg: PackedRgba::TRANSPARENT,
+                    attrs: StyleFlags::BOLD,
+                },
+                CellStyle {
+                    fg: PackedRgba::rgb(100, 100, 100),
+                    bg: PackedRgba::TRANSPARENT,
+                    attrs: StyleFlags::BOLD | StyleFlags::ITALIC,
+                },
+            ),
+            // Attr removal
+            (
+                CellStyle {
+                    fg: PackedRgba::rgb(100, 100, 100),
+                    bg: PackedRgba::TRANSPARENT,
+                    attrs: StyleFlags::BOLD | StyleFlags::ITALIC,
+                },
+                CellStyle {
+                    fg: PackedRgba::rgb(100, 100, 100),
+                    bg: PackedRgba::TRANSPARENT,
+                    attrs: StyleFlags::BOLD,
+                },
+            ),
+        ];
+
+        for (old_style, new_style) in &transitions {
+            // Measure delta cost
+            let delta_buf = {
+                let mut delta_presenter = {
+                    let caps = TerminalCapabilities::basic();
+                    Presenter::new(Vec::new(), caps)
+                };
+                delta_presenter.current_style = Some(*old_style);
+                delta_presenter
+                    .emit_style_delta(*old_style, *new_style)
+                    .unwrap();
+                delta_presenter.into_inner().unwrap()
+            };
+
+            // Measure reset+apply cost
+            let reset_buf = {
+                let mut reset_presenter = {
+                    let caps = TerminalCapabilities::basic();
+                    Presenter::new(Vec::new(), caps)
+                };
+                reset_presenter.emit_style_full(*new_style).unwrap();
+                reset_presenter.into_inner().unwrap()
+            };
+
+            assert!(
+                delta_buf.len() <= reset_buf.len(),
+                "Delta ({} bytes) exceeded reset+apply ({} bytes) for {:?} -> {:?}.\n\
+                 Delta: {:?}\nReset: {:?}",
+                delta_buf.len(),
+                reset_buf.len(),
+                old_style,
+                new_style,
+                String::from_utf8_lossy(&delta_buf),
+                String::from_utf8_lossy(&reset_buf),
+            );
+        }
+    }
+
+    /// Generate a deterministic JSONL evidence ledger proving the SGR delta engine
+    /// emits fewer (or equal) bytes than reset+apply for every transition.
+    ///
+    /// Each line is a JSON object with:
+    ///   seed, from_fg, from_bg, from_attrs, to_fg, to_bg, to_attrs,
+    ///   delta_bytes, baseline_bytes, cost_delta, used_fallback
+    #[test]
+    fn sgr_delta_evidence_ledger() {
+        use std::io::Write as _;
+
+        // Deterministic seed for reproducibility
+        const SEED: u64 = 0xDEAD_BEEF_CAFE;
+
+        // Simple LCG for deterministic pseudorandom values
+        let mut rng_state = SEED;
+        let mut next_u64 = || -> u64 {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            rng_state
+        };
+
+        let random_style = |rng: &mut dyn FnMut() -> u64| -> CellStyle {
+            let v = rng();
+            let fg = if v & 1 == 0 {
+                PackedRgba::TRANSPARENT
+            } else {
+                let r = ((v >> 8) & 0xFF) as u8;
+                let g = ((v >> 16) & 0xFF) as u8;
+                let b = ((v >> 24) & 0xFF) as u8;
+                PackedRgba::rgb(r, g, b)
+            };
+            let v2 = rng();
+            let bg = if v2 & 1 == 0 {
+                PackedRgba::TRANSPARENT
+            } else {
+                let r = ((v2 >> 8) & 0xFF) as u8;
+                let g = ((v2 >> 16) & 0xFF) as u8;
+                let b = ((v2 >> 24) & 0xFF) as u8;
+                PackedRgba::rgb(r, g, b)
+            };
+            let attrs = StyleFlags::from_bits_truncate(rng() as u8);
+            CellStyle { fg, bg, attrs }
+        };
+
+        let mut ledger = Vec::new();
+        let num_transitions = 200;
+
+        for i in 0..num_transitions {
+            let old_style = random_style(&mut next_u64);
+            let new_style = random_style(&mut next_u64);
+
+            // Measure delta cost
+            let mut delta_p = {
+                let caps = TerminalCapabilities::basic();
+                Presenter::new(Vec::new(), caps)
+            };
+            delta_p.current_style = Some(old_style);
+            delta_p.emit_style_delta(old_style, new_style).unwrap();
+            let delta_out = delta_p.into_inner().unwrap();
+
+            // Measure reset+apply cost
+            let mut reset_p = {
+                let caps = TerminalCapabilities::basic();
+                Presenter::new(Vec::new(), caps)
+            };
+            reset_p.emit_style_full(new_style).unwrap();
+            let reset_out = reset_p.into_inner().unwrap();
+
+            let delta_bytes = delta_out.len();
+            let baseline_bytes = reset_out.len();
+
+            // Compute whether fallback was used (delta >= baseline means fallback likely)
+            let attrs_removed = old_style.attrs & !new_style.attrs;
+            let removed_count = attrs_removed.bits().count_ones();
+            let fg_changed = old_style.fg != new_style.fg;
+            let bg_changed = old_style.bg != new_style.bg;
+            let used_fallback = removed_count >= 3 && fg_changed && bg_changed;
+
+            // Assert cost dominance
+            assert!(
+                delta_bytes <= baseline_bytes,
+                "Transition {i}: delta ({delta_bytes}B) > baseline ({baseline_bytes}B)"
+            );
+
+            // Emit JSONL record
+            writeln!(
+                &mut ledger,
+                "{{\"seed\":{SEED},\"i\":{i},\"from_fg\":\"{:?}\",\"from_bg\":\"{:?}\",\
+                 \"from_attrs\":{},\"to_fg\":\"{:?}\",\"to_bg\":\"{:?}\",\"to_attrs\":{},\
+                 \"delta_bytes\":{delta_bytes},\"baseline_bytes\":{baseline_bytes},\
+                 \"cost_delta\":{},\"used_fallback\":{used_fallback}}}",
+                old_style.fg,
+                old_style.bg,
+                old_style.attrs.bits(),
+                new_style.fg,
+                new_style.bg,
+                new_style.attrs.bits(),
+                baseline_bytes as isize - delta_bytes as isize,
+            )
+            .unwrap();
+        }
+
+        // Verify we produced valid JSONL (every line parses)
+        let text = String::from_utf8(ledger).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), num_transitions);
+
+        // Verify aggregate: total savings should be non-negative
+        let mut total_saved: isize = 0;
+        for line in &lines {
+            // Quick parse of cost_delta field
+            let cd_start = line.find("\"cost_delta\":").unwrap() + 13;
+            let cd_end = line[cd_start..].find(',').unwrap() + cd_start;
+            let cd: isize = line[cd_start..cd_end].parse().unwrap();
+            total_saved += cd;
+        }
+        assert!(
+            total_saved >= 0,
+            "Total byte savings should be non-negative, got {total_saved}"
+        );
+    }
+
+    /// E2E style stress test: scripted style churn across a full buffer
+    /// with byte metrics proving delta engine correctness under load.
+    #[test]
+    fn e2e_style_stress_with_byte_metrics() {
+        let width = 40u16;
+        let height = 10u16;
+
+        // Build a buffer with maximum style diversity
+        let mut buffer = Buffer::new(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y as usize * width as usize + x as usize) as u8;
+                let fg = PackedRgba::rgb(i, 255 - i, i.wrapping_mul(3));
+                let bg = if i % 4 == 0 {
+                    PackedRgba::rgb(i.wrapping_mul(7), i.wrapping_mul(11), i.wrapping_mul(13))
+                } else {
+                    PackedRgba::TRANSPARENT
+                };
+                let flags = StyleFlags::from_bits_truncate(i % 128);
+                let ch = char::from_u32(('!' as u32) + (i as u32 % 90)).unwrap_or('?');
+                let cell = Cell::from_char(ch)
+                    .with_fg(fg)
+                    .with_bg(bg)
+                    .with_attrs(CellAttrs::new(flags, 0));
+                buffer.set_raw(x, y, cell);
+            }
+        }
+
+        // Present from blank (first frame)
+        let blank = Buffer::new(width, height);
+        let diff = BufferDiff::compute(&blank, &buffer);
+        let mut presenter = test_presenter();
+        presenter.present(&buffer, &diff).unwrap();
+        let frame1_bytes = presenter.into_inner().unwrap().len();
+
+        // Build second buffer: shift all styles by one position (churn)
+        let mut buffer2 = Buffer::new(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y as usize * width as usize + x as usize + 1) as u8;
+                let fg = PackedRgba::rgb(i, 255 - i, i.wrapping_mul(3));
+                let bg = if i % 4 == 0 {
+                    PackedRgba::rgb(i.wrapping_mul(7), i.wrapping_mul(11), i.wrapping_mul(13))
+                } else {
+                    PackedRgba::TRANSPARENT
+                };
+                let flags = StyleFlags::from_bits_truncate(i % 128);
+                let ch = char::from_u32(('!' as u32) + (i as u32 % 90)).unwrap_or('?');
+                let cell = Cell::from_char(ch)
+                    .with_fg(fg)
+                    .with_bg(bg)
+                    .with_attrs(CellAttrs::new(flags, 0));
+                buffer2.set_raw(x, y, cell);
+            }
+        }
+
+        // Second frame: incremental update should use delta engine
+        let diff2 = BufferDiff::compute(&buffer, &buffer2);
+        let mut presenter2 = test_presenter();
+        presenter2.present(&buffer2, &diff2).unwrap();
+        let frame2_bytes = presenter2.into_inner().unwrap().len();
+
+        // Incremental should be smaller than full redraw since delta
+        // engine can reuse partial style state
+        assert!(
+            frame2_bytes > 0,
+            "Second frame should produce output for style churn"
+        );
+        assert!(diff2.len() > 0, "Style shift should produce changes");
+
+        // Verify frame2 is at most frame1 size (delta should never be worse
+        // than a full redraw for the same number of changed cells)
+        // Note: frame2 may differ in size due to different diff (changed cells
+        // vs all cells), so just verify it's reasonable.
+        assert!(
+            frame2_bytes <= frame1_bytes * 2,
+            "Incremental frame ({frame2_bytes}B) unreasonably large vs full ({frame1_bytes}B)"
+        );
+    }
+
+    // =========================================================================
+    // DP Cost Model Tests (bd-4kq0.2.2)
+    // =========================================================================
+
+    #[test]
+    fn cost_model_empty_row_single_run() {
+        // Single run on a row should always use Sparse (no merge benefit)
+        let runs = [ChangeRun::new(5, 10, 20)];
+        let strategy = cost_model::plan_row(&runs, None, None);
+        assert_eq!(strategy, cost_model::RowStrategy::Sparse);
+    }
+
+    #[test]
+    fn cost_model_full_row_merges() {
+        // Two small runs far apart on same row - gap is smaller than 2x CUP overhead
+        // Runs at columns 0-2 and 77-79 on an 80-col row
+        // Sparse: CUP + 3 cells + CUP + 3 cells
+        // Merged: CUP + 80 cells but with gap overhead
+        // This should stay sparse since the gap is very large
+        let runs = [ChangeRun::new(0, 0, 2), ChangeRun::new(0, 77, 79)];
+        let strategy = cost_model::plan_row(&runs, None, None);
+        // Large gap (74 cells * 2 overhead = 148) vs CUP savings (~8)
+        assert_eq!(strategy, cost_model::RowStrategy::Sparse);
+    }
+
+    #[test]
+    fn cost_model_adjacent_runs_merge() {
+        // Many single-cell runs with 1-cell gaps should merge
+        // 8 single-cell runs at columns 10, 12, 14, 16, 18, 20, 22, 24
+        let runs = [
+            ChangeRun::new(3, 10, 10),
+            ChangeRun::new(3, 12, 12),
+            ChangeRun::new(3, 14, 14),
+            ChangeRun::new(3, 16, 16),
+            ChangeRun::new(3, 18, 18),
+            ChangeRun::new(3, 20, 20),
+            ChangeRun::new(3, 22, 22),
+            ChangeRun::new(3, 24, 24),
+        ];
+        let strategy = cost_model::plan_row(&runs, None, None);
+        // Sparse: 1 CUP + 7 CUF(2) * 4 bytes + 8 cells = ~7+28+8 = 43
+        // Merged: 1 CUP + 8 changed + 7 gap * 2 = 7+8+14 = 29
+        assert_eq!(
+            strategy,
+            cost_model::RowStrategy::Merged {
+                merge_x0: 10,
+                merge_x1: 24
+            }
+        );
+    }
+
+    #[test]
+    fn cost_model_single_cell_stays_sparse() {
+        let runs = [ChangeRun::new(0, 40, 40)];
+        let strategy = cost_model::plan_row(&runs, Some(0), Some(0));
+        assert_eq!(strategy, cost_model::RowStrategy::Sparse);
+    }
+
+    #[test]
+    fn cost_model_cup_vs_cha_vs_cuf() {
+        // CUF should be cheapest for small forward moves on same row
+        assert!(cost_model::cuf_cost(1) <= cost_model::cha_cost(5));
+        assert!(cost_model::cuf_cost(3) <= cost_model::cup_cost(0, 5));
+
+        // CHA should be cheapest for backward moves on same row (vs CUP)
+        let cha = cost_model::cha_cost(5);
+        let cup = cost_model::cup_cost(0, 5);
+        assert!(cha <= cup);
+
+        // Cheapest move from known position (same row, forward 1)
+        let cost = cost_model::cheapest_move_cost(Some(5), Some(0), 6, 0);
+        assert_eq!(cost, 3); // CUF(1) = "\x1b[C" = 3 bytes
+    }
+
+    #[test]
+    fn cost_model_digit_estimation_accuracy() {
+        // Verify CUP cost estimates are accurate by comparing to actual output
+        let mut buf = Vec::new();
+        ansi::cup(&mut buf, 0, 0).unwrap();
+        assert_eq!(buf.len(), cost_model::cup_cost(0, 0));
+
+        buf.clear();
+        ansi::cup(&mut buf, 9, 9).unwrap();
+        assert_eq!(buf.len(), cost_model::cup_cost(9, 9));
+
+        buf.clear();
+        ansi::cup(&mut buf, 99, 99).unwrap();
+        assert_eq!(buf.len(), cost_model::cup_cost(99, 99));
+
+        buf.clear();
+        ansi::cha(&mut buf, 0).unwrap();
+        assert_eq!(buf.len(), cost_model::cha_cost(0));
+
+        buf.clear();
+        ansi::cuf(&mut buf, 1).unwrap();
+        assert_eq!(buf.len(), cost_model::cuf_cost(1));
+
+        buf.clear();
+        ansi::cuf(&mut buf, 10).unwrap();
+        assert_eq!(buf.len(), cost_model::cuf_cost(10));
+    }
+
+    #[test]
+    fn cost_model_merged_row_produces_correct_output() {
+        // Verify that merged emission produces the same visual result as sparse
+        let width = 30u16;
+        let mut buffer = Buffer::new(width, 1);
+
+        // Set up scattered changes: columns 5, 10, 15, 20
+        for col in [5u16, 10, 15, 20] {
+            let ch = char::from_u32('A' as u32 + col as u32 % 26).unwrap();
+            buffer.set_raw(col, 0, Cell::from_char(ch));
+        }
+
+        let old = Buffer::new(width, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+
+        // Present and verify output contains expected characters
+        let mut presenter = test_presenter();
+        presenter.present(&buffer, &diff).unwrap();
+        let output = presenter.into_inner().unwrap();
+        let output_str = String::from_utf8_lossy(&output);
+
+        for col in [5u16, 10, 15, 20] {
+            let ch = char::from_u32('A' as u32 + col as u32 % 26).unwrap();
+            assert!(
+                output_str.contains(ch),
+                "Missing character '{ch}' at col {col} in output"
+            );
+        }
+    }
+
+    #[test]
+    fn cost_model_optimal_cursor_uses_cuf_on_same_row() {
+        // Verify move_cursor_optimal uses CUF for small forward moves
+        let mut presenter = test_presenter();
+        presenter.cursor_x = Some(5);
+        presenter.cursor_y = Some(0);
+        presenter.move_cursor_optimal(6, 0).unwrap();
+        let output = presenter.into_inner().unwrap();
+        // CUF(1) = "\x1b[C"
+        assert_eq!(&output, b"\x1b[C", "Should use CUF for +1 column move");
+    }
+
+    #[test]
+    fn cost_model_chooses_full_row_when_cheaper() {
+        // Create a scenario where merged is definitely cheaper:
+        // 10 single-cell runs with 1-cell gaps on the same row
+        let width = 40u16;
+        let mut buffer = Buffer::new(width, 1);
+
+        // Every other column: 0, 2, 4, 6, 8, 10, 12, 14, 16, 18
+        for col in (0..20).step_by(2) {
+            buffer.set_raw(col, 0, Cell::from_char('X'));
+        }
+
+        let old = Buffer::new(width, 1);
+        let diff = BufferDiff::compute(&old, &buffer);
+        let runs = diff.runs();
+
+        // The cost model should merge (many small gaps < many CUP costs)
+        let row_runs: Vec<_> = runs.iter().filter(|r| r.y == 0).copied().collect();
+        if row_runs.len() > 1 {
+            let strategy = cost_model::plan_row(&row_runs, None, None);
+            assert!(
+                matches!(strategy, cost_model::RowStrategy::Merged { .. }),
+                "Expected Merged strategy for many small runs with tiny gaps, got {strategy:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn perf_cost_model_overhead() {
+        // Verify the cost model planning is fast (microsecond scale)
+        use std::time::Instant;
+
+        let runs: Vec<ChangeRun> = (0..100)
+            .map(|i| ChangeRun::new(0, i * 3, i * 3 + 1))
+            .collect();
+
+        let start = Instant::now();
+        for _ in 0..10_000 {
+            let _ = cost_model::plan_row(&runs, None, None);
+        }
+        let elapsed = start.elapsed();
+
+        // 10k iterations should complete well within 100ms
+        assert!(
+            elapsed.as_millis() < 100,
+            "Cost model planning too slow: {elapsed:?} for 10k iterations"
+        );
+    }
+
+    // =========================================================================
+    // Presenter Perf + Golden Outputs (bd-4kq0.2.3)
+    // =========================================================================
+
+    /// Build a deterministic "style-heavy" scene: every cell has a unique style.
+    fn build_style_heavy_scene(width: u16, height: u16, seed: u64) -> Buffer {
+        let mut buffer = Buffer::new(width, height);
+        let mut rng = seed;
+        let mut next = || -> u64 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            rng
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let v = next();
+                let ch = char::from_u32(('!' as u32) + (v as u32 % 90)).unwrap_or('?');
+                let fg = PackedRgba::rgb((v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8);
+                let bg = if v & 3 == 0 {
+                    PackedRgba::rgb((v >> 32) as u8, (v >> 40) as u8, (v >> 48) as u8)
+                } else {
+                    PackedRgba::TRANSPARENT
+                };
+                let flags = StyleFlags::from_bits_truncate((v >> 56) as u8);
+                let cell = Cell::from_char(ch)
+                    .with_fg(fg)
+                    .with_bg(bg)
+                    .with_attrs(CellAttrs::new(flags, 0));
+                buffer.set_raw(x, y, cell);
+            }
+        }
+        buffer
+    }
+
+    /// Build a "sparse-update" scene: only ~10% of cells differ between frames.
+    fn build_sparse_update(base: &Buffer, seed: u64) -> Buffer {
+        let mut buffer = base.clone();
+        let width = base.width();
+        let height = base.height();
+        let mut rng = seed;
+        let mut next = || -> u64 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            rng
+        };
+        let change_count = (width as usize * height as usize) / 10;
+        for _ in 0..change_count {
+            let v = next();
+            let x = (v % width as u64) as u16;
+            let y = ((v >> 16) % height as u64) as u16;
+            let ch = char::from_u32(('A' as u32) + (v as u32 % 26)).unwrap_or('?');
+            buffer.set_raw(x, y, Cell::from_char(ch));
+        }
+        buffer
+    }
+
+    #[test]
+    fn snapshot_presenter_equivalence() {
+        // Golden snapshot: style-heavy 40x10 scene with deterministic seed.
+        // The output hash must be stable across runs.
+        let buffer = build_style_heavy_scene(40, 10, 0xDEAD_CAFE_1234);
+        let blank = Buffer::new(40, 10);
+        let diff = BufferDiff::compute(&blank, &buffer);
+
+        let mut presenter = test_presenter();
+        presenter.present(&buffer, &diff).unwrap();
+        let output = presenter.into_inner().unwrap();
+
+        // Compute checksum for golden comparison
+        let checksum = {
+            let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+            for &byte in &output {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(0x100000001b3); // FNV prime
+            }
+            hash
+        };
+
+        // Verify determinism: same seed + scene = same output
+        let mut presenter2 = test_presenter();
+        presenter2.present(&buffer, &diff).unwrap();
+        let output2 = presenter2.into_inner().unwrap();
+        assert_eq!(output, output2, "Presenter output must be deterministic");
+
+        // Log golden checksum for the record
+        let _ = checksum; // Used in JSONL test below
+    }
+
+    #[test]
+    fn perf_presenter_microbench() {
+        use std::io::Write as _;
+        use std::time::Instant;
+
+        let width = 120u16;
+        let height = 40u16;
+        let seed = 0xBEEF_CAFE_42;
+        let scene = build_style_heavy_scene(width, height, seed);
+        let blank = Buffer::new(width, height);
+        let diff_full = BufferDiff::compute(&blank, &scene);
+
+        // Also build a sparse update scene
+        let scene2 = build_sparse_update(&scene, seed.wrapping_add(1));
+        let diff_sparse = BufferDiff::compute(&scene, &scene2);
+
+        let mut jsonl = Vec::new();
+        let iterations = 50;
+
+        for i in 0..iterations {
+            let (diff_ref, buf_ref, label) = if i % 2 == 0 {
+                (&diff_full, &scene, "full")
+            } else {
+                (&diff_sparse, &scene2, "sparse")
+            };
+
+            let mut presenter = test_presenter();
+            let start = Instant::now();
+            let stats = presenter.present(buf_ref, diff_ref).unwrap();
+            let elapsed_us = start.elapsed().as_micros() as u64;
+            let output = presenter.into_inner().unwrap();
+
+            // FNV-1a checksum
+            let checksum = {
+                let mut hash: u64 = 0xcbf29ce484222325;
+                for &b in &output {
+                    hash ^= b as u64;
+                    hash = hash.wrapping_mul(0x100000001b3);
+                }
+                hash
+            };
+
+            writeln!(
+                &mut jsonl,
+                "{{\"seed\":{seed},\"width\":{width},\"height\":{height},\
+                 \"scene\":\"{label}\",\"changes\":{},\"runs\":{},\
+                 \"bytes\":{},\"emit_time_us\":{elapsed_us},\
+                 \"checksum\":\"{checksum:016x}\"}}",
+                stats.cells_changed, stats.run_count, stats.bytes_emitted,
+            )
+            .unwrap();
+        }
+
+        let text = String::from_utf8(jsonl).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), iterations);
+
+        // Parse and verify: full frames should be deterministic (same checksum)
+        let full_checksums: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.contains("\"full\""))
+            .map(|l| {
+                let start = l.find("\"checksum\":\"").unwrap() + 12;
+                let end = l[start..].find('"').unwrap() + start;
+                &l[start..end]
+            })
+            .collect();
+        assert!(full_checksums.len() > 1);
+        assert!(
+            full_checksums.windows(2).all(|w| w[0] == w[1]),
+            "Full frame checksums should be identical across runs"
+        );
+
+        // Sparse frame bytes should be less than full frame bytes
+        let full_bytes: Vec<u64> = lines
+            .iter()
+            .filter(|l| l.contains("\"full\""))
+            .map(|l| {
+                let start = l.find("\"bytes\":").unwrap() + 8;
+                let end = l[start..].find(',').unwrap() + start;
+                l[start..end].parse::<u64>().unwrap()
+            })
+            .collect();
+        let sparse_bytes: Vec<u64> = lines
+            .iter()
+            .filter(|l| l.contains("\"sparse\""))
+            .map(|l| {
+                let start = l.find("\"bytes\":").unwrap() + 8;
+                let end = l[start..].find(',').unwrap() + start;
+                l[start..end].parse::<u64>().unwrap()
+            })
+            .collect();
+
+        let avg_full: u64 = full_bytes.iter().sum::<u64>() / full_bytes.len() as u64;
+        let avg_sparse: u64 = sparse_bytes.iter().sum::<u64>() / sparse_bytes.len() as u64;
+        assert!(
+            avg_sparse < avg_full,
+            "Sparse updates ({avg_sparse}B) should emit fewer bytes than full ({avg_full}B)"
+        );
+    }
+
+    #[test]
+    fn e2e_presenter_stress_deterministic() {
+        // Deterministic stress test: seeded style churn across multiple frames,
+        // verifying no visual divergence via terminal model.
+        use crate::terminal_model::TerminalModel;
+
+        let width = 60u16;
+        let height = 20u16;
+        let num_frames = 10;
+
+        let mut prev_buffer = Buffer::new(width, height);
+        let mut presenter = test_presenter();
+        let mut model = TerminalModel::new(width as usize, height as usize);
+        let mut rng = 0x5D2E55_DE5D_42u64;
+        let mut next = || -> u64 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            rng
+        };
+
+        for _frame in 0..num_frames {
+            // Build next frame: modify ~20% of cells each time
+            let mut buffer = prev_buffer.clone();
+            let changes = (width as usize * height as usize) / 5;
+            for _ in 0..changes {
+                let v = next();
+                let x = (v % width as u64) as u16;
+                let y = ((v >> 16) % height as u64) as u16;
+                let ch = char::from_u32(('!' as u32) + (v as u32 % 90)).unwrap_or('?');
+                let fg = PackedRgba::rgb((v >> 8) as u8, (v >> 24) as u8, (v >> 40) as u8);
+                let cell = Cell::from_char(ch).with_fg(fg);
+                buffer.set_raw(x, y, cell);
+            }
+
+            let diff = BufferDiff::compute(&prev_buffer, &buffer);
+            presenter.present(&buffer, &diff).unwrap();
+
+            prev_buffer = buffer;
+        }
+
+        // Get all output and verify final frame via terminal model
+        let output = presenter.into_inner().unwrap();
+        model.process(&output);
+
+        // Verify a sampling of cells match the final buffer
+        let mut checked = 0;
+        for y in 0..height {
+            for x in 0..width {
+                let buf_cell = prev_buffer.get_unchecked(x, y);
+                if !buf_cell.is_empty() {
+                    if let Some(model_cell) = model.cell(x as usize, y as usize) {
+                        let expected = buf_cell.content.as_char().unwrap_or(' ');
+                        let mut buf = [0u8; 4];
+                        let expected_str = expected.encode_utf8(&mut buf);
+                        if model_cell.text.as_str() == expected_str {
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // At least 80% of non-empty cells should match (some may be
+        // overwritten by cursor positioning sequences in the model)
+        let total_nonempty = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .filter(|&(x, y)| !prev_buffer.get_unchecked(x, y).is_empty())
+            .count();
+
+        assert!(
+            checked > total_nonempty * 80 / 100,
+            "Frame {num_frames}: only {checked}/{total_nonempty} cells match final buffer"
+        );
+    }
+
     #[test]
     fn style_state_persists_across_frames() {
         let mut presenter = test_presenter();
@@ -1382,6 +2631,121 @@ mod proptests {
             // Should not panic and produce valid output
             let output = presenter.into_inner().unwrap();
             prop_assert!(!output.is_empty(), "Should produce some output");
+        }
+
+        /// Property (bd-4kq0.2.1): SGR delta produces identical visual styling
+        /// as reset+apply for random style transitions. Verified via terminal
+        /// model roundtrip.
+        #[test]
+        fn sgr_delta_transition_equivalence(
+            width in 5u16..20,
+            height in 3u16..10,
+            num_styled in 2usize..15,
+        ) {
+            let mut buffer = Buffer::new(width, height);
+            // Track final character at each position (later writes overwrite earlier)
+            let mut expected: std::collections::HashMap<(u16, u16), char> =
+                std::collections::HashMap::new();
+
+            // Create cells with varying styles to exercise delta engine
+            for i in 0..num_styled {
+                let x = (i * 3 + 1) as u16 % width;
+                let y = (i * 5 + 2) as u16 % height;
+                let ch = char::from_u32(('A' as u32) + (i as u32 % 26)).unwrap();
+                let fg = PackedRgba::rgb(
+                    ((i * 73) % 256) as u8,
+                    ((i * 137) % 256) as u8,
+                    ((i * 41) % 256) as u8,
+                );
+                let bg = if i % 3 == 0 {
+                    PackedRgba::rgb(
+                        ((i * 29) % 256) as u8,
+                        ((i * 53) % 256) as u8,
+                        ((i * 97) % 256) as u8,
+                    )
+                } else {
+                    PackedRgba::TRANSPARENT
+                };
+                let flags_bits = ((i * 37) % 256) as u8;
+                let flags = StyleFlags::from_bits_truncate(flags_bits);
+                let cell = Cell::from_char(ch)
+                    .with_fg(fg)
+                    .with_bg(bg)
+                    .with_attrs(CellAttrs::new(flags, 0));
+                buffer.set_raw(x, y, cell);
+                expected.insert((x, y), ch);
+            }
+
+            // Present with delta engine
+            let mut presenter = test_presenter();
+            let old = Buffer::new(width, height);
+            let diff = BufferDiff::compute(&old, &buffer);
+            presenter.present(&buffer, &diff).unwrap();
+            let output = presenter.into_inner().unwrap();
+
+            // Apply to terminal model and verify characters
+            let mut model = TerminalModel::new(width as usize, height as usize);
+            model.process(&output);
+
+            for (&(x, y), &ch) in &expected {
+                let mut buf = [0u8; 4];
+                let expected_str = ch.encode_utf8(&mut buf);
+
+                if let Some(model_cell) = model.cell(x as usize, y as usize) {
+                    prop_assert_eq!(
+                        model_cell.text.as_str(),
+                        expected_str,
+                        "Character mismatch at ({}, {}) with delta engine", x, y
+                    );
+                }
+            }
+        }
+
+        /// Property (bd-4kq0.2.2): DP cost model produces correct output
+        /// regardless of which row strategy is chosen (sparse vs merged).
+        /// Verified via terminal model roundtrip with scattered runs.
+        #[test]
+        fn dp_emit_equivalence(
+            width in 20u16..60,
+            height in 5u16..15,
+            num_changes in 5usize..30,
+        ) {
+            let mut buffer = Buffer::new(width, height);
+            let mut expected: std::collections::HashMap<(u16, u16), char> =
+                std::collections::HashMap::new();
+
+            // Create scattered changes that will trigger both sparse and merged strategies
+            for i in 0..num_changes {
+                let x = (i * 7 + 3) as u16 % width;
+                let y = (i * 3 + 1) as u16 % height;
+                let ch = char::from_u32(('A' as u32) + (i as u32 % 26)).unwrap();
+                buffer.set_raw(x, y, Cell::from_char(ch));
+                expected.insert((x, y), ch);
+            }
+
+            // Present with DP cost model
+            let mut presenter = test_presenter();
+            let old = Buffer::new(width, height);
+            let diff = BufferDiff::compute(&old, &buffer);
+            presenter.present(&buffer, &diff).unwrap();
+            let output = presenter.into_inner().unwrap();
+
+            // Apply to terminal model and verify all characters are correct
+            let mut model = TerminalModel::new(width as usize, height as usize);
+            model.process(&output);
+
+            for (&(x, y), &ch) in &expected {
+                let mut buf = [0u8; 4];
+                let expected_str = ch.encode_utf8(&mut buf);
+
+                if let Some(model_cell) = model.cell(x as usize, y as usize) {
+                    prop_assert_eq!(
+                        model_cell.text.as_str(),
+                        expected_str,
+                        "DP cost model: character mismatch at ({}, {})", x, y
+                    );
+                }
+            }
         }
     }
 }

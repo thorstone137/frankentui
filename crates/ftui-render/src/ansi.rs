@@ -95,16 +95,7 @@ pub fn sgr_flags<W: Write>(w: &mut W, flags: StyleFlags) -> io::Result<()> {
     w.write_all(b"\x1b[")?;
     let mut first = true;
 
-    for (flag, codes) in [
-        (StyleFlags::BOLD, SGR_BOLD),
-        (StyleFlags::DIM, SGR_DIM),
-        (StyleFlags::ITALIC, SGR_ITALIC),
-        (StyleFlags::UNDERLINE, SGR_UNDERLINE),
-        (StyleFlags::BLINK, SGR_BLINK),
-        (StyleFlags::REVERSE, SGR_REVERSE),
-        (StyleFlags::HIDDEN, SGR_HIDDEN),
-        (StyleFlags::STRIKETHROUGH, SGR_STRIKETHROUGH),
-    ] {
+    for (flag, codes) in FLAG_TABLE {
         if flags.contains(flag) {
             if !first {
                 w.write_all(b";")?;
@@ -115,6 +106,62 @@ pub fn sgr_flags<W: Write>(w: &mut W, flags: StyleFlags) -> io::Result<()> {
     }
 
     w.write_all(b"m")
+}
+
+/// Ordered table of (flag, on/off codes) for iteration.
+pub const FLAG_TABLE: [(StyleFlags, SgrCodes); 8] = [
+    (StyleFlags::BOLD, SGR_BOLD),
+    (StyleFlags::DIM, SGR_DIM),
+    (StyleFlags::ITALIC, SGR_ITALIC),
+    (StyleFlags::UNDERLINE, SGR_UNDERLINE),
+    (StyleFlags::BLINK, SGR_BLINK),
+    (StyleFlags::REVERSE, SGR_REVERSE),
+    (StyleFlags::HIDDEN, SGR_HIDDEN),
+    (StyleFlags::STRIKETHROUGH, SGR_STRIKETHROUGH),
+];
+
+/// Write SGR sequence to turn off specific style flags.
+///
+/// Emits the individual "off" codes for each flag in `flags_to_disable`.
+/// Handles the Bold/Dim shared off code (22): if only one of Bold/Dim needs
+/// to be disabled while the other must stay on, the caller must re-enable
+/// the survivor separately. This function returns the set of flags that were
+/// collaterally disabled (i.e., flags that share an off code with a disabled flag
+/// but should remain enabled according to `flags_to_keep`).
+///
+/// Returns the set of flags that need to be re-enabled due to shared off codes.
+pub fn sgr_flags_off<W: Write>(
+    w: &mut W,
+    flags_to_disable: StyleFlags,
+    flags_to_keep: StyleFlags,
+) -> io::Result<StyleFlags> {
+    if flags_to_disable.is_empty() {
+        return Ok(StyleFlags::empty());
+    }
+
+    let mut collateral = StyleFlags::empty();
+
+    for (flag, codes) in FLAG_TABLE {
+        if !flags_to_disable.contains(flag) {
+            continue;
+        }
+        // Emit the off code
+        write!(w, "\x1b[{}m", codes.off)?;
+        // Check for collateral damage: Bold (off=22) and Dim (off=22) share the same off code
+        if codes.off == 22 {
+            // Off code 22 disables both Bold and Dim
+            let other = if flag == StyleFlags::BOLD {
+                StyleFlags::DIM
+            } else {
+                StyleFlags::BOLD
+            };
+            if flags_to_keep.contains(other) {
+                collateral |= other;
+            }
+        }
+    }
+
+    Ok(collateral)
 }
 
 /// Write SGR sequence for true color foreground: `CSI 38;2;r;g;b m`

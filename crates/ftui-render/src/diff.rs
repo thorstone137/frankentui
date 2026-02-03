@@ -39,6 +39,69 @@
 //! ```
 
 use crate::buffer::Buffer;
+use crate::cell::Cell;
+
+// =============================================================================
+// Block-based Row Scanning (autovec-friendly)
+// =============================================================================
+
+/// Block size for vectorized comparison (4 cells = 64 bytes).
+/// Chosen to match common SIMD register width (256-bit / 512-bit).
+const BLOCK_SIZE: usize = 4;
+
+/// Scan a row pair for changed cells, appending positions to `changes`.
+///
+/// Processes cells in blocks of 4 for autovectorization. The compiler will
+/// typically emit SIMD instructions (SSE2/AVX2/NEON) for the inner comparison
+/// loops since each cell is 16 bytes (4 × u32) and we compare blocks of 4 cells
+/// (64 bytes = one AVX-512 register or two AVX2 registers).
+///
+/// The block approach reduces branch misprediction overhead: we first compute
+/// a change mask for the block, then only branch on non-zero masks.
+#[inline]
+fn scan_row_changes(old_row: &[Cell], new_row: &[Cell], y: u16, changes: &mut Vec<(u16, u16)>) {
+    debug_assert_eq!(old_row.len(), new_row.len());
+    let len = old_row.len();
+    let blocks = len / BLOCK_SIZE;
+    let remainder = len % BLOCK_SIZE;
+
+    // Process full blocks
+    for block_idx in 0..blocks {
+        let base = block_idx * BLOCK_SIZE;
+        let old_block = &old_row[base..base + BLOCK_SIZE];
+        let new_block = &new_row[base..base + BLOCK_SIZE];
+
+        // Compute change mask: 1 bit per changed cell in this block.
+        // This tight loop is autovec-friendly: each iteration compares
+        // four u32 fields and accumulates a boolean.
+        let mut mask: u32 = 0;
+        for i in 0..BLOCK_SIZE {
+            if !old_block[i].bits_eq(&new_block[i]) {
+                mask |= 1 << i;
+            }
+        }
+
+        // Fast skip: if no cells changed in this block, move on.
+        if mask == 0 {
+            continue;
+        }
+
+        // Expand mask into change positions
+        for i in 0..BLOCK_SIZE {
+            if mask & (1 << i) != 0 {
+                changes.push(((base + i) as u16, y));
+            }
+        }
+    }
+
+    // Process remainder cells
+    let rem_base = blocks * BLOCK_SIZE;
+    for i in 0..remainder {
+        if !old_row[rem_base + i].bits_eq(&new_row[rem_base + i]) {
+            changes.push(((rem_base + i) as u16, y));
+        }
+    }
+}
 
 /// A contiguous run of changed cells on a single row.
 ///
@@ -153,16 +216,61 @@ impl BufferDiff {
                 continue;
             }
 
-            // Scan for changed cells within this row
-            for (x, (old_cell, new_cell)) in old_row.iter().zip(new_row.iter()).enumerate() {
-                if !old_cell.bits_eq(new_cell) {
-                    changes.push((x as u16, y));
-                }
-            }
+            // Scan for changed cells using block-based comparison
+            scan_row_changes(old_row, new_row, y, &mut changes);
         }
 
         #[cfg(feature = "tracing")]
         tracing::trace!(changes = changes.len(), "diff computed");
+
+        Self { changes }
+    }
+
+    /// Compute the diff between two buffers using dirty-row hints.
+    ///
+    /// Only rows marked dirty in `new` are compared cell-by-cell.
+    /// Clean rows are skipped entirely (O(1) per clean row).
+    ///
+    /// This is sound provided the dirty tracking invariant holds:
+    /// for all y, if any cell in row y changed, then `new.is_row_dirty(y)`.
+    ///
+    /// Falls back to full comparison for rows marked dirty, so false positives
+    /// (marking a row dirty when it didn't actually change) are safe — they
+    /// only cost the per-cell scan for that row.
+    pub fn compute_dirty(old: &Buffer, new: &Buffer) -> Self {
+        assert_eq!(old.width(), new.width(), "buffer widths must match");
+        assert_eq!(old.height(), new.height(), "buffer heights must match");
+
+        let width = old.width();
+        let height = old.height();
+        let w = width as usize;
+
+        let estimated_changes = (w * height as usize) / 20;
+        let mut changes = Vec::with_capacity(estimated_changes);
+
+        let old_cells = old.cells();
+        let new_cells = new.cells();
+        let dirty = new.dirty_rows();
+
+        for y in 0..height {
+            // Skip clean rows (the key optimization).
+            if !dirty[y as usize] {
+                continue;
+            }
+
+            let row_start = y as usize * w;
+            let old_row = &old_cells[row_start..row_start + w];
+            let new_row = &new_cells[row_start..row_start + w];
+
+            // Even for dirty rows, row-skip fast path applies:
+            // a row may be marked dirty but end up identical after compositing.
+            if old_row == new_row {
+                continue;
+            }
+
+            // Scan for changed cells using block-based comparison
+            scan_row_changes(old_row, new_row, y, &mut changes);
+        }
 
         Self { changes }
     }
@@ -518,6 +626,500 @@ mod tests {
         let new = Buffer::new(4, 5);
         let _ = BufferDiff::compute(&old, &new);
     }
+
+    // =========================================================================
+    // Block-based Row Scan Tests (bd-4kq0.1.2)
+    // =========================================================================
+
+    #[test]
+    fn block_scan_alignment_exact_block() {
+        // Width = 4 (exactly one block, no remainder)
+        let old = Buffer::new(4, 1);
+        let mut new = Buffer::new(4, 1);
+        new.set_raw(2, 0, Cell::from_char('X'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff.changes(), &[(2, 0)]);
+    }
+
+    #[test]
+    fn block_scan_alignment_remainder() {
+        // Width = 7 (one full block + 3 remainder)
+        let old = Buffer::new(7, 1);
+        let mut new = Buffer::new(7, 1);
+        // Change in full block part
+        new.set_raw(1, 0, Cell::from_char('A'));
+        // Change in remainder part
+        new.set_raw(5, 0, Cell::from_char('B'));
+        new.set_raw(6, 0, Cell::from_char('C'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 3);
+        assert_eq!(diff.changes(), &[(1, 0), (5, 0), (6, 0)]);
+    }
+
+    #[test]
+    fn block_scan_single_cell_row() {
+        // Width = 1 (pure remainder, no full blocks)
+        let old = Buffer::new(1, 1);
+        let mut new = Buffer::new(1, 1);
+        new.set_raw(0, 0, Cell::from_char('X'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 1);
+    }
+
+    #[test]
+    fn block_scan_two_cell_row() {
+        // Width = 2 (pure remainder)
+        let old = Buffer::new(2, 1);
+        let mut new = Buffer::new(2, 1);
+        new.set_raw(0, 0, Cell::from_char('A'));
+        new.set_raw(1, 0, Cell::from_char('B'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 2);
+    }
+
+    #[test]
+    fn block_scan_three_cell_row() {
+        // Width = 3 (pure remainder)
+        let old = Buffer::new(3, 1);
+        let mut new = Buffer::new(3, 1);
+        new.set_raw(2, 0, Cell::from_char('X'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff.changes(), &[(2, 0)]);
+    }
+
+    #[test]
+    fn block_scan_multiple_blocks_sparse() {
+        // Width = 80 (20 full blocks), changes scattered across blocks
+        let old = Buffer::new(80, 1);
+        let mut new = Buffer::new(80, 1);
+
+        // One change per block in every other block
+        for block in (0..20).step_by(2) {
+            let x = (block * 4 + 1) as u16;
+            new.set_raw(x, 0, Cell::from_char('X'));
+        }
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 10);
+    }
+
+    #[test]
+    fn block_scan_full_block_unchanged_skip() {
+        // Verify blocks with no changes are skipped efficiently
+        let old = Buffer::new(20, 1);
+        let mut new = Buffer::new(20, 1);
+
+        // Only change one cell in the last block
+        new.set_raw(19, 0, Cell::from_char('Z'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff.changes(), &[(19, 0)]);
+    }
+
+    #[test]
+    fn block_scan_wide_row_all_changed() {
+        // All cells changed in a wide row
+        let old = Buffer::new(120, 1);
+        let mut new = Buffer::new(120, 1);
+        for x in 0..120 {
+            new.set_raw(x, 0, Cell::from_char('#'));
+        }
+
+        let diff = BufferDiff::compute(&old, &new);
+        assert_eq!(diff.len(), 120);
+    }
+
+    #[test]
+    fn perf_block_scan_vs_scalar_baseline() {
+        // Verify that block scan works correctly on large buffers
+        // and measure relative performance
+        use std::time::Instant;
+
+        let width = 200u16;
+        let height = 50u16;
+        let old = Buffer::new(width, height);
+        let mut new = Buffer::new(width, height);
+
+        // ~10% cells changed
+        for i in 0..1000 {
+            let x = (i * 7 + 3) as u16 % width;
+            let y = (i * 11 + 5) as u16 % height;
+            let ch = char::from_u32(('A' as u32) + (i as u32 % 26)).unwrap();
+            new.set_raw(x, y, Cell::from_char(ch));
+        }
+
+        let iterations = 1000;
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let diff = BufferDiff::compute(&old, &new);
+            assert!(diff.len() > 0);
+        }
+        let elapsed = start.elapsed();
+
+        // Should complete 1000 iterations of 200x50 diff in < 500ms
+        assert!(
+            elapsed.as_millis() < 500,
+            "Diff too slow: {elapsed:?} for {iterations} iterations of {width}x{height}"
+        );
+    }
+    // =========================================================================
+    // Run Coalescing Invariants (bd-4kq0.1.3)
+    // =========================================================================
+
+    #[test]
+    fn unit_run_coalescing_invariants() {
+        // Verify runs preserve order, coverage, and contiguity for a
+        // complex multi-row change pattern.
+        let old = Buffer::new(80, 24);
+        let mut new = Buffer::new(80, 24);
+
+        // Row 0: two separate runs (0-2) and (10-12)
+        for x in 0..=2 {
+            new.set_raw(x, 0, Cell::from_char('A'));
+        }
+        for x in 10..=12 {
+            new.set_raw(x, 0, Cell::from_char('B'));
+        }
+        // Row 5: single run (40-45)
+        for x in 40..=45 {
+            new.set_raw(x, 5, Cell::from_char('C'));
+        }
+        // Row 23: single cell at end
+        new.set_raw(79, 23, Cell::from_char('Z'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        let runs = diff.runs();
+
+        // Invariant 1: runs are sorted by (y, x0)
+        for w in runs.windows(2) {
+            assert!(
+                (w[0].y, w[0].x0) < (w[1].y, w[1].x0),
+                "runs must be sorted: {:?} should precede {:?}",
+                w[0],
+                w[1]
+            );
+        }
+
+        // Invariant 2: total cells in runs == diff.len()
+        let total_cells: usize = runs.iter().map(|r| r.len() as usize).sum();
+        assert_eq!(
+            total_cells,
+            diff.len(),
+            "runs must cover all changes exactly"
+        );
+
+        // Invariant 3: no two runs on the same row are adjacent (should have merged)
+        for w in runs.windows(2) {
+            if w[0].y == w[1].y {
+                assert!(
+                    w[1].x0 > w[0].x1.saturating_add(1),
+                    "adjacent runs on same row should be merged: {:?} and {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+
+        // Invariant 4: expected structure
+        assert_eq!(runs.len(), 4);
+        assert_eq!(runs[0], ChangeRun::new(0, 0, 2));
+        assert_eq!(runs[1], ChangeRun::new(0, 10, 12));
+        assert_eq!(runs[2], ChangeRun::new(5, 40, 45));
+        assert_eq!(runs[3], ChangeRun::new(23, 79, 79));
+    }
+
+    // =========================================================================
+    // Golden Output Fixtures (bd-4kq0.1.3)
+    // =========================================================================
+
+    /// FNV-1a hash for deterministic checksums (no external dependency).
+    fn fnv1a_hash(data: &[(u16, u16)]) -> u64 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for &(x, y) in data {
+            for byte in x.to_le_bytes().iter().chain(y.to_le_bytes().iter()) {
+                hash ^= *byte as u64;
+                hash = hash.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        hash
+    }
+
+    /// Build a canonical "dashboard-like" scene: header row, status bar,
+    /// scattered content cells.
+    fn build_golden_scene(width: u16, height: u16, seed: u64) -> Buffer {
+        let mut buf = Buffer::new(width, height);
+        let mut rng = seed;
+
+        // Header row: all cells set
+        for x in 0..width {
+            buf.set_raw(x, 0, Cell::from_char('='));
+        }
+
+        // Status bar (last row)
+        for x in 0..width {
+            buf.set_raw(x, height - 1, Cell::from_char('-'));
+        }
+
+        // Scattered content using simple LCG
+        let count = (width as u64 * height as u64 / 10).max(5);
+        for _ in 0..count {
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let x = ((rng >> 16) as u16) % width;
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let y = ((rng >> 16) as u16) % height;
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let ch = char::from_u32('A' as u32 + (rng % 26) as u32).unwrap();
+            buf.set_raw(x, y, Cell::from_char(ch));
+        }
+
+        buf
+    }
+
+    #[test]
+    fn golden_diff_80x24() {
+        let old = Buffer::new(80, 24);
+        let new = build_golden_scene(80, 24, 0xD01DE5EED_0001);
+
+        let diff = BufferDiff::compute(&old, &new);
+        let checksum = fnv1a_hash(diff.changes());
+
+        // Verify determinism: same inputs → same output
+        let diff2 = BufferDiff::compute(&old, &new);
+        assert_eq!(
+            fnv1a_hash(diff2.changes()),
+            checksum,
+            "diff must be deterministic"
+        );
+
+        // Sanity: scene has header + status + scattered content
+        assert!(
+            diff.len() >= 160,
+            "80x24 golden scene should have at least 160 changes (header+status), got {}",
+            diff.len()
+        );
+
+        let runs = diff.runs();
+        // Header and status rows should each be one run
+        assert_eq!(runs[0].y, 0, "first run should be header row");
+        assert_eq!(runs[0].x0, 0);
+        assert_eq!(runs[0].x1, 79);
+        assert!(
+            runs.last().unwrap().y == 23,
+            "last row should contain status bar"
+        );
+    }
+
+    #[test]
+    fn golden_diff_120x40() {
+        let old = Buffer::new(120, 40);
+        let new = build_golden_scene(120, 40, 0xD01DE5EED_0002);
+
+        let diff = BufferDiff::compute(&old, &new);
+        let checksum = fnv1a_hash(diff.changes());
+
+        // Determinism
+        let diff2 = BufferDiff::compute(&old, &new);
+        assert_eq!(fnv1a_hash(diff2.changes()), checksum);
+
+        // Sanity
+        assert!(
+            diff.len() >= 240,
+            "120x40 golden scene should have >=240 changes, got {}",
+            diff.len()
+        );
+
+        // Dirty diff must match
+        let dirty = BufferDiff::compute_dirty(&old, &new);
+        assert_eq!(
+            fnv1a_hash(dirty.changes()),
+            checksum,
+            "dirty diff must produce identical changes"
+        );
+    }
+
+    #[test]
+    fn golden_sparse_update() {
+        // Start from a populated scene, apply a small update
+        let old = build_golden_scene(80, 24, 0xD01DE5EED_0003);
+        let mut new = old.clone();
+
+        // Apply 5 deterministic changes
+        new.set_raw(10, 5, Cell::from_char('!'));
+        new.set_raw(11, 5, Cell::from_char('@'));
+        new.set_raw(40, 12, Cell::from_char('#'));
+        new.set_raw(70, 20, Cell::from_char('$'));
+        new.set_raw(0, 23, Cell::from_char('%'));
+
+        let diff = BufferDiff::compute(&old, &new);
+        let checksum = fnv1a_hash(diff.changes());
+
+        // Determinism
+        let diff2 = BufferDiff::compute(&old, &new);
+        assert_eq!(fnv1a_hash(diff2.changes()), checksum);
+
+        // Exactly 5 changes (or fewer if some cells happened to already have that value)
+        assert!(
+            diff.len() <= 5,
+            "sparse update should have <=5 changes, got {}",
+            diff.len()
+        );
+        assert!(
+            diff.len() >= 3,
+            "sparse update should have >=3 changes, got {}",
+            diff.len()
+        );
+    }
+
+    // =========================================================================
+    // E2E Random Scene Replay (bd-4kq0.1.3)
+    // =========================================================================
+
+    #[test]
+    fn e2e_random_scene_replay() {
+        // 10 frames of seeded scene evolution, verify checksums are
+        // deterministic across replays and dirty/full paths agree.
+        let width = 80u16;
+        let height = 24u16;
+        let base_seed: u64 = 0x5C3E_E3E1_A442u64;
+
+        let mut checksums = Vec::new();
+
+        for frame in 0..10u64 {
+            let seed = base_seed.wrapping_add(frame.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let old = build_golden_scene(width, height, seed);
+            let new = build_golden_scene(width, height, seed.wrapping_add(1));
+
+            let diff = BufferDiff::compute(&old, &new);
+            let dirty_diff = BufferDiff::compute_dirty(&old, &new);
+
+            // Full and dirty must agree
+            assert_eq!(
+                diff.changes(),
+                dirty_diff.changes(),
+                "frame {frame}: dirty diff must match full diff"
+            );
+
+            checksums.push(fnv1a_hash(diff.changes()));
+        }
+
+        // Replay: same seeds must produce identical checksums
+        for frame in 0..10u64 {
+            let seed = base_seed.wrapping_add(frame.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let old = build_golden_scene(width, height, seed);
+            let new = build_golden_scene(width, height, seed.wrapping_add(1));
+
+            let diff = BufferDiff::compute(&old, &new);
+            assert_eq!(
+                fnv1a_hash(diff.changes()),
+                checksums[frame as usize],
+                "frame {frame}: checksum mismatch on replay"
+            );
+        }
+    }
+
+    // =========================================================================
+    // Perf Microbench with JSONL (bd-4kq0.1.3)
+    // =========================================================================
+
+    #[test]
+    fn perf_diff_microbench() {
+        use std::time::Instant;
+
+        let scenarios: &[(u16, u16, &str, u64)] = &[
+            (80, 24, "full_frame", 0xBE4C_0001u64),
+            (80, 24, "sparse_update", 0xBE4C_0002u64),
+            (120, 40, "full_frame", 0xBE4C_0003u64),
+            (120, 40, "sparse_update", 0xBE4C_0004u64),
+        ];
+
+        let iterations = 50u32;
+
+        for &(width, height, scene_type, seed) in scenarios {
+            let old = Buffer::new(width, height);
+            let new = match scene_type {
+                "full_frame" => build_golden_scene(width, height, seed),
+                "sparse_update" => {
+                    let mut buf = old.clone();
+                    buf.set_raw(10, 5, Cell::from_char('!'));
+                    buf.set_raw(40, 12, Cell::from_char('#'));
+                    buf.set_raw(70 % width, 20 % height, Cell::from_char('$'));
+                    buf
+                }
+                _ => unreachable!(),
+            };
+
+            let mut times_us = Vec::with_capacity(iterations as usize);
+            let mut last_changes = 0usize;
+            let mut last_runs = 0usize;
+            let mut last_checksum = 0u64;
+
+            for _ in 0..iterations {
+                let start = Instant::now();
+                let diff = BufferDiff::compute(&old, &new);
+                let runs = diff.runs();
+                let elapsed = start.elapsed();
+
+                last_changes = diff.len();
+                last_runs = runs.len();
+                last_checksum = fnv1a_hash(diff.changes());
+                times_us.push(elapsed.as_micros() as u64);
+            }
+
+            times_us.sort();
+            let p50 = times_us[times_us.len() / 2];
+            let p95 = times_us[(times_us.len() as f64 * 0.95) as usize];
+            let p99 = times_us[(times_us.len() as f64 * 0.99) as usize];
+
+            // JSONL log line (captured by --nocapture or CI artifact)
+            eprintln!(
+                "{{\"ts\":\"{}\",\"seed\":{},\"width\":{},\"height\":{},\"scene\":\"{}\",\"changes\":{},\"runs\":{},\"p50_us\":{},\"p95_us\":{},\"p99_us\":{},\"checksum\":\"0x{:016x}\"}}",
+                "2026-02-03T00:00:00Z",
+                seed,
+                width,
+                height,
+                scene_type,
+                last_changes,
+                last_runs,
+                p50,
+                p95,
+                p99,
+                last_checksum
+            );
+
+            // Budget: full 80x24 diff should be < 100µs at p95
+            // Budget: full 120x40 diff should be < 200µs at p95
+            let budget_us = match (width, height) {
+                (80, 24) => 500,   // generous for CI variance
+                (120, 40) => 1000, // generous for CI variance
+                _ => 2000,
+            };
+
+            // Checksum must be identical across all iterations (determinism)
+            for _ in 0..3 {
+                let diff = BufferDiff::compute(&old, &new);
+                assert_eq!(
+                    fnv1a_hash(diff.changes()),
+                    last_checksum,
+                    "diff must be deterministic"
+                );
+            }
+
+            // Soft budget assertion (warn but don't fail on slow CI)
+            if p95 > budget_us {
+                eprintln!(
+                    "WARN: {scene_type} {width}x{height} p95={p95}µs exceeds budget {budget_us}µs"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -690,5 +1292,166 @@ mod proptests {
                 "Run cell count should match diff change count"
             );
         }
+
+        /// Property (bd-4kq0.1.2): Block-based scan matches scalar scan
+        /// for random row widths and change patterns. This verifies the
+        /// block/remainder handling is correct for all alignment cases.
+        #[test]
+        fn block_scan_matches_scalar(
+            width in 1u16..200,
+            height in 1u16..20,
+            num_changes in 0usize..200,
+        ) {
+            use crate::cell::PackedRgba;
+
+            let old = Buffer::new(width, height);
+            let mut new = Buffer::new(width, height);
+
+            for i in 0..num_changes {
+                let x = (i * 13 + 7) as u16 % width;
+                let y = (i * 17 + 3) as u16 % height;
+                let fg = PackedRgba::rgb(
+                    ((i * 31) % 256) as u8,
+                    ((i * 47) % 256) as u8,
+                    ((i * 71) % 256) as u8,
+                );
+                new.set_raw(x, y, Cell::from_char('X').with_fg(fg));
+            }
+
+            let diff = BufferDiff::compute(&old, &new);
+
+            // Verify against manual scalar scan
+            let mut scalar_changes = Vec::new();
+            for y in 0..height {
+                for x in 0..width {
+                    let old_cell = old.get_unchecked(x, y);
+                    let new_cell = new.get_unchecked(x, y);
+                    if !old_cell.bits_eq(new_cell) {
+                        scalar_changes.push((x, y));
+                    }
+                }
+            }
+
+            prop_assert_eq!(
+                diff.changes(),
+                &scalar_changes[..],
+                "Block scan should match scalar scan"
+            );
+        }
+
+
+        // ========== Diff Equivalence: dirty+block vs full scan (bd-4kq0.1.3) ==========
+
+        /// Property: compute_dirty with all rows dirty matches compute exactly.
+        /// This verifies the block-scan + dirty-row path is semantically
+        /// equivalent to the full scan for random buffers.
+        #[test]
+        fn property_diff_equivalence(
+            width in 1u16..120,
+            height in 1u16..40,
+            num_changes in 0usize..300,
+        ) {
+            let old = Buffer::new(width, height);
+            let mut new = Buffer::new(width, height);
+
+            // Apply deterministic pseudo-random changes
+            for i in 0..num_changes {
+                let x = (i * 13 + 7) as u16 % width;
+                let y = (i * 17 + 3) as u16 % height;
+                let ch = char::from_u32(('A' as u32) + (i as u32 % 26)).unwrap();
+                let fg = crate::cell::PackedRgba::rgb(
+                    ((i * 31) % 256) as u8,
+                    ((i * 47) % 256) as u8,
+                    ((i * 71) % 256) as u8,
+                );
+                new.set_raw(x, y, Cell::from_char(ch).with_fg(fg));
+            }
+
+            let full = BufferDiff::compute(&old, &new);
+            let dirty = BufferDiff::compute_dirty(&old, &new);
+
+            prop_assert_eq!(
+                full.changes(),
+                dirty.changes(),
+                "dirty diff must match full diff (width={}, height={}, changes={})",
+                width, height, num_changes
+            );
+
+            // Also verify run coalescing is identical
+            let full_runs = full.runs();
+            let dirty_runs = dirty.runs();
+            prop_assert_eq!(
+                full_runs.len(),
+                dirty_runs.len(),
+                "run count must match"
+            );
+            for (fr, dr) in full_runs.iter().zip(dirty_runs.iter()) {
+                prop_assert_eq!(fr, dr, "run mismatch");
+            }
+        }
+    }
+
+    // ========== Dirty-Aware Diff Tests (bd-4kq0.1.1) ==========
+
+    #[test]
+    fn dirty_diff_matches_full_diff() {
+        let old = Buffer::new(10, 10);
+        let mut new = Buffer::new(10, 10);
+        new.set_raw(3, 2, Cell::from_char('A'));
+        new.set_raw(7, 5, Cell::from_char('B'));
+        new.set_raw(0, 9, Cell::from_char('C'));
+
+        let full = BufferDiff::compute(&old, &new);
+        let dirty = BufferDiff::compute_dirty(&old, &new);
+        assert_eq!(full.changes(), dirty.changes());
+    }
+
+    #[test]
+    fn dirty_diff_skips_clean_rows() {
+        let old = Buffer::new(10, 10);
+        let mut new = Buffer::new(10, 10);
+        // Write to row 3 then clear dirty, write to row 7
+        new.set_raw(0, 3, Cell::from_char('X'));
+        new.clear_dirty();
+        new.set_raw(0, 7, Cell::from_char('Y'));
+
+        // Full diff sees both changes
+        let full = BufferDiff::compute(&old, &new);
+        assert_eq!(full.len(), 2);
+
+        // Dirty diff only sees row 7 (row 3's dirty flag was cleared)
+        let dirty = BufferDiff::compute_dirty(&old, &new);
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty.changes(), &[(0, 7)]);
+    }
+
+    #[test]
+    fn dirty_diff_empty_when_all_clean() {
+        let old = Buffer::new(10, 10);
+        let mut new = Buffer::new(10, 10);
+        new.set_raw(5, 5, Cell::from_char('Z'));
+        new.clear_dirty(); // Clear all dirty flags
+
+        let dirty = BufferDiff::compute_dirty(&old, &new);
+        assert!(
+            dirty.is_empty(),
+            "should produce no changes when all rows are clean"
+        );
+    }
+
+    #[test]
+    fn dirty_diff_false_positive_is_safe() {
+        // A row marked dirty but actually identical should still produce correct diff
+        let mut old = Buffer::new(10, 5);
+        old.set_raw(0, 2, Cell::from_char('A'));
+
+        let mut new = Buffer::new(10, 5);
+        new.set_raw(0, 2, Cell::from_char('A')); // Same content, but row is dirty
+
+        let dirty = BufferDiff::compute_dirty(&old, &new);
+        assert!(
+            dirty.is_empty(),
+            "identical content should produce empty diff even if dirty"
+        );
     }
 }

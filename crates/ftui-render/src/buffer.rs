@@ -17,6 +17,26 @@
 //! 3. Scissor stack intersection monotonically decreases on push
 //! 4. Opacity stack product stays in `[0.0, 1.0]`
 //! 5. Scissor/opacity stacks always have at least one element
+//!
+//! # Dirty Row Tracking (bd-4kq0.1.1)
+//!
+//! ## Mathematical Invariant
+//!
+//! Let D be the set of dirty rows. The fundamental soundness property:
+//!
+//! ```text
+//! ∀ y ∈ [0, height): if ∃ x such that old(x, y) ≠ new(x, y), then y ∈ D
+//! ```
+//!
+//! This ensures the diff algorithm can safely skip non-dirty rows without
+//! missing any changes. The invariant is maintained by marking rows dirty
+//! on every cell mutation.
+//!
+//! ## Bookkeeping Cost
+//!
+//! - O(1) per mutation (single array write)
+//! - O(height) space for dirty bitmap
+//! - Target: < 2% overhead vs baseline rendering
 
 use crate::budget::DegradationLevel;
 use crate::cell::Cell;
@@ -46,6 +66,13 @@ pub struct Buffer {
     /// Widgets read this during rendering to decide how much visual fidelity
     /// to provide. Set by the runtime before calling `Model::view()`.
     pub degradation: DegradationLevel,
+    /// Per-row dirty flags for diff optimization.
+    ///
+    /// When a row is marked dirty, the diff algorithm must compare it cell-by-cell.
+    /// Clean rows can be skipped entirely.
+    ///
+    /// Invariant: `dirty_rows.len() == height`
+    dirty_rows: Vec<bool>,
 }
 
 impl Buffer {
@@ -71,6 +98,8 @@ impl Buffer {
             scissor_stack: vec![Rect::from_size(width, height)],
             opacity_stack: vec![1.0],
             degradation: DegradationLevel::Full,
+            // All rows start clean; mutations mark them dirty.
+            dirty_rows: vec![false; height as usize],
         }
     }
 
@@ -103,6 +132,75 @@ impl Buffer {
     pub const fn bounds(&self) -> Rect {
         Rect::from_size(self.width, self.height)
     }
+
+    /// Return the height of content (last non-empty row + 1).
+    ///
+    /// Rows are considered empty only if all cells are the default cell.
+    /// Returns 0 if the buffer contains no content.
+    pub fn content_height(&self) -> u16 {
+        let default_cell = Cell::default();
+        let width = self.width as usize;
+        for y in (0..self.height).rev() {
+            let row_start = y as usize * width;
+            let row_end = row_start + width;
+            if self.cells[row_start..row_end]
+                .iter()
+                .any(|cell| *cell != default_cell)
+            {
+                return y + 1;
+            }
+        }
+        0
+    }
+
+    // ----- Dirty Row Tracking API -----
+
+    /// Mark a row as dirty (modified since last clear).
+    ///
+    /// This is O(1) and must be called on every cell mutation to maintain
+    /// the dirty-soundness invariant.
+    #[inline]
+    fn mark_dirty(&mut self, y: u16) {
+        if let Some(slot) = self.dirty_rows.get_mut(y as usize) {
+            *slot = true;
+        }
+    }
+
+    /// Mark all rows as dirty (e.g., after a full clear or bulk write).
+    #[inline]
+    pub fn mark_all_dirty(&mut self) {
+        self.dirty_rows.fill(true);
+    }
+
+    /// Reset all dirty flags to clean.
+    ///
+    /// Call this after the diff has consumed the dirty state (between frames).
+    #[inline]
+    pub fn clear_dirty(&mut self) {
+        self.dirty_rows.fill(false);
+    }
+
+    /// Check if a specific row is dirty.
+    #[inline]
+    pub fn is_row_dirty(&self, y: u16) -> bool {
+        self.dirty_rows.get(y as usize).copied().unwrap_or(false)
+    }
+
+    /// Get the dirty row flags as a slice.
+    ///
+    /// Each element corresponds to a row: `true` means the row was modified
+    /// since the last `clear_dirty()` call.
+    #[inline]
+    pub fn dirty_rows(&self) -> &[bool] {
+        &self.dirty_rows
+    }
+
+    /// Count the number of dirty rows.
+    pub fn dirty_row_count(&self) -> usize {
+        self.dirty_rows.iter().filter(|&&d| d).count()
+    }
+
+    // ----- Coordinate Helpers -----
 
     /// Convert (x, y) coordinates to a linear index.
     ///
@@ -138,8 +236,10 @@ impl Buffer {
     /// Get a mutable reference to the cell at (x, y).
     ///
     /// Returns `None` if coordinates are out of bounds.
+    /// Proactively marks the row dirty since the caller may mutate the cell.
     #[inline]
     pub fn get_mut(&mut self, x: u16, y: u16) -> Option<&mut Cell> {
+        self.mark_dirty(y);
         self.index(x, y).map(|i| &mut self.cells[i])
     }
 
@@ -262,6 +362,7 @@ impl Buffer {
             final_cell.bg = final_cell.bg.over(existing_bg);
 
             self.cells[idx] = final_cell;
+            self.mark_dirty(y);
             return;
         }
 
@@ -309,6 +410,7 @@ impl Buffer {
         final_cell.bg = final_cell.bg.over(old_cell.bg);
 
         self.cells[idx] = final_cell;
+        self.mark_dirty(y);
 
         // 2. Write Tail (Continuation cells)
         // We can use set_raw-like access because we already verified bounds
@@ -326,6 +428,7 @@ impl Buffer {
     pub fn set_raw(&mut self, x: u16, y: u16, cell: Cell) {
         if let Some(idx) = self.index(x, y) {
             self.cells[idx] = cell;
+            self.mark_dirty(y);
         }
     }
 
@@ -348,11 +451,13 @@ impl Buffer {
     /// Clear all cells to the default.
     pub fn clear(&mut self) {
         self.cells.fill(Cell::default());
+        self.mark_all_dirty();
     }
 
     /// Clear all cells to the given cell.
     pub fn clear_with(&mut self, cell: Cell) {
         self.cells.fill(cell);
+        self.mark_all_dirty();
     }
 
     /// Get raw access to the cell slice.
@@ -364,8 +469,11 @@ impl Buffer {
     }
 
     /// Get mutable raw access to the cell slice.
+    ///
+    /// Marks all rows dirty since caller may modify arbitrary cells.
     #[inline]
     pub fn cells_mut(&mut self) -> &mut [Cell] {
+        self.mark_all_dirty();
         &mut self.cells
     }
 
@@ -501,6 +609,105 @@ impl PartialEq for Buffer {
 
 impl Eq for Buffer {}
 
+// ---------------------------------------------------------------------------
+// DoubleBuffer: O(1) frame swap (bd-1rz0.4.4)
+// ---------------------------------------------------------------------------
+
+/// Double-buffered render target with O(1) swap.
+///
+/// Maintains two pre-allocated buffers and swaps between them by flipping an
+/// index, avoiding the O(width × height) clone that a naive prev/current
+/// pattern requires.
+///
+/// # Invariants
+///
+/// 1. Both buffers always have the same dimensions.
+/// 2. `swap()` is O(1) — it only flips the index, never copies cells.
+/// 3. After `swap()`, `current_mut().clear()` should be called to prepare
+///    the new frame buffer.
+/// 4. `resize()` discards both buffers and returns `true` so callers know
+///    a full redraw is needed.
+#[derive(Debug)]
+pub struct DoubleBuffer {
+    buffers: [Buffer; 2],
+    /// Index of the *current* buffer (0 or 1).
+    current_idx: u8,
+}
+
+impl DoubleBuffer {
+    /// Create a double buffer with the given dimensions.
+    ///
+    /// Both buffers are initialized to default (empty) cells.
+    ///
+    /// # Panics
+    ///
+    /// Panics if width or height is 0.
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            buffers: [Buffer::new(width, height), Buffer::new(width, height)],
+            current_idx: 0,
+        }
+    }
+
+    /// O(1) swap: the current buffer becomes previous, and vice versa.
+    ///
+    /// After swapping, call `current_mut().clear()` to prepare for the
+    /// next frame.
+    #[inline]
+    pub fn swap(&mut self) {
+        self.current_idx = 1 - self.current_idx;
+    }
+
+    /// Reference to the current (in-progress) frame buffer.
+    #[inline]
+    pub fn current(&self) -> &Buffer {
+        &self.buffers[self.current_idx as usize]
+    }
+
+    /// Mutable reference to the current (in-progress) frame buffer.
+    #[inline]
+    pub fn current_mut(&mut self) -> &mut Buffer {
+        &mut self.buffers[self.current_idx as usize]
+    }
+
+    /// Reference to the previous (last-presented) frame buffer.
+    #[inline]
+    pub fn previous(&self) -> &Buffer {
+        &self.buffers[(1 - self.current_idx) as usize]
+    }
+
+    /// Width of both buffers.
+    #[inline]
+    pub fn width(&self) -> u16 {
+        self.buffers[0].width()
+    }
+
+    /// Height of both buffers.
+    #[inline]
+    pub fn height(&self) -> u16 {
+        self.buffers[0].height()
+    }
+
+    /// Resize both buffers. Returns `true` if dimensions actually changed.
+    ///
+    /// Both buffers are replaced with fresh allocations and the index is
+    /// reset. Callers should force a full redraw when this returns `true`.
+    pub fn resize(&mut self, width: u16, height: u16) -> bool {
+        if self.buffers[0].width() == width && self.buffers[0].height() == height {
+            return false;
+        }
+        self.buffers = [Buffer::new(width, height), Buffer::new(width, height)];
+        self.current_idx = 0;
+        true
+    }
+
+    /// Check whether both buffers have the given dimensions.
+    #[inline]
+    pub fn dimensions_match(&self, width: u16, height: u16) -> bool {
+        self.buffers[0].width() == width && self.buffers[0].height() == height
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,6 +761,22 @@ mod tests {
         assert_eq!(buf.width(), 80);
         assert_eq!(buf.height(), 24);
         assert_eq!(buf.len(), 80 * 24);
+    }
+
+    #[test]
+    fn content_height_empty_is_zero() {
+        let buf = Buffer::new(8, 4);
+        assert_eq!(buf.content_height(), 0);
+    }
+
+    #[test]
+    fn content_height_tracks_last_non_empty_row() {
+        let mut buf = Buffer::new(5, 4);
+        buf.set(0, 0, Cell::from_char('A'));
+        assert_eq!(buf.content_height(), 1);
+
+        buf.set(2, 3, Cell::from_char('Z'));
+        assert_eq!(buf.content_height(), 4);
     }
 
     #[test]
@@ -1619,5 +1842,227 @@ mod tests {
                     last_pos, width);
             }
         }
+    }
+
+    // ========== Dirty Row Tracking Tests (bd-4kq0.1.1) ==========
+
+    #[test]
+    fn dirty_rows_start_clean() {
+        let buf = Buffer::new(10, 5);
+        assert_eq!(buf.dirty_row_count(), 0);
+        for y in 0..5 {
+            assert!(!buf.is_row_dirty(y));
+        }
+    }
+
+    #[test]
+    fn set_marks_row_dirty() {
+        let mut buf = Buffer::new(10, 5);
+        buf.set(3, 2, Cell::from_char('X'));
+        assert!(buf.is_row_dirty(2));
+        assert!(!buf.is_row_dirty(0));
+        assert!(!buf.is_row_dirty(1));
+        assert!(!buf.is_row_dirty(3));
+        assert!(!buf.is_row_dirty(4));
+    }
+
+    #[test]
+    fn set_raw_marks_row_dirty() {
+        let mut buf = Buffer::new(10, 5);
+        buf.set_raw(0, 4, Cell::from_char('Z'));
+        assert!(buf.is_row_dirty(4));
+        assert_eq!(buf.dirty_row_count(), 1);
+    }
+
+    #[test]
+    fn clear_marks_all_dirty() {
+        let mut buf = Buffer::new(10, 5);
+        buf.clear();
+        assert_eq!(buf.dirty_row_count(), 5);
+    }
+
+    #[test]
+    fn clear_dirty_resets_flags() {
+        let mut buf = Buffer::new(10, 5);
+        buf.set(0, 0, Cell::from_char('A'));
+        buf.set(0, 3, Cell::from_char('B'));
+        assert_eq!(buf.dirty_row_count(), 2);
+
+        buf.clear_dirty();
+        assert_eq!(buf.dirty_row_count(), 0);
+    }
+
+    #[test]
+    fn fill_marks_affected_rows_dirty() {
+        let mut buf = Buffer::new(10, 10);
+        buf.fill(Rect::new(0, 2, 5, 3), Cell::from_char('.'));
+        // Rows 2, 3, 4 should be dirty
+        assert!(!buf.is_row_dirty(0));
+        assert!(!buf.is_row_dirty(1));
+        assert!(buf.is_row_dirty(2));
+        assert!(buf.is_row_dirty(3));
+        assert!(buf.is_row_dirty(4));
+        assert!(!buf.is_row_dirty(5));
+    }
+
+    #[test]
+    fn get_mut_marks_row_dirty() {
+        let mut buf = Buffer::new(10, 5);
+        if let Some(cell) = buf.get_mut(5, 3) {
+            cell.fg = PackedRgba::rgb(255, 0, 0);
+        }
+        assert!(buf.is_row_dirty(3));
+        assert_eq!(buf.dirty_row_count(), 1);
+    }
+
+    #[test]
+    fn cells_mut_marks_all_dirty() {
+        let mut buf = Buffer::new(10, 5);
+        let _ = buf.cells_mut();
+        assert_eq!(buf.dirty_row_count(), 5);
+    }
+
+    #[test]
+    fn dirty_rows_slice_length_matches_height() {
+        let buf = Buffer::new(10, 7);
+        assert_eq!(buf.dirty_rows().len(), 7);
+    }
+
+    #[test]
+    fn out_of_bounds_set_does_not_dirty() {
+        let mut buf = Buffer::new(10, 5);
+        buf.set(100, 100, Cell::from_char('X'));
+        assert_eq!(buf.dirty_row_count(), 0);
+    }
+
+    #[test]
+    fn property_dirty_soundness() {
+        // Randomized test: any mutation must mark its row.
+        let mut buf = Buffer::new(20, 10);
+        let positions = [(3, 0), (5, 2), (0, 9), (19, 5), (10, 7)];
+        for &(x, y) in &positions {
+            buf.set(x, y, Cell::from_char('*'));
+        }
+        for &(_, y) in &positions {
+            assert!(
+                buf.is_row_dirty(y),
+                "Row {} should be dirty after set({}, {})",
+                y,
+                positions.iter().find(|(_, ry)| *ry == y).unwrap().0,
+                y
+            );
+        }
+    }
+
+    #[test]
+    fn dirty_clear_between_frames() {
+        // Simulates frame transition: render, diff, clear, render again.
+        let mut buf = Buffer::new(10, 5);
+
+        // Frame 1: write to rows 0, 2
+        buf.set(0, 0, Cell::from_char('A'));
+        buf.set(0, 2, Cell::from_char('B'));
+        assert_eq!(buf.dirty_row_count(), 2);
+
+        // Diff consumes dirty state
+        buf.clear_dirty();
+        assert_eq!(buf.dirty_row_count(), 0);
+
+        // Frame 2: write to row 4 only
+        buf.set(0, 4, Cell::from_char('C'));
+        assert_eq!(buf.dirty_row_count(), 1);
+        assert!(buf.is_row_dirty(4));
+        assert!(!buf.is_row_dirty(0));
+    }
+
+    // =====================================================================
+    // DoubleBuffer tests (bd-1rz0.4.4)
+    // =====================================================================
+
+    #[test]
+    fn double_buffer_new_has_matching_dimensions() {
+        let db = DoubleBuffer::new(80, 24);
+        assert_eq!(db.width(), 80);
+        assert_eq!(db.height(), 24);
+        assert!(db.dimensions_match(80, 24));
+        assert!(!db.dimensions_match(120, 40));
+    }
+
+    #[test]
+    fn double_buffer_swap_is_o1() {
+        let mut db = DoubleBuffer::new(80, 24);
+
+        // Write to current buffer
+        db.current_mut().set(0, 0, Cell::from_char('A'));
+        assert_eq!(
+            db.current().get(0, 0).unwrap().content.as_char(),
+            Some('A')
+        );
+
+        // Swap — previous should now have 'A', current should be clean
+        db.swap();
+        assert_eq!(
+            db.previous().get(0, 0).unwrap().content.as_char(),
+            Some('A')
+        );
+        // Current was the old "previous" (empty by default)
+        assert!(db.current().get(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn double_buffer_swap_round_trip() {
+        let mut db = DoubleBuffer::new(10, 5);
+
+        db.current_mut().set(0, 0, Cell::from_char('X'));
+        db.swap();
+        db.current_mut().set(0, 0, Cell::from_char('Y'));
+        db.swap();
+
+        // After two swaps, we're back to the buffer that had 'X'
+        assert_eq!(
+            db.current().get(0, 0).unwrap().content.as_char(),
+            Some('X')
+        );
+        assert_eq!(
+            db.previous().get(0, 0).unwrap().content.as_char(),
+            Some('Y')
+        );
+    }
+
+    #[test]
+    fn double_buffer_resize_changes_dimensions() {
+        let mut db = DoubleBuffer::new(80, 24);
+        assert!(!db.resize(80, 24)); // No change
+        assert!(db.resize(120, 40)); // Changed
+        assert_eq!(db.width(), 120);
+        assert_eq!(db.height(), 40);
+        assert!(db.dimensions_match(120, 40));
+    }
+
+    #[test]
+    fn double_buffer_resize_clears_content() {
+        let mut db = DoubleBuffer::new(10, 5);
+        db.current_mut().set(0, 0, Cell::from_char('Z'));
+        db.swap();
+        db.current_mut().set(0, 0, Cell::from_char('W'));
+
+        db.resize(20, 10);
+
+        // Both buffers should be fresh/empty
+        assert!(db.current().get(0, 0).unwrap().is_empty());
+        assert!(db.previous().get(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn double_buffer_current_and_previous_are_distinct() {
+        let mut db = DoubleBuffer::new(10, 5);
+        db.current_mut().set(0, 0, Cell::from_char('C'));
+
+        // Previous should not reflect changes to current
+        assert!(db.previous().get(0, 0).unwrap().is_empty());
+        assert_eq!(
+            db.current().get(0, 0).unwrap().content.as_char(),
+            Some('C')
+        );
     }
 }
