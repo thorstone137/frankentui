@@ -9,7 +9,7 @@
 # 4. Unit + snapshot tests
 # 5. Smoke test (alt-screen with auto-exit)
 # 6. Inline mode smoke test
-# 7. Screen navigation (cycle all 11 screens)
+# 7. Screen navigation (cycle all 12 screens)
 # 8. Search test (Shakespeare screen)
 # 9. Resize test (SIGWINCH handling)
 #
@@ -356,15 +356,15 @@ if $CAN_SMOKE; then
     # Launch the demo on each of the 11 screens (--screen=1..11) with a
     # short auto-exit. If any screen panics on startup, this catches it.
     # ────────────────────────────────────────────────────────────────────────
-    log_step "Screen navigation (all 11 screens)"
+    log_step "Screen navigation (all 12 screens)"
     log_info "Starting demo on each screen to verify no panics..."
     NAV_LOG="$LOG_DIR/07_navigation.log"
-    STEP_NAMES+=("Screen navigation (all 11)")
+    STEP_NAMES+=("Screen navigation (all 12)")
 
     nav_start=$(date +%s%N)
     {
         NAV_FAILURES=0
-        for screen_num in 1 2 3 4 5 6 7 8 9 10 11; do
+        for screen_num in 1 2 3 4 5 6 7 8 9 10 11 12; do
             echo "--- Screen $screen_num ---"
             if run_in_pty "FTUI_DEMO_EXIT_AFTER_MS=1500 timeout 8 $DEMO_BIN --screen=$screen_num" 2>&1; then
                 echo "  Screen $screen_num: OK"
