@@ -18,7 +18,6 @@
 //! assert_eq!(tree.root().children().len(), 2);
 //! ```
 
-use crate::stateful::{StateKey, Stateful};
 use crate::{Widget, draw_text_span};
 use ftui_core::geometry::Rect;
 use ftui_render::frame::Frame;
@@ -186,6 +185,7 @@ impl TreeNode {
     }
 
     /// Collect all expanded node paths into a set.
+    #[allow(dead_code)]
     pub(crate) fn collect_expanded(&self, prefix: &str, out: &mut HashSet<String>) {
         let path = if prefix.is_empty() {
             self.label.clone()
@@ -203,6 +203,7 @@ impl TreeNode {
     }
 
     /// Apply expanded state from a set of paths.
+    #[allow(dead_code)]
     pub(crate) fn apply_expanded(&mut self, prefix: &str, expanded_paths: &HashSet<String>) {
         let path = if prefix.is_empty() {
             self.label.clone()
@@ -297,6 +298,19 @@ impl Tree {
         self
     }
 
+    /// Set a persistence ID for state saving.
+    #[must_use]
+    pub fn with_persistence_id(mut self, id: impl Into<String>) -> Self {
+        self.persistence_id = Some(id.into());
+        self
+    }
+
+    /// Get the persistence ID, if set.
+    #[must_use]
+    pub fn persistence_id(&self) -> Option<&str> {
+        self.persistence_id.as_deref()
+    }
+
     /// Get a reference to the root node.
     #[must_use]
     pub fn root(&self) -> &TreeNode {
@@ -389,6 +403,41 @@ impl Widget for Tree {
 
     fn is_essential(&self) -> bool {
         false
+    }
+}
+
+// ============================================================================
+// Stateful Persistence Implementation
+// ============================================================================
+
+/// Persistable state for a [`Tree`] widget.
+///
+/// Stores the set of expanded node paths to restore tree expansion state.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(
+    feature = "state-persistence",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct TreePersistState {
+    /// Set of expanded node paths (e.g., "root/src/main.rs").
+    pub expanded_paths: HashSet<String>,
+}
+
+impl crate::stateful::Stateful for Tree {
+    type State = TreePersistState;
+
+    fn state_key(&self) -> crate::stateful::StateKey {
+        crate::stateful::StateKey::new("Tree", self.persistence_id.as_deref().unwrap_or("default"))
+    }
+
+    fn save_state(&self) -> TreePersistState {
+        let mut expanded_paths = HashSet::new();
+        self.root.collect_expanded("", &mut expanded_paths);
+        TreePersistState { expanded_paths }
+    }
+
+    fn restore_state(&mut self, state: TreePersistState) {
+        self.root.apply_expanded("", &state.expanded_paths);
     }
 }
 
@@ -625,5 +674,96 @@ mod tests {
             TreeNode::new("c"),
         ]);
         assert_eq!(root.children().len(), 3);
+    }
+
+    // --- Stateful Persistence tests ---
+
+    use crate::stateful::Stateful;
+
+    #[test]
+    fn tree_with_persistence_id() {
+        let tree = Tree::new(TreeNode::new("root")).with_persistence_id("file-tree");
+        assert_eq!(tree.persistence_id(), Some("file-tree"));
+    }
+
+    #[test]
+    fn tree_default_no_persistence_id() {
+        let tree = Tree::new(TreeNode::new("root"));
+        assert_eq!(tree.persistence_id(), None);
+    }
+
+    #[test]
+    fn tree_save_restore_round_trip() {
+        // Create tree with some nodes expanded, some collapsed
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(
+                    TreeNode::new("src")
+                        .child(TreeNode::new("main.rs"))
+                        .child(TreeNode::new("lib.rs")),
+                )
+                .child(TreeNode::new("tests").with_expanded(false)),
+        )
+        .with_persistence_id("test");
+
+        // Verify initial state: root and src expanded, tests collapsed
+        assert!(tree.root().is_expanded());
+        assert!(tree.root().children()[0].is_expanded()); // src
+        assert!(!tree.root().children()[1].is_expanded()); // tests
+
+        let saved = tree.save_state();
+
+        // Verify saved state captures expanded nodes
+        assert!(saved.expanded_paths.contains("root"));
+        assert!(saved.expanded_paths.contains("root/src"));
+        assert!(!saved.expanded_paths.contains("root/tests"));
+
+        // Modify tree state (collapse src)
+        tree.root_mut().children[0].toggle_expanded();
+        assert!(!tree.root().children()[0].is_expanded());
+
+        // Restore
+        tree.restore_state(saved);
+
+        // Verify restored state
+        assert!(tree.root().is_expanded());
+        assert!(tree.root().children()[0].is_expanded()); // src restored
+        assert!(!tree.root().children()[1].is_expanded()); // tests still collapsed
+    }
+
+    #[test]
+    fn tree_state_key_uses_persistence_id() {
+        let tree = Tree::new(TreeNode::new("root")).with_persistence_id("project-explorer");
+        let key = tree.state_key();
+        assert_eq!(key.widget_type, "Tree");
+        assert_eq!(key.instance_id, "project-explorer");
+    }
+
+    #[test]
+    fn tree_state_key_default_when_no_id() {
+        let tree = Tree::new(TreeNode::new("root"));
+        let key = tree.state_key();
+        assert_eq!(key.widget_type, "Tree");
+        assert_eq!(key.instance_id, "default");
+    }
+
+    #[test]
+    fn tree_persist_state_default() {
+        let persist = TreePersistState::default();
+        assert!(persist.expanded_paths.is_empty());
+    }
+
+    #[test]
+    fn tree_collect_expanded_only_includes_nodes_with_children() {
+        let tree = Tree::new(
+            TreeNode::new("root").child(TreeNode::new("leaf")), // leaf has no children
+        );
+
+        let saved = tree.save_state();
+
+        // Only root is expanded (and has children)
+        assert!(saved.expanded_paths.contains("root"));
+        // leaf has no children, so it's not tracked
+        assert!(!saved.expanded_paths.contains("root/leaf"));
     }
 }

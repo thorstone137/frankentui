@@ -254,7 +254,7 @@ pub use stateful::{StateKey, Stateful, VersionedState};
 // Widget persist state types for state-persistence
 pub use list::ListPersistState;
 pub use table::TablePersistState;
-// pub use tree::TreePersistState;  // TODO: Not yet implemented
+pub use tree::TreePersistState;
 pub use virtualized::VirtualizedListPersistState;
 
 // Undo support for widgets
