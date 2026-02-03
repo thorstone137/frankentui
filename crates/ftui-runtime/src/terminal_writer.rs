@@ -632,7 +632,7 @@ impl<W: Write> TerminalWriter<W> {
     /// Present UI in alternate screen mode (simpler, no cursor gymnastics).
     fn present_altscreen(&mut self, buffer: &Buffer) -> io::Result<()> {
         let diff = {
-            let _span = debug_span!("diff_compute").entered();
+            let _span = debug_span!("ftui.render.diff_compute").entered();
             if let Some(ref prev) = self.prev_buffer {
                 if prev.width() == buffer.width() && prev.height() == buffer.height() {
                     BufferDiff::compute(prev, buffer)
@@ -650,7 +650,7 @@ impl<W: Write> TerminalWriter<W> {
         }
 
         {
-            let _span = debug_span!("emit").entered();
+            let _span = debug_span!("ftui.render.emit").entered();
             self.emit_diff(buffer, &diff, None, 0)?;
         }
 

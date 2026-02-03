@@ -965,11 +965,7 @@ pub mod redact {
     /// Returns `T::default()` when not in verbose mode.
     #[inline]
     pub fn if_verbose<T: Default>(value: T) -> T {
-        if is_verbose() {
-            value
-        } else {
-            T::default()
-        }
+        if is_verbose() { value } else { T::default() }
     }
 
     /// Emit a string value only if verbose mode is enabled.
@@ -989,11 +985,7 @@ pub mod redact {
     /// Type names can reveal internal architecture but are useful for debugging.
     #[inline]
     pub fn type_name(name: &str) -> &str {
-        if is_verbose() {
-            name
-        } else {
-            "[type]"
-        }
+        if is_verbose() { name } else { "[type]" }
     }
 
     // =========================================================================

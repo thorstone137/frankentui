@@ -155,12 +155,11 @@ impl MousePlayground {
         self.log_event(&desc, x, y);
 
         // Check for clicks on targets
-        if let MouseEventKind::Down(MouseButton::Left) = event.kind {
-            if let Some(target_id) = self.hit_test(x, y) {
-                if let Some(target) = self.targets.iter_mut().find(|t| t.id == target_id) {
-                    target.clicks += 1;
-                }
-            }
+        if let MouseEventKind::Down(MouseButton::Left) = event.kind
+            && let Some(target_id) = self.hit_test(x, y)
+            && let Some(target) = self.targets.iter_mut().find(|t| t.id == target_id)
+        {
+            target.clicks += 1;
         }
 
         // Update hover with stabilization
@@ -172,16 +171,16 @@ impl MousePlayground {
         // Update hovered state on targets
         if stabilized != self.current_hover {
             // Clear old hover
-            if let Some(old_id) = self.current_hover {
-                if let Some(target) = self.targets.iter_mut().find(|t| t.id == old_id) {
-                    target.hovered = false;
-                }
+            if let Some(old_id) = self.current_hover
+                && let Some(target) = self.targets.iter_mut().find(|t| t.id == old_id)
+            {
+                target.hovered = false;
             }
             // Set new hover
-            if let Some(new_id) = stabilized {
-                if let Some(target) = self.targets.iter_mut().find(|t| t.id == new_id) {
-                    target.hovered = true;
-                }
+            if let Some(new_id) = stabilized
+                && let Some(target) = self.targets.iter_mut().find(|t| t.id == new_id)
+            {
+                target.hovered = true;
             }
             self.current_hover = stabilized;
         }
@@ -472,40 +471,41 @@ impl MousePlayground {
     fn render_overlay(&self, frame: &mut Frame, area: Rect) {
         // Draw a subtle overlay showing hit regions
         // For simplicity, just draw a small indicator at mouse position
-        if let Some((x, y)) = self.last_mouse_pos {
-            if x < area.x + area.width && y < area.y + area.height {
-                // Draw crosshair at mouse position
-                let horiz_cell = RenderCell::from_char('-')
-                    .with_fg(theme::accent::PRIMARY.into())
-                    .with_attrs(CellAttrs::new(StyleFlags::DIM, 0));
-                let vert_cell = RenderCell::from_char('|')
-                    .with_fg(theme::accent::PRIMARY.into())
-                    .with_attrs(CellAttrs::new(StyleFlags::DIM, 0));
-                let center_cell = RenderCell::from_char('+')
-                    .with_fg(theme::accent::PRIMARY.into())
-                    .with_attrs(CellAttrs::new(StyleFlags::BOLD, 0));
+        if let Some((x, y)) = self.last_mouse_pos
+            && x < area.x + area.width
+            && y < area.y + area.height
+        {
+            // Draw crosshair at mouse position
+            let horiz_cell = RenderCell::from_char('-')
+                .with_fg(theme::accent::PRIMARY.into())
+                .with_attrs(CellAttrs::new(StyleFlags::DIM, 0));
+            let vert_cell = RenderCell::from_char('|')
+                .with_fg(theme::accent::PRIMARY.into())
+                .with_attrs(CellAttrs::new(StyleFlags::DIM, 0));
+            let center_cell = RenderCell::from_char('+')
+                .with_fg(theme::accent::PRIMARY.into())
+                .with_attrs(CellAttrs::new(StyleFlags::BOLD, 0));
 
-                // Horizontal line (within bounds)
-                let h_start = area.x;
-                let h_end = (area.x + area.width).min(x.saturating_add(20));
-                for hx in h_start..h_end {
-                    if hx != x {
-                        frame.buffer.set(hx, y, horiz_cell);
-                    }
+            // Horizontal line (within bounds)
+            let h_start = area.x;
+            let h_end = (area.x + area.width).min(x.saturating_add(20));
+            for hx in h_start..h_end {
+                if hx != x {
+                    frame.buffer.set(hx, y, horiz_cell);
                 }
-
-                // Vertical line (within bounds)
-                let v_start = area.y;
-                let v_end = (area.y + area.height).min(y.saturating_add(10));
-                for vy in v_start..v_end {
-                    if vy != y {
-                        frame.buffer.set(x, vy, vert_cell);
-                    }
-                }
-
-                // Center marker
-                frame.buffer.set(x, y, center_cell);
             }
+
+            // Vertical line (within bounds)
+            let v_start = area.y;
+            let v_end = (area.y + area.height).min(y.saturating_add(10));
+            for vy in v_start..v_end {
+                if vy != y {
+                    frame.buffer.set(x, vy, vert_cell);
+                }
+            }
+
+            // Center marker
+            frame.buffer.set(x, y, center_cell);
         }
     }
 }

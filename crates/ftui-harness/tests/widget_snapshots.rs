@@ -16,11 +16,11 @@ use ftui_widgets::borders::BorderType;
 use ftui_widgets::borders::Borders;
 use ftui_widgets::columns::Columns;
 use ftui_widgets::list::{List, ListItem, ListState};
+use ftui_widgets::modal::{BackdropConfig, Modal, ModalPosition, ModalSizeConstraints};
 use ftui_widgets::padding::Padding;
 use ftui_widgets::panel::Panel;
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::scrollbar::{Scrollbar, ScrollbarOrientation, ScrollbarState};
-use ftui_widgets::modal::{BackdropConfig, Modal, ModalPosition, ModalSizeConstraints};
 use ftui_widgets::{StatefulWidget, Widget};
 
 // ============================================================================
@@ -351,12 +351,16 @@ fn snapshot_modal_backdrop_opacity() {
     let mut frame = Frame::new(40, 12, &mut pool);
     for y in 0..12u16 {
         for x in 0..40u16 {
-            frame.buffer.set(x, y, Cell::from_char(if (x + y) % 2 == 0 { '#' } else { '.' }));
+            frame.buffer.set(
+                x,
+                y,
+                Cell::from_char(if (x + y) % 2 == 0 { '#' } else { '.' }),
+            );
         }
     }
 
-    let content = Paragraph::new(Text::raw("Content"))
-        .block(Block::default().borders(Borders::ALL));
+    let content =
+        Paragraph::new(Text::raw("Content")).block(Block::default().borders(Borders::ALL));
     let modal = Modal::new(content)
         .size(
             ModalSizeConstraints::new()

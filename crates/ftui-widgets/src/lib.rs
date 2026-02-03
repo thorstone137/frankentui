@@ -183,6 +183,8 @@ pub mod toast;
 pub mod tree;
 /// Undo support for widgets.
 pub mod undo_support;
+/// Inline validation error display widget.
+pub mod validation_error;
 pub mod virtualized;
 
 pub use align::{Align, VerticalAlignment};
@@ -249,11 +251,23 @@ pub use drag::{
 // Stateful persistence trait
 pub use stateful::{StateKey, Stateful, VersionedState};
 
+// Widget persist state types for state-persistence
+pub use list::ListPersistState;
+pub use table::TablePersistState;
+// pub use tree::TreePersistState;  // TODO: Not yet implemented
+pub use virtualized::VirtualizedListPersistState;
+
 // Undo support for widgets
 pub use undo_support::{
     ListOperation, ListUndoExt, SelectionOperation, TableOperation, TableUndoExt,
     TextEditOperation, TextInputUndoExt, TreeOperation, TreeUndoExt, UndoSupport, UndoWidgetId,
     WidgetTextEditCmd,
+};
+
+// Inline validation error display
+pub use validation_error::{
+    ANIMATION_DURATION_MS, ERROR_BG_DEFAULT, ERROR_FG_DEFAULT, ERROR_ICON_DEFAULT,
+    ValidationErrorDisplay, ValidationErrorState,
 };
 
 use ftui_core::geometry::Rect;

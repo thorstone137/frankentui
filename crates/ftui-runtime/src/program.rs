@@ -284,7 +284,6 @@ impl<M> Cmd<M> {
             _ => 1,
         }
     }
-
 }
 
 /// Resize handling behavior for the runtime.
@@ -794,8 +793,10 @@ impl<M: Model, W: Write + Send> Program<M, W> {
                     .entered();
                     let start = Instant::now();
                     let cmd = self.model.update(msg);
-                    tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
-                    tracing::Span::current().record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
+                    tracing::Span::current()
+                        .record("duration_us", start.elapsed().as_micros() as u64);
+                    tracing::Span::current()
+                        .record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
                     cmd
                 };
                 self.mark_dirty();
@@ -929,7 +930,8 @@ impl<M: Model, W: Write + Send> Program<M, W> {
             let start = Instant::now();
             let cmd = self.model.update(msg);
             tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
-            tracing::Span::current().record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
+            tracing::Span::current()
+                .record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
             cmd
         };
         self.mark_dirty();
@@ -973,7 +975,8 @@ impl<M: Model, W: Write + Send> Program<M, W> {
                 let start = Instant::now();
                 let cmd = self.model.update(msg);
                 tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
-                tracing::Span::current().record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
+                tracing::Span::current()
+                    .record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
                 cmd
             };
             self.mark_dirty();
@@ -999,7 +1002,8 @@ impl<M: Model, W: Write + Send> Program<M, W> {
                 let start = Instant::now();
                 let cmd = self.model.update(msg);
                 tracing::Span::current().record("duration_us", start.elapsed().as_micros() as u64);
-                tracing::Span::current().record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
+                tracing::Span::current()
+                    .record("cmd_type", format!("{:?}", std::mem::discriminant(&cmd)));
                 cmd
             };
             self.mark_dirty();

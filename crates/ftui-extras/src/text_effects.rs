@@ -90,6 +90,7 @@ pub fn hsv_to_rgb(h: f64, s: f64, v: f64) -> PackedRgba {
 ///
 /// Used for effects like flicker and glitch that need fast, reproducible
 /// randomness without pulling in external RNG crates.
+#[allow(dead_code)]
 fn simple_hash(mut x: u64) -> u64 {
     x ^= x >> 12;
     x ^= x << 25;
@@ -2530,6 +2531,75 @@ impl StyledText {
         color
     }
 
+    /// Compute color at 2D position for multi-line effects (test helper).
+    ///
+    /// Args are `(row, col, total_width, total_height)` to match scanline tests.
+    #[cfg(test)]
+    fn char_color_2d(
+        &self,
+        row: usize,
+        col: usize,
+        total_width: usize,
+        total_height: usize,
+    ) -> PackedRgba {
+        let linear_idx = row.saturating_mul(total_width).saturating_add(col);
+        let total = total_width.saturating_mul(total_height).max(1);
+
+        let mut color = if self
+            .effects
+            .iter()
+            .any(|e| matches!(e, TextEffect::Scanline { .. }))
+        {
+            let mut filtered = self.clone();
+            filtered
+                .effects
+                .retain(|e| !matches!(e, TextEffect::Scanline { .. }));
+            filtered.char_color(linear_idx, total)
+        } else {
+            self.char_color(linear_idx, total)
+        };
+
+        for effect in &self.effects {
+            if let TextEffect::Scanline {
+                intensity,
+                line_gap,
+                scroll,
+                scroll_speed,
+                flicker,
+            } = effect
+            {
+                let scroll_offset = if *scroll {
+                    (self.time * scroll_speed).floor() as i64
+                } else {
+                    0
+                };
+                let effective_row = row as i64 + scroll_offset;
+                let mut dim_factor = 1.0;
+
+                if *line_gap > 0 {
+                    let gap = *line_gap as i64;
+                    let row_mod = ((effective_row % gap) + gap) % gap;
+                    if row_mod == 0 {
+                        dim_factor *= 1.0 - intensity.clamp(0.0, 1.0);
+                    }
+                }
+
+                if *flicker > 0.0 {
+                    let flicker_seed = (self.time * 60.0) as u64;
+                    let hash = flicker_seed
+                        .wrapping_mul(2654435761)
+                        .wrapping_add(linear_idx as u64 * 2246822519);
+                    let rand = (hash % 10000) as f64 / 10000.0;
+                    dim_factor *= 1.0 - (*flicker * rand);
+                }
+
+                color = apply_alpha(color, dim_factor);
+            }
+        }
+
+        color
+    }
+
     /// Get the character to display at position `idx`.
     ///
     /// Character-modifying effects have priority - the first effect that
@@ -4285,8 +4355,8 @@ mod tests {
         let color_varied = text_varied.char_color(0, 5);
         let min_expected = (0.3 * 255.0) as u8;
         assert!(
-            color_varied.r() >= min_expected && color_varied.r() <= 255,
-            "Color should be in valid range [{min_expected}, 255], got {}",
+            color_varied.r() >= min_expected,
+            "Color should be >= {min_expected}, got {}",
             color_varied.r()
         );
     }
@@ -6524,7 +6594,7 @@ mod tests {
 
     #[test]
     fn test_chromatic_aberration_clamping() {
-        // Verify RGB values are properly clamped to 0-255
+        // Verify RGB values are properly clamped at extremes
         let base = PackedRgba::rgb(250, 128, 250);
         let text = StyledText::new("01234567890123456789") // 20 chars
             .base_color(base)
@@ -6536,13 +6606,13 @@ mod tests {
             })
             .time(0.0);
 
-        for idx in 0..20 {
-            let result = text.char_color(idx, 20);
-            // All values should be valid u8
-            assert!(result.r() <= 255, "Red should be <= 255");
-            assert!(result.b() <= 255, "Blue should be <= 255");
-            // These would panic if clamping failed, but this is explicit verification
-        }
+        // Right-most index: blue should clamp up to 255.
+        let right = text.char_color(19, 20);
+        assert_eq!(right.b(), 255, "Blue should clamp at 255 on the right");
+
+        // Left-most index: red should clamp up to 255.
+        let left = text.char_color(0, 20);
+        assert_eq!(left.r(), 255, "Red should clamp at 255 on the left");
     }
 
     #[test]
@@ -6573,21 +6643,28 @@ mod tests {
     fn test_scanline_dims_every_nth() {
         // Every 2nd row should be dimmed, others full brightness
         let base = PackedRgba::rgb(200, 200, 200);
-        let text = StyledText::new("AAAA\nBBBB\nCCCC\nDDDD")
-            .base_color(base)
-            .effect(TextEffect::Scanline {
-                intensity: 0.5,
-                line_gap: 2,
-                scroll: false,
-                scroll_speed: 0.0,
-                flicker: 0.0,
-            })
-            .time(0.0);
+        let text = StyledMultiLine::new(vec![
+            "AAAA".to_string(),
+            "BBBB".to_string(),
+            "CCCC".to_string(),
+            "DDDD".to_string(),
+        ])
+        .base_color(base)
+        .effect(TextEffect::Scanline {
+            intensity: 0.5,
+            line_gap: 2,
+            scroll: false,
+            scroll_speed: 0.0,
+            flicker: 0.0,
+        })
+        .time(0.0);
 
         // Row 0 (even) - should be dimmed
-        let row0 = text.char_color_2d(0, 0, 4, 4);
+        let total_width = text.width();
+        let total_height = text.height();
+        let row0 = text.char_color_2d(0, 0, total_width, total_height);
         // Row 1 (odd) - should be full brightness
-        let row1 = text.char_color_2d(1, 0, 4, 4);
+        let row1 = text.char_color_2d(0, 1, total_width, total_height);
 
         // Row 0 should be darker than row 1
         assert!(
@@ -6604,7 +6681,7 @@ mod tests {
         let base = PackedRgba::rgb(200, 200, 200);
 
         // Low intensity
-        let text_low = StyledText::new("AAA\nBBB")
+        let text_low = StyledMultiLine::new(vec!["AAA".to_string(), "BBB".to_string()])
             .base_color(base)
             .effect(TextEffect::Scanline {
                 intensity: 0.2,
@@ -6616,7 +6693,7 @@ mod tests {
             .time(0.0);
 
         // High intensity
-        let text_high = StyledText::new("AAA\nBBB")
+        let text_high = StyledMultiLine::new(vec!["AAA".to_string(), "BBB".to_string()])
             .base_color(base)
             .effect(TextEffect::Scanline {
                 intensity: 0.8,
@@ -6627,8 +6704,10 @@ mod tests {
             })
             .time(0.0);
 
-        let low_color = text_low.char_color_2d(0, 0, 3, 2);
-        let high_color = text_high.char_color_2d(0, 0, 3, 2);
+        let total_width = text_low.width();
+        let total_height = text_low.height();
+        let low_color = text_low.char_color_2d(0, 0, total_width, total_height);
+        let high_color = text_high.char_color_2d(0, 0, total_width, total_height);
 
         // Higher intensity should result in darker scanline
         assert!(
@@ -6645,33 +6724,45 @@ mod tests {
         let base = PackedRgba::rgb(200, 200, 200);
 
         // At time 0, row 0 is a scanline
-        let text_t0 = StyledText::new("AA\nBB\nCC\nDD")
-            .base_color(base)
-            .effect(TextEffect::Scanline {
-                intensity: 0.5,
-                line_gap: 2,
-                scroll: true,
-                scroll_speed: 1.0, // 1 row per second
-                flicker: 0.0,
-            })
-            .time(0.0);
+        let text_t0 = StyledMultiLine::new(vec![
+            "AA".to_string(),
+            "BB".to_string(),
+            "CC".to_string(),
+            "DD".to_string(),
+        ])
+        .base_color(base)
+        .effect(TextEffect::Scanline {
+            intensity: 0.5,
+            line_gap: 2,
+            scroll: true,
+            scroll_speed: 1.0, // 1 row per second
+            flicker: 0.0,
+        })
+        .time(0.0);
 
         // At time 1.0, pattern should shift by 1 row
-        let text_t1 = StyledText::new("AA\nBB\nCC\nDD")
-            .base_color(base)
-            .effect(TextEffect::Scanline {
-                intensity: 0.5,
-                line_gap: 2,
-                scroll: true,
-                scroll_speed: 1.0,
-                flicker: 0.0,
-            })
-            .time(1.0);
+        let text_t1 = StyledMultiLine::new(vec![
+            "AA".to_string(),
+            "BB".to_string(),
+            "CC".to_string(),
+            "DD".to_string(),
+        ])
+        .base_color(base)
+        .effect(TextEffect::Scanline {
+            intensity: 0.5,
+            line_gap: 2,
+            scroll: true,
+            scroll_speed: 1.0,
+            flicker: 0.0,
+        })
+        .time(1.0);
 
         // At t=0, row 0 is scanline (dimmed)
         // At t=1, row 0+1=1 effective, so row 1 is now scanline
-        let row0_t0 = text_t0.char_color_2d(0, 0, 2, 4);
-        let row0_t1 = text_t1.char_color_2d(0, 0, 2, 4);
+        let total_width = text_t0.width();
+        let total_height = text_t0.height();
+        let row0_t0 = text_t0.char_color_2d(0, 0, total_width, total_height);
+        let row0_t1 = text_t1.char_color_2d(0, 0, total_width, total_height);
 
         // Row 0 at t=0 should be dimmed, at t=1 should be bright
         assert!(
@@ -6698,9 +6789,7 @@ mod tests {
             .time(1.5);
 
         // Sample colors at different positions
-        let colors: Vec<PackedRgba> = (0..8)
-            .map(|i| text.char_color(i, 8))
-            .collect();
+        let colors: Vec<PackedRgba> = (0..8).map(|i| text.char_color(i, 8)).collect();
 
         // With high flicker, we expect some variation
         // Not all chars should be exactly the same brightness
@@ -6715,7 +6804,7 @@ mod tests {
     fn test_scanline_gap_1_dims_all() {
         // line_gap=1 means every row is a scanline (all dimmed)
         let base = PackedRgba::rgb(200, 200, 200);
-        let text = StyledText::new("AA\nBB\nCC")
+        let text = StyledMultiLine::new(vec!["AA".to_string(), "BB".to_string(), "CC".to_string()])
             .base_color(base)
             .effect(TextEffect::Scanline {
                 intensity: 0.5,
@@ -6726,9 +6815,11 @@ mod tests {
             })
             .time(0.0);
 
+        let total_width = text.width();
+        let total_height = text.height();
         // All rows should be dimmed
         for row in 0..3 {
-            let color = text.char_color_2d(row, 0, 2, 3);
+            let color = text.char_color_2d(0, row, total_width, total_height);
             assert!(
                 color.r() < base.r(),
                 "Row {} should be dimmed with gap=1",
@@ -6741,26 +6832,33 @@ mod tests {
     fn test_scanline_gap_2_alternates() {
         // line_gap=2: rows 0, 2, 4... are scanlines
         let base = PackedRgba::rgb(200, 200, 200);
-        let text = StyledText::new("AA\nBB\nCC\nDD")
-            .base_color(base)
-            .effect(TextEffect::Scanline {
-                intensity: 0.5,
-                line_gap: 2,
-                scroll: false,
-                scroll_speed: 0.0,
-                flicker: 0.0,
-            })
-            .time(0.0);
+        let text = StyledMultiLine::new(vec![
+            "AA".to_string(),
+            "BB".to_string(),
+            "CC".to_string(),
+            "DD".to_string(),
+        ])
+        .base_color(base)
+        .effect(TextEffect::Scanline {
+            intensity: 0.5,
+            line_gap: 2,
+            scroll: false,
+            scroll_speed: 0.0,
+            flicker: 0.0,
+        })
+        .time(0.0);
 
+        let total_width = text.width();
+        let total_height = text.height();
         // Even rows (0, 2) should be dimmed
-        let row0 = text.char_color_2d(0, 0, 2, 4);
-        let row2 = text.char_color_2d(2, 0, 2, 4);
+        let row0 = text.char_color_2d(0, 0, total_width, total_height);
+        let row2 = text.char_color_2d(0, 2, total_width, total_height);
         assert!(row0.r() < base.r(), "Row 0 should be dimmed");
         assert!(row2.r() < base.r(), "Row 2 should be dimmed");
 
         // Odd rows (1, 3) should be full brightness
-        let row1 = text.char_color_2d(1, 0, 2, 4);
-        let row3 = text.char_color_2d(3, 0, 2, 4);
+        let row1 = text.char_color_2d(0, 1, total_width, total_height);
+        let row3 = text.char_color_2d(0, 3, total_width, total_height);
         assert_eq!(row1.r(), base.r(), "Row 1 should be full brightness");
         assert_eq!(row3.r(), base.r(), "Row 3 should be full brightness");
     }
@@ -7542,11 +7640,7 @@ impl StyledMultiLine {
                     let is_scanline = *line_gap > 0 && effective_row % (*line_gap as usize) == 0;
 
                     // Apply scanline dimming
-                    let mut dim_factor = if is_scanline {
-                        1.0 - *intensity
-                    } else {
-                        1.0
-                    };
+                    let mut dim_factor = if is_scanline { 1.0 - *intensity } else { 1.0 };
 
                     // Apply flicker (random per-frame brightness variation)
                     if *flicker > 0.0 {

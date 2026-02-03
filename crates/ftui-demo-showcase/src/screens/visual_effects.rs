@@ -477,7 +477,7 @@ impl TextEffectsDemo {
 
     fn build_typography_effect(&self) -> TextEffect {
         match self.effect_idx {
-            0 | 1 | 2 | 3 => {
+            0..=3 => {
                 // Shadow, Glow, Outline, Mirror are handled specially in render
                 TextEffect::None
             }
@@ -2620,7 +2620,7 @@ impl VisualEffectsScreen {
     /// Render tab bar for text effects
     fn render_text_effects_tabs(&self, frame: &mut Frame, area: Rect) {
         let mut text = String::with_capacity(area.width as usize);
-        text.push_str(" ");
+        text.push(' ');
 
         for (i, tab) in TextEffectsTab::ALL.iter().enumerate() {
             let is_active = *tab == self.text_effects.tab;
@@ -2633,7 +2633,7 @@ impl VisualEffectsScreen {
             }
 
             if i < 5 {
-                text.push_str("│");
+                text.push('│');
             }
         }
 
@@ -2783,7 +2783,11 @@ impl VisualEffectsScreen {
             2 => {
                 // Scanline effect - alternate brightness
                 let scanline_time = (self.text_effects.time * 10.0) as usize;
-                let brightness = if scanline_time % 2 == 0 { 255u8 } else { 180u8 };
+                let brightness = if scanline_time.is_multiple_of(2) {
+                    255u8
+                } else {
+                    180u8
+                };
                 let styled = StyledText::new(text)
                     .bold()
                     .base_color(PackedRgba::rgb(brightness, brightness, brightness));

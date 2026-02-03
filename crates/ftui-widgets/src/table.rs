@@ -185,12 +185,7 @@ impl crate::stateful::Stateful for TableState {
     type State = TablePersistState;
 
     fn state_key(&self) -> crate::stateful::StateKey {
-        crate::stateful::StateKey::new(
-            "Table",
-            self.persistence_id
-                .as_deref()
-                .unwrap_or("default"),
-        )
+        crate::stateful::StateKey::new("Table", self.persistence_id.as_deref().unwrap_or("default"))
     }
 
     fn save_state(&self) -> TablePersistState {

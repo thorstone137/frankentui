@@ -3,6 +3,7 @@
 //! Core: terminal lifecycle, capability detection, events, and input parsing.
 
 pub mod animation;
+pub mod capability_override;
 pub mod cursor;
 pub mod event;
 pub mod event_coalescer;

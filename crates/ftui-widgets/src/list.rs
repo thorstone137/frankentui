@@ -177,10 +177,7 @@ impl Stateful for ListState {
     type State = ListPersistState;
 
     fn state_key(&self) -> StateKey {
-        StateKey::new(
-            "List",
-            self.persistence_id.as_deref().unwrap_or("default"),
-        )
+        StateKey::new("List", self.persistence_id.as_deref().unwrap_or("default"))
     }
 
     fn save_state(&self) -> ListPersistState {

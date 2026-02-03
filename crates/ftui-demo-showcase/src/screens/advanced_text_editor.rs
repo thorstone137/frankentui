@@ -197,14 +197,7 @@ and proper Unicode handling throughout.
                 .search_results
                 .iter()
                 .enumerate()
-                .min_by_key(|(_, r)| {
-                    let dist = if r.range.start >= cursor_byte {
-                        r.range.start - cursor_byte
-                    } else {
-                        cursor_byte - r.range.start
-                    };
-                    dist
-                })
+                .min_by_key(|(_, r)| r.range.start.abs_diff(cursor_byte))
                 .map(|(i, _)| i);
             self.current_match = closest;
             self.jump_to_current_match();
@@ -487,12 +480,12 @@ impl Screen for AdvancedTextEditor {
             kind: KeyEventKind::Press,
             ..
         }) = event
+            && modifiers.contains(Modifiers::CTRL)
+            && self.search_visible
         {
-            if modifiers.contains(Modifiers::CTRL) && self.search_visible {
-                self.focus = self.focus.next();
-                self.update_focus_states();
-                return Cmd::None;
-            }
+            self.focus = self.focus.next();
+            self.update_focus_states();
+            return Cmd::None;
         }
         if let Event::Key(KeyEvent {
             code: KeyCode::Left,
@@ -500,12 +493,12 @@ impl Screen for AdvancedTextEditor {
             kind: KeyEventKind::Press,
             ..
         }) = event
+            && modifiers.contains(Modifiers::CTRL)
+            && self.search_visible
         {
-            if modifiers.contains(Modifiers::CTRL) && self.search_visible {
-                self.focus = self.focus.prev();
-                self.update_focus_states();
-                return Cmd::None;
-            }
+            self.focus = self.focus.prev();
+            self.update_focus_states();
+            return Cmd::None;
         }
 
         // Global shortcuts

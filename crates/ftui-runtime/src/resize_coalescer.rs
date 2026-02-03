@@ -534,6 +534,7 @@ impl ResizeCoalescer {
 
     /// Compute a summary of the decision log.
     #[must_use]
+    #[allow(clippy::field_reassign_with_default)]
     pub fn decision_summary(&self) -> DecisionSummary {
         let mut summary = DecisionSummary::default();
         summary.decision_count = self.logs.len();
