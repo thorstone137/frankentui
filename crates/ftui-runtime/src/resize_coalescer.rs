@@ -425,6 +425,9 @@ impl ResizeCoalescer {
         // Update pending size (latest wins)
         self.pending_size = Some((width, height));
 
+        // Track events in current coalesce window (bd-1rz0.7)
+        self.events_in_window += 1;
+
         // Mark window start if this is first event
         if self.window_start.is_none() {
             self.window_start = Some(now);
@@ -446,6 +449,14 @@ impl ResizeCoalescer {
         }
 
         self.log_decision(now, "coalesce", false, Some(dt_ms), None);
+
+        // Fire decision hook for coalesce events (bd-1rz0.7)
+        if let Some(ref hooks) = self.telemetry_hooks {
+            if let Some(entry) = self.logs.last() {
+                hooks.fire_decision(entry);
+            }
+        }
+
         CoalesceAction::ShowPlaceholder
     }
 
@@ -675,9 +686,15 @@ impl ResizeCoalescer {
             .unwrap_or(Duration::ZERO);
         let coalesce_ms = coalesce_time.as_secs_f64() * 1000.0;
 
+        // Track cycle time for percentile calculation (bd-1rz0.7)
+        self.cycle_times.push(coalesce_ms);
+
         self.window_start = None;
         self.last_applied = (width, height);
         self.last_render = now;
+
+        // Reset events in window counter
+        self.events_in_window = 0;
 
         self.log_decision(
             now,
@@ -686,6 +703,13 @@ impl ResizeCoalescer {
             None,
             Some(coalesce_ms),
         );
+
+        // Fire telemetry hooks (bd-1rz0.7)
+        if let Some(ref hooks) = self.telemetry_hooks {
+            if let Some(entry) = self.logs.last() {
+                hooks.fire_resize_applied(entry);
+            }
+        }
 
         CoalesceAction::ApplyResize {
             width,
