@@ -7,9 +7,12 @@
 //!
 //! # Invariants
 //!
-//! 1. **Cursor always in bounds**: `cursor_x < width`, `cursor_y < height`.
-//!    Operations that would move the cursor out of bounds clamp to edges
-//!    (except wrapping, which advances to the next line).
+//! 1. **Cursor always in bounds**: `cursor_x <= width`, `cursor_y < height`.
+//!    When `cursor_x == width`, the terminal is in "pending wrap" state:
+//!    the next character will wrap to the start of the next line. This is
+//!    standard terminal behavior (DECAWM). Operations that would move the
+//!    cursor out of bounds clamp to edges (except wrapping, which advances
+//!    to the next line).
 //!
 //! 2. **Grid always fully populated**: `grid.len() == width * height`.
 //!    Every cell is initialized to the default (space, no style).
@@ -1101,7 +1104,8 @@ mod tests {
     use super::*;
 
     fn assert_invariants(vt: &VirtualTerminal) {
-        assert!(vt.cursor_x < vt.width);
+        // cursor_x == width is valid: it's the "pending wrap" state
+        assert!(vt.cursor_x <= vt.width);
         assert!(vt.cursor_y < vt.height);
         assert_eq!(vt.grid.len(), vt.width as usize * vt.height as usize);
         assert!(vt.scroll_top <= vt.scroll_bottom);

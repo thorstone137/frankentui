@@ -1754,7 +1754,12 @@ mod tests {
 
         // Need 4+ items so scroll_offset=1 is valid:
         // items_per_viewport = 5/2 = 2, max_offset = 4-2 = 2
-        let items = vec![IndexedItem(0), IndexedItem(1), IndexedItem(2), IndexedItem(3)];
+        let items = vec![
+            IndexedItem(0),
+            IndexedItem(1),
+            IndexedItem(2),
+            IndexedItem(3),
+        ];
         let list = VirtualizedList::new(&items).fixed_height(2);
 
         // Scroll so item 1 is at top, item 0 is in overscan (above viewport)

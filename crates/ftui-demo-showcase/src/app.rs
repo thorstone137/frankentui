@@ -21,7 +21,9 @@ use ftui_layout::{Constraint, Flex};
 use ftui_render::cell::Cell as RenderCell;
 use ftui_render::frame::Frame;
 use ftui_runtime::undo::HistoryManager;
-use ftui_runtime::{Cmd, Every, InlineAutoRemeasureConfig, Model, Subscription, VoiSampler};
+use ftui_runtime::{
+    Cmd, Every, InlineAutoRemeasureConfig, Model, Subscription, VoiLogEntry, VoiSampler,
+};
 use ftui_style::Style;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};

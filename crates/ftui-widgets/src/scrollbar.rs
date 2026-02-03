@@ -237,7 +237,14 @@ impl<'a> StatefulWidget for Scrollbar<'a> {
             if x < area.right() && y < area.bottom() {
                 // Use draw_text_span to handle graphemes correctly.
                 // Pass max_x that accommodates the symbol width for wide characters.
-                draw_text_span(frame, x, y, symbol, style, x.saturating_add(symbol_width as u16));
+                draw_text_span(
+                    frame,
+                    x,
+                    y,
+                    symbol,
+                    style,
+                    x.saturating_add(symbol_width as u16),
+                );
 
                 if let Some(id) = self.hit_id {
                     let data = (part << 56) | (i as u64);

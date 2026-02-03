@@ -235,6 +235,8 @@ pub struct TraceConfig {
     /// Maximum entries to retain (0 = unlimited).
     pub max_entries: usize,
     /// Include queue snapshots after each event.
+    ///
+    /// If `snapshot_sampling` is set, snapshots are sampled via VOI.
     pub auto_snapshot: bool,
     /// Optional VOI sampling policy for queue snapshots.
     pub snapshot_sampling: Option<VoiConfig>,
@@ -953,9 +955,23 @@ mod tests {
         let mut trace = ScheduleTrace::with_config(config);
         let now = Instant::now();
 
-        trace.record_with_queue_state_at(TaskEvent::Spawn { task_id: 1, priority: 0, name: None }, 3, 1, now);
+        trace.record_with_queue_state_at(
+            TaskEvent::Spawn {
+                task_id: 1,
+                priority: 0,
+                name: None,
+            },
+            3,
+            1,
+            now,
+        );
 
-        assert!(trace.entries().iter().any(|entry| matches!(entry.event, TaskEvent::QueueSnapshot { .. })));
+        assert!(
+            trace
+                .entries()
+                .iter()
+                .any(|entry| matches!(entry.event, TaskEvent::QueueSnapshot { .. }))
+        );
         let summary = trace.snapshot_sampling_summary().expect("sampling enabled");
         assert_eq!(summary.total_samples, 1);
     }
