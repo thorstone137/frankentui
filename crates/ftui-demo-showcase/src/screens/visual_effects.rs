@@ -2577,7 +2577,9 @@ impl VisualEffectsScreen {
 
     fn cycle_plasma_palette(&mut self) {
         self.plasma_palette = next_plasma_palette(self.plasma_palette);
-        self.plasma_adapter.borrow_mut().set_palette(self.plasma_palette);
+        self.plasma_adapter
+            .borrow_mut()
+            .set_palette(self.plasma_palette);
     }
 
     /// Start a transition overlay for text effects.
@@ -3108,21 +3110,25 @@ impl Screen for VisualEffectsScreen {
                 EffectType::Lissajous => self.lissajous.render(&mut painter, pw, ph),
                 EffectType::FlowField => self.flow_field.render(&mut painter, pw, ph),
                 EffectType::Julia => self.julia.render(&mut painter, pw, ph),
-                EffectType::WaveInterference => {
-                    self.wave_interference.render(&mut painter, pw, ph)
-                }
+                EffectType::WaveInterference => self.wave_interference.render(&mut painter, pw, ph),
                 EffectType::Spiral => self.spiral.render(&mut painter, pw, ph),
                 EffectType::SpinLattice => self.spin_lattice.render(&mut painter, pw, ph),
                 // Canvas adapters for metaballs and plasma (bd-l8x9.5.3)
                 EffectType::Metaballs => {
-                    self.metaballs_adapter
-                        .borrow_mut()
-                        .fill_frame(&mut painter, self.time, quality, &theme_inputs);
+                    self.metaballs_adapter.borrow_mut().fill_frame(
+                        &mut painter,
+                        self.time,
+                        quality,
+                        &theme_inputs,
+                    );
                 }
                 EffectType::Plasma => {
-                    self.plasma_adapter
-                        .borrow()
-                        .fill(&mut painter, self.time, quality, &theme_inputs);
+                    self.plasma_adapter.borrow().fill(
+                        &mut painter,
+                        self.time,
+                        quality,
+                        &theme_inputs,
+                    );
                 }
             }
 

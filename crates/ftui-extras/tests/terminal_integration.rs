@@ -595,7 +595,7 @@ fn widget_renders_text() {
     // Verify the buffer contains our text
     for (i, expected) in "Hello!".chars().enumerate() {
         let cell = frame.buffer.get(i as u16, 0).expect("cell should exist");
-        assert_eq!(cell.grapheme(), expected.to_string(), "position {}", i);
+        assert_eq!(cell.content.as_char(), Some(expected), "position {}", i);
     }
 }
 
@@ -616,7 +616,7 @@ fn widget_renders_colors() {
     StatefulWidget::render(&widget, area, &mut frame, &mut state);
 
     let cell = frame.buffer.get(0, 0).expect("cell should exist");
-    assert_eq!(cell.grapheme(), "R");
+    assert_eq!(cell.content.as_char(), Some('R'));
     // Check that colors were applied (non-transparent)
     assert_ne!(cell.fg.0, 0, "foreground should be set");
     assert_ne!(cell.bg.0, 0, "background should be set");
@@ -628,7 +628,7 @@ fn widget_renders_cursor() {
     state.terminal.move_cursor(5, 3);
 
     // The cursor cell should get REVERSE style
-    state.terminal.cursor_mut().visible = true;
+    state.terminal.set_cursor_visible(true);
 
     let widget = TerminalEmulator::new().show_cursor(true).cursor_phase(true);
     let area = Rect::new(0, 0, 80, 24);
@@ -647,7 +647,7 @@ fn widget_renders_cursor() {
 fn widget_cursor_hidden_when_disabled() {
     let mut state = TerminalEmulatorState::new(80, 24);
     state.terminal.move_cursor(5, 3);
-    state.terminal.cursor_mut().visible = true;
+    state.terminal.set_cursor_visible(true);
 
     // Disable cursor rendering
     let widget = TerminalEmulator::new().show_cursor(false);

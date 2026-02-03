@@ -29,6 +29,20 @@
 //! | Unrecognized CSI | Unknown terminal sequence | Silently ignored |
 //! | Scrollback overflow | Excessive output | Front-truncated to `max_scrollback` |
 //! | Cursor wrap past bottom | Text output fills screen | Scroll up, top line to scrollback |
+//!
+//! # Evidence Ledger
+//!
+//! | Claim | Evidence |
+//! |-------|----------|
+//! | Quirks are explicit, not inferred | `QuirkSet` must be passed or set explicitly; no runtime detection |
+//! | Default behavior unchanged | `VirtualTerminal::new` uses `QuirkSet::empty()` |
+//!
+//! # Behavioral Isomorphism (Performance)
+//!
+//! `QuirkSet::empty()` is the identity: quirk checks short-circuit and preserve
+//! the pre-existing control flow. The quirk branches are constant-time boolean
+//! guards, with no extra allocations or buffering. Golden output checksums are
+//! emitted in E2E JSONL logs for reproducibility.
 
 use std::collections::VecDeque;
 
