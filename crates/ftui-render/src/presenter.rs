@@ -63,7 +63,11 @@ mod cost_model {
     /// Number of decimal digits needed to represent `n`.
     #[inline]
     fn digit_count(n: u16) -> usize {
-        if n >= 100 {
+        if n >= 10000 {
+            5
+        } else if n >= 1000 {
+            4
+        } else if n >= 100 {
             3
         } else if n >= 10 {
             2
@@ -375,7 +379,7 @@ impl<W: Write> Presenter<W> {
                         self.move_cursor_optimal(run.x0, run.y)?;
                         for x in run.x0..=run.x1 {
                             let cell = buffer.get_unchecked(x, run.y);
-                            self.emit_cell(cell, pool, links)?;
+                            self.emit_cell(x, cell, pool, links)?;
                         }
                     }
                 }
@@ -383,7 +387,7 @@ impl<W: Write> Presenter<W> {
                     self.move_cursor_optimal(merge_x0, row_y)?;
                     for x in merge_x0..=merge_x1 {
                         let cell = buffer.get_unchecked(x, row_y);
-                        self.emit_cell(cell, pool, links)?;
+                        self.emit_cell(x, cell, pool, links)?;
                     }
                 }
             }
@@ -394,35 +398,45 @@ impl<W: Write> Presenter<W> {
     /// Emit a single cell.
     fn emit_cell(
         &mut self,
+        x: u16,
         cell: &Cell,
         pool: Option<&GraphemePool>,
         links: Option<&LinkRegistry>,
     ) -> io::Result<()> {
-        // Skip continuation cells (second cell of wide characters)
-        // Do NOT advance cursor - we emit nothing, so terminal cursor doesn't move.
+        // Skip continuation cells (second cell of wide characters).
         // The wide character already advanced the cursor by its full width.
-        if cell.is_continuation() {
+        //
+        // EXCEPTION: Orphan continuations (not covered by a preceding wide char)
+        // must be treated as empty cells to ensure old content is cleared.
+        // If cursor_x <= x, it means the cursor hasn't been advanced past this
+        // position by a previous wide char emission, so this is an orphan.
+        let is_orphan = cell.is_continuation() && self.cursor_x.is_some_and(|cx| cx <= x);
+
+        if cell.is_continuation() && !is_orphan {
             return Ok(());
         }
 
+        // Treat orphan as empty default cell
+        let effective_cell = if is_orphan { &Cell::default() } else { cell };
+
         // Emit style changes if needed
-        self.emit_style_changes(cell)?;
+        self.emit_style_changes(effective_cell)?;
 
         // Emit link changes if needed
-        self.emit_link_changes(cell, links)?;
+        self.emit_link_changes(effective_cell, links)?;
 
         // Emit the cell content
-        self.emit_content(cell, pool)?;
+        self.emit_content(effective_cell, pool)?;
 
         // Update cursor position (character output advances cursor)
-        if let Some(x) = self.cursor_x {
+        if let Some(cx) = self.cursor_x {
             // Empty cells are emitted as spaces (width 1)
-            let width = if cell.is_empty() {
+            let width = if effective_cell.is_empty() {
                 1
             } else {
-                cell.content.width()
+                effective_cell.content.width()
             };
-            self.cursor_x = Some(x.saturating_add(width as u16));
+            self.cursor_x = Some(cx.saturating_add(width as u16));
         }
 
         Ok(())

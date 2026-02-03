@@ -582,7 +582,12 @@ impl Buffer {
                 };
 
                 if let Some(cell) = src.get(sx, sy) {
-                    self.set(target_x, target_y, *cell);
+                    let cell_to_write = if dx == 0 && cell.is_continuation() {
+                        Cell::default()
+                    } else {
+                        *cell
+                    };
+                    self.set(target_x, target_y, cell_to_write);
                 }
             }
         }
