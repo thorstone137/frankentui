@@ -429,14 +429,52 @@ impl<W: Write> TerminalWriter<W> {
         )
         .entered();
 
-        match self.screen_mode {
+        let result = match self.screen_mode {
             ScreenMode::Inline { ui_height } => self.present_inline(buffer, ui_height),
             ScreenMode::InlineAuto { .. } => {
                 let ui_height = self.effective_ui_height();
                 self.present_inline(buffer, ui_height)
             }
             ScreenMode::AltScreen => self.present_altscreen(buffer),
+        };
+
+        if result.is_ok() {
+            self.prev_buffer = Some(buffer.clone());
         }
+        result
+    }
+
+    /// Present a UI frame, taking ownership of the buffer (O(1) — no clone).
+    ///
+    /// Prefer this over [`present_ui`] when the caller has an owned buffer
+    /// that won't be reused, as it avoids an O(width × height) clone.
+    pub fn present_ui_owned(&mut self, buffer: Buffer) -> io::Result<()> {
+        let mode_str = match self.screen_mode {
+            ScreenMode::Inline { .. } => "inline",
+            ScreenMode::InlineAuto { .. } => "inline_auto",
+            ScreenMode::AltScreen => "altscreen",
+        };
+        let _span = info_span!(
+            "present_ui",
+            mode = mode_str,
+            width = buffer.width(),
+            height = buffer.height(),
+        )
+        .entered();
+
+        let result = match self.screen_mode {
+            ScreenMode::Inline { ui_height } => self.present_inline(&buffer, ui_height),
+            ScreenMode::InlineAuto { .. } => {
+                let ui_height = self.effective_ui_height();
+                self.present_inline(&buffer, ui_height)
+            }
+            ScreenMode::AltScreen => self.present_altscreen(&buffer),
+        };
+
+        if result.is_ok() {
+            self.prev_buffer = Some(buffer);
+        }
+        result
     }
 
     /// Present UI in inline mode with cursor save/restore.
@@ -527,9 +565,6 @@ impl<W: Write> TerminalWriter<W> {
 
         self.writer().flush()?;
 
-        // Save current buffer for next diff
-        self.prev_buffer = Some(buffer.clone());
-
         Ok(())
     }
 
@@ -566,7 +601,6 @@ impl<W: Write> TerminalWriter<W> {
         }
 
         self.writer().flush()?;
-        self.prev_buffer = Some(buffer.clone());
 
         Ok(())
     }
