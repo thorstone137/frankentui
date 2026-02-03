@@ -20,7 +20,6 @@ use ftui_extras::terminal::{
 };
 use ftui_pty::input_forwarding::{BracketedPaste, Key, KeyEvent, Modifiers, key_to_sequence};
 use ftui_pty::{PtyConfig, spawn_command};
-use ftui_render::buffer::Buffer;
 use ftui_render::cell::StyleFlags;
 use ftui_render::frame::Frame;
 use ftui_render::grapheme_pool::GraphemePool;
@@ -136,7 +135,7 @@ impl AnsiHandler for TestHandler {
                 let next = ((x / 8) + 1) * 8;
                 self.state.move_cursor(next, self.state.cursor().y);
             }
-            0x0A | 0x0B | 0x0C => {
+            0x0A..=0x0C => {
                 // LF, VT, FF
                 let cursor = self.state.cursor();
                 if cursor.y + 1 >= self.state.height() {
@@ -570,13 +569,13 @@ fn input_forward_bracketed_paste() {
 // Widget Rendering Tests
 // ============================================================================
 
-fn create_test_frame(width: u16, height: u16) -> (Frame<'static>, GraphemePool) {
-    let mut pool = GraphemePool::default();
-    // SAFETY: We're leaking the pool to get a static lifetime for testing.
+fn create_test_frame(width: u16, height: u16) -> (Frame<'static>, Box<GraphemePool>) {
+    // SAFETY: We leak the pool to get a 'static lifetime for testing.
     // This is acceptable in tests where memory is cleaned up at process exit.
-    let pool_ref: &'static mut GraphemePool = Box::leak(Box::new(pool));
+    let pool = Box::new(GraphemePool::default());
+    let pool_ref: &'static mut GraphemePool = Box::leak(pool);
     let frame = Frame::new(width, height, pool_ref);
-    (frame, GraphemePool::default())
+    (frame, Box::new(GraphemePool::default()))
 }
 
 #[test]
@@ -737,10 +736,10 @@ fn full_pipeline_pty_to_widget() {
     for y in 0..10 {
         let mut line = String::new();
         for x in 0..40 {
-            if let Some(cell) = frame.buffer.get(x, y) {
-                if let Some(c) = cell.content.as_char() {
-                    line.push(c);
-                }
+            if let Some(cell) = frame.buffer.get(x, y)
+                && let Some(c) = cell.content.as_char()
+            {
+                line.push(c);
             }
         }
         if line.contains("TESTOUTPUT") {

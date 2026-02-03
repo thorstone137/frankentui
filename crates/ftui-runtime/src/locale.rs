@@ -165,6 +165,21 @@ fn normalize_locale_raw(raw: &str) -> Option<Locale> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    // ---------------------------------------------------------------------
+    // Invariants (Alien Artifact)
+    // ---------------------------------------------------------------------
+    // 1. Normalized locales contain no '_' '.' or '@' suffixes.
+    // 2. Locale overrides are LIFO and never mutate the base locale.
+    // 3. Locale versions only advance on base locale changes.
+    //
+    // Failure Modes:
+    // | Scenario                     | Expected Behavior                 |
+    // |-----------------------------|-----------------------------------|
+    // | Empty / whitespace locale   | Falls back to "en"                |
+    // | "C"/"POSIX" locale          | Normalized to "en"                |
+    // | Override drop out of order  | Debug assert (in dev builds)      |
 
     #[test]
     fn detect_system_locale_prefers_lc_all() {
@@ -215,5 +230,58 @@ mod tests {
             assert_eq!(ctx.current_locale(), "es");
         }
         assert_eq!(ctx.current_locale(), "fr");
+    }
+
+    #[test]
+    fn normalize_locale_handles_c_and_posix() {
+        let c_locale = normalize_locale_raw("C");
+        let posix_locale = normalize_locale_raw("POSIX");
+        assert_eq!(c_locale.as_deref(), Some("en"));
+        assert_eq!(posix_locale.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn normalize_locale_strips_codeset_and_modifier() {
+        let locale = normalize_locale_raw("en_US.UTF-8@latin");
+        assert_eq!(locale.as_deref(), Some("en-US"));
+    }
+
+    #[test]
+    fn locale_override_does_not_mutate_base_locale() {
+        let ctx = LocaleContext::new("en");
+        let v0 = ctx.version();
+        let _guard = ctx.push_override("fr");
+        assert_eq!(ctx.base_locale(), "en");
+        assert_eq!(ctx.version(), v0);
+    }
+
+    proptest! {
+        #[test]
+        fn normalize_locale_raw_sanitizes_segments(raw in "[A-Za-z0-9_@.\\-]{1,32}") {
+            let normalized = normalize_locale_raw(&raw);
+            if let Some(locale) = normalized {
+                prop_assert!(!locale.trim().is_empty());
+                prop_assert!(!locale.contains('@'));
+                prop_assert!(!locale.contains('.'));
+                prop_assert!(!locale.contains('_'));
+            }
+        }
+
+        #[test]
+        fn overrides_are_lifo(locales in proptest::collection::vec("[a-z]{2}(-[A-Z]{2})?", 1..6)) {
+            let ctx = LocaleContext::new("en");
+            let mut guards = Vec::new();
+            for locale in &locales {
+                guards.push(ctx.push_override(locale));
+            }
+            prop_assert_eq!(ctx.current_locale(), *locales.last().unwrap());
+            guards.pop();
+            if locales.len() >= 2 {
+                let prev = &locales[locales.len() - 2];
+                prop_assert_eq!(ctx.current_locale(), *prev);
+            } else {
+                prop_assert_eq!(ctx.current_locale(), "en");
+            }
+        }
     }
 }
