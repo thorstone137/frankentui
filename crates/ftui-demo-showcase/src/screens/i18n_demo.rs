@@ -165,16 +165,15 @@ impl I18nDemo {
             .collect();
 
         let bar_text = items.join("  ");
-        let colors = theme::current();
 
         let paragraph = Paragraph::new(bar_text)
-            .style(Style::new().fg(colors.text).bg(colors.surface))
+            .style(Style::new().fg(theme::fg::PRIMARY).bg(theme::alpha::SURFACE))
             .alignment(Alignment::Center)
             .block(
                 Block::new()
                     .borders(Borders::BOTTOM)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::new().fg(colors.border)),
+                    .border_style(Style::new().fg(theme::fg::MUTED)),
             );
         paragraph.render(area, frame);
     }
