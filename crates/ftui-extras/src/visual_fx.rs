@@ -29,6 +29,15 @@ use std::fmt;
 #[cfg(feature = "theme")]
 use crate::theme::ThemePalette;
 
+// Effects submodule with extracted effects (Metaballs, Plasma, etc.)
+pub mod effects;
+
+// Re-export from effects for convenience
+pub use effects::{
+    metaballs::{Metaball, MetaballsFx, MetaballsPalette, MetaballsParams},
+    plasma::{PlasmaFx, PlasmaPalette, plasma_wave, plasma_wave_low},
+};
+
 /// Quality hint for FX implementations.
 ///
 /// This enum is a stable "dial" so FX code can implement graceful degradation.
@@ -2139,7 +2148,9 @@ mod tests {
             let mut out = vec![PackedRgba::TRANSPARENT; ctx.len()];
 
             let mut stack = StackedFx::new();
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(100, 150, 200)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                100, 150, 200,
+            )))));
             stack.render(ctx, &mut out);
 
             // All cells should have the solid color
@@ -2161,7 +2172,9 @@ mod tests {
 
             let mut stack = StackedFx::new();
             // Layer 0: opaque red
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(255, 0, 0)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                255, 0, 0,
+            )))));
             // Layer 1: 50% alpha blue (painted on top)
             stack.push(FxLayer::with_opacity(
                 Box::new(SolidColor(PackedRgba::rgb(0, 0, 255))),
@@ -2195,9 +2208,13 @@ mod tests {
 
             let mut stack = StackedFx::new();
             // Layer 0: green (bottom)
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(0, 255, 0)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                0, 255, 0,
+            )))));
             // Layer 1: opaque red (top, should completely cover green)
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(255, 0, 0)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                255, 0, 0,
+            )))));
             stack.render(ctx, &mut out);
 
             // Top layer (red) should fully cover bottom (green)
@@ -2219,7 +2236,9 @@ mod tests {
 
             let mut stack = StackedFx::new();
             // Layer 0: green
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(0, 255, 0)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                0, 255, 0,
+            )))));
             // Layer 1: red at 0% opacity (should be invisible)
             stack.push(FxLayer::with_opacity(
                 Box::new(SolidColor(PackedRgba::rgb(255, 0, 0))),
@@ -2245,7 +2264,9 @@ mod tests {
             let mut out = vec![PackedRgba::TRANSPARENT; ctx.len()];
 
             let mut stack = StackedFx::new();
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(100, 100, 100)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                100, 100, 100,
+            )))));
 
             // First render allocates buffers
             stack.render(ctx, &mut out);
@@ -2312,7 +2333,9 @@ mod tests {
 
             let mut stack = StackedFx::new();
             // Layer 0: dark red
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(100, 0, 0)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                100, 0, 0,
+            )))));
             // Layer 1: dark blue, additive blend
             stack.push(FxLayer::with_blend(
                 Box::new(SolidColor(PackedRgba::rgb(0, 0, 100))),
@@ -2387,7 +2410,9 @@ mod tests {
             let mut out = vec![sentinel; ctx.len()];
 
             let mut stack = StackedFx::new();
-            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(255, 0, 0)))));
+            stack.push(FxLayer::new(Box::new(SolidColor(PackedRgba::rgb(
+                255, 0, 0,
+            )))));
             stack.render(ctx, &mut out);
 
             // With quality Off, output should be unchanged

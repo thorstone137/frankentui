@@ -932,6 +932,32 @@ pub struct SemanticStyles {
     pub intent: IntentStyles,
 }
 
+/// Semantic status badge variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StatusBadge {
+    Open,
+    InProgress,
+    Blocked,
+    Closed,
+}
+
+/// Semantic priority badge variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PriorityBadge {
+    P0,
+    P1,
+    P2,
+    P3,
+    P4,
+}
+
+/// Label + style for a semantic badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BadgeSpec {
+    pub label: &'static str,
+    pub style: Style,
+}
+
 static SEMANTIC_STYLES_ALL: OnceLock<[SemanticStyles; ThemeId::ALL.len()]> = OnceLock::new();
 
 fn semantic_styles_for(theme: ThemeId) -> SemanticStyles {
@@ -975,6 +1001,58 @@ fn semantic_styles_for(theme: ThemeId) -> SemanticStyles {
 /// Pre-compute semantic styles for the current theme.
 pub fn semantic_styles() -> SemanticStyles {
     *semantic_styles_cached()
+}
+
+/// Build a semantic status badge (label + style) for the current theme.
+#[must_use]
+pub fn status_badge(status: StatusBadge) -> BadgeSpec {
+    let styles = semantic_styles();
+    match status {
+        StatusBadge::Open => BadgeSpec {
+            label: "OPEN",
+            style: styles.status.open.badge_style,
+        },
+        StatusBadge::InProgress => BadgeSpec {
+            label: "PROG",
+            style: styles.status.in_progress.badge_style,
+        },
+        StatusBadge::Blocked => BadgeSpec {
+            label: "BLKD",
+            style: styles.status.blocked.badge_style,
+        },
+        StatusBadge::Closed => BadgeSpec {
+            label: "DONE",
+            style: styles.status.closed.badge_style,
+        },
+    }
+}
+
+/// Build a semantic priority badge (label + style) for the current theme.
+#[must_use]
+pub fn priority_badge(priority: PriorityBadge) -> BadgeSpec {
+    let styles = semantic_styles();
+    match priority {
+        PriorityBadge::P0 => BadgeSpec {
+            label: "P0",
+            style: styles.priority.p0.badge_style,
+        },
+        PriorityBadge::P1 => BadgeSpec {
+            label: "P1",
+            style: styles.priority.p1.badge_style,
+        },
+        PriorityBadge::P2 => BadgeSpec {
+            label: "P2",
+            style: styles.priority.p2.badge_style,
+        },
+        PriorityBadge::P3 => BadgeSpec {
+            label: "P3",
+            style: styles.priority.p3.badge_style,
+        },
+        PriorityBadge::P4 => BadgeSpec {
+            label: "P4",
+            style: styles.priority.p4.badge_style,
+        },
+    }
 }
 
 /// Borrow pre-computed semantic styles for the current theme (cached per built-in theme).
@@ -1193,6 +1271,55 @@ mod tests {
                     swatch.badge_style.fg, swatch.badge_style.bg,
                     "badge fg/bg should differ for {theme:?}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn status_badge_labels_are_distinct() {
+        let labels = [
+            status_badge(StatusBadge::Open).label,
+            status_badge(StatusBadge::InProgress).label,
+            status_badge(StatusBadge::Blocked).label,
+            status_badge(StatusBadge::Closed).label,
+        ];
+        for i in 0..labels.len() {
+            for j in (i + 1)..labels.len() {
+                assert_ne!(
+                    labels[i], labels[j],
+                    "status badge labels should be distinct"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn priority_badge_labels_and_colors_are_distinct() {
+        for theme in ThemeId::ALL {
+            set_theme(theme);
+            let badges = [
+                priority_badge(PriorityBadge::P0),
+                priority_badge(PriorityBadge::P1),
+                priority_badge(PriorityBadge::P2),
+                priority_badge(PriorityBadge::P3),
+                priority_badge(PriorityBadge::P4),
+            ];
+
+            let labels: Vec<_> = badges.iter().map(|b| b.label).collect();
+            for i in 0..labels.len() {
+                for j in (i + 1)..labels.len() {
+                    assert_ne!(
+                        labels[i], labels[j],
+                        "priority badge labels should be distinct"
+                    );
+                }
+            }
+
+            let bgs: Vec<_> = badges.iter().map(|b| b.style.bg).collect();
+            for i in 0..bgs.len() {
+                for j in (i + 1)..bgs.len() {
+                    assert_ne!(bgs[i], bgs[j], "priority badge backgrounds should differ");
+                }
             }
         }
     }

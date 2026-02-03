@@ -217,9 +217,10 @@ impl MetaballsParams {
             return 0;
         }
         match quality {
-            FxQuality::High => total,
-            FxQuality::Medium => total.saturating_sub(total / 4).max(4).min(total),
-            FxQuality::Low => total.saturating_sub(total / 2).max(3).min(total),
+            FxQuality::Full => total,
+            FxQuality::Reduced => total.saturating_sub(total / 4).max(4).min(total),
+            FxQuality::Minimal => total.saturating_sub(total / 2).max(3).min(total),
+            FxQuality::Off => 0, // No balls rendered when off
         }
     }
 
@@ -307,10 +308,8 @@ impl MetaballsFx {
         self.ensure_ball_cache(count);
 
         let t_scaled = time * self.params.time_scale;
-        let (bounds_min, bounds_max) =
-            ordered_pair(self.params.bounds_min, self.params.bounds_max);
-        let (radius_min, radius_max) =
-            ordered_pair(self.params.radius_min, self.params.radius_max);
+        let (bounds_min, bounds_max) = ordered_pair(self.params.bounds_min, self.params.bounds_max);
+        let (radius_min, radius_max) = ordered_pair(self.params.radius_min, self.params.radius_max);
         let pulse_amount = self.params.pulse_amount;
         let pulse_speed = self.params.pulse_speed;
         let hue_speed = self.params.hue_speed;
@@ -323,11 +322,7 @@ impl MetaballsFx {
             let x = ping_pong(ball.x + ball.vx * t_scaled, bounds_min, bounds_max);
             let y = ping_pong(ball.y + ball.vy * t_scaled, bounds_min, bounds_max);
             let pulse = 1.0 + pulse_amount * (time * pulse_speed + ball.phase).sin();
-            let radius = ball
-                .radius
-                .clamp(radius_min, radius_max)
-                .max(0.001)
-                * pulse;
+            let radius = ball.radius.clamp(radius_min, radius_max).max(0.001) * pulse;
             let hue = (ball.hue + time * hue_speed).rem_euclid(1.0);
 
             *slot = BallSample {
@@ -361,7 +356,8 @@ impl BackdropFx for MetaballsFx {
     }
 
     fn render(&mut self, ctx: FxContext<'_>, out: &mut [PackedRgba]) {
-        if ctx.is_empty() {
+        // Early return if quality is Off (decorative effects are non-essential)
+        if !ctx.quality.is_enabled() || ctx.is_empty() {
             return;
         }
         debug_assert_eq!(out.len(), ctx.len());
@@ -411,10 +407,7 @@ impl BackdropFx for MetaballsFx {
                         (sum - glow) / (threshold - glow)
                     };
 
-                    out[idx] = self
-                        .params
-                        .palette
-                        .color_at(avg_hue, intensity, ctx.theme);
+                    out[idx] = self.params.palette.color_at(avg_hue, intensity, ctx.theme);
                 } else {
                     out[idx] = PackedRgba::TRANSPARENT;
                 }
@@ -458,11 +451,7 @@ fn gradient_color(stops: &[PackedRgba; 4], t: f64) -> PackedRgba {
 
 #[inline]
 fn ordered_pair(a: f64, b: f64) -> (f64, f64) {
-    if a <= b {
-        (a, b)
-    } else {
-        (b, a)
-    }
+    if a <= b { (a, b) } else { (b, a) }
 }
 
 #[cfg(test)]
@@ -475,7 +464,7 @@ mod tests {
             height: 12,
             frame: 1,
             time_seconds: 1.25,
-            quality: FxQuality::High,
+            quality: FxQuality::Full,
             theme,
         }
     }
@@ -501,7 +490,7 @@ mod tests {
             height: 10,
             frame: 0,
             time_seconds: 0.0,
-            quality: FxQuality::Low,
+            quality: FxQuality::Minimal,
             theme: &theme,
         };
         fx.render(ctx, &mut []);
@@ -523,5 +512,36 @@ mod tests {
         assert_eq!(cap_x, fx.x_coords.capacity());
         assert_eq!(cap_y, fx.y_coords.capacity());
         assert_eq!(cap_balls, fx.ball_cache.capacity());
+    }
+
+    #[test]
+    fn quality_reduces_ball_count() {
+        let mut fx = MetaballsFx::default();
+        fx.populate_ball_cache(0.0, FxQuality::Full);
+        let full = fx.ball_cache.len();
+        fx.populate_ball_cache(0.0, FxQuality::Reduced);
+        let reduced = fx.ball_cache.len();
+        fx.populate_ball_cache(0.0, FxQuality::Minimal);
+        let minimal = fx.ball_cache.len();
+
+        assert!(reduced <= full);
+        assert!(minimal <= reduced);
+    }
+
+    #[test]
+    fn quality_off_renders_transparent() {
+        let theme = ThemeInputs::default_dark();
+        let mut fx = MetaballsFx::default();
+        let ctx = FxContext {
+            width: 8,
+            height: 4,
+            frame: 0,
+            time_seconds: 0.5,
+            quality: FxQuality::Off,
+            theme: &theme,
+        };
+        let mut out = vec![PackedRgba::rgb(255, 0, 0); ctx.len()];
+        fx.render(ctx, &mut out);
+        assert!(out.iter().all(|&px| px == PackedRgba::TRANSPARENT));
     }
 }

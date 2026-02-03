@@ -154,6 +154,82 @@ impl ColorGradient {
         ])
     }
 
+    /// Create an ice gradient (dark frost blue -> light blue -> white).
+    pub fn ice() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(40, 60, 120)),
+            (0.4, PackedRgba::rgb(100, 160, 220)),
+            (0.7, PackedRgba::rgb(180, 220, 245)),
+            (1.0, PackedRgba::rgb(240, 250, 255)),
+        ])
+    }
+
+    /// Create a forest gradient (deep green -> emerald -> light green).
+    pub fn forest() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(10, 50, 20)),
+            (0.35, PackedRgba::rgb(30, 120, 50)),
+            (0.65, PackedRgba::rgb(60, 180, 80)),
+            (1.0, PackedRgba::rgb(150, 230, 140)),
+        ])
+    }
+
+    /// Create a gold gradient (dark gold -> bright gold -> pale gold).
+    pub fn gold() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(100, 70, 10)),
+            (0.4, PackedRgba::rgb(200, 160, 30)),
+            (0.7, PackedRgba::rgb(255, 210, 60)),
+            (1.0, PackedRgba::rgb(255, 240, 150)),
+        ])
+    }
+
+    /// Create a neon pink gradient (magenta -> hot pink -> cyan).
+    pub fn neon_pink() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(200, 0, 150)),
+            (0.5, PackedRgba::rgb(255, 50, 200)),
+            (1.0, PackedRgba::rgb(50, 255, 255)),
+        ])
+    }
+
+    /// Create a blood gradient (near-black -> dark red -> bright crimson).
+    pub fn blood() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(30, 0, 0)),
+            (0.4, PackedRgba::rgb(120, 10, 10)),
+            (0.7, PackedRgba::rgb(200, 20, 20)),
+            (1.0, PackedRgba::rgb(255, 50, 50)),
+        ])
+    }
+
+    /// Create a matrix gradient (black -> dark green -> bright green).
+    pub fn matrix() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(0, 0, 0)),
+            (0.5, PackedRgba::rgb(0, 100, 20)),
+            (1.0, PackedRgba::rgb(0, 255, 65)),
+        ])
+    }
+
+    /// Create a terminal gradient (dark green -> medium green -> bright green).
+    pub fn terminal() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(0, 60, 0)),
+            (0.5, PackedRgba::rgb(0, 160, 40)),
+            (1.0, PackedRgba::rgb(50, 255, 100)),
+        ])
+    }
+
+    /// Create a lavender gradient (deep purple -> lavender -> soft pink).
+    pub fn lavender() -> Self {
+        Self::new(vec![
+            (0.0, PackedRgba::rgb(80, 40, 140)),
+            (0.5, PackedRgba::rgb(160, 120, 210)),
+            (1.0, PackedRgba::rgb(230, 180, 220)),
+        ])
+    }
+
     /// Sample the gradient at position t (0.0 to 1.0).
     pub fn sample(&self, t: f64) -> PackedRgba {
         let t = t.clamp(0.0, 1.0);
@@ -182,6 +258,160 @@ impl ColorGradient {
             .last()
             .map(|s| s.1)
             .unwrap_or(PackedRgba::rgb(255, 255, 255))
+    }
+}
+
+// =============================================================================
+// Color Palette Presets
+// =============================================================================
+
+/// Curated color palette presets for gradients and color cycling.
+///
+/// All gradients are defined in sRGB color space with stops spanning the full
+/// 0.0..=1.0 range. Solid color sets contain at least 2 colors for use with
+/// `TextEffect::ColorCycle`.
+pub mod palette {
+    use super::{ColorGradient, PackedRgba};
+
+    // --- Gradient presets (convenience re-exports + new) ---
+
+    /// Rainbow gradient (red -> orange -> yellow -> green -> blue -> violet).
+    pub fn rainbow() -> ColorGradient {
+        ColorGradient::rainbow()
+    }
+
+    /// Sunset gradient (purple -> pink -> orange -> yellow).
+    pub fn sunset() -> ColorGradient {
+        ColorGradient::sunset()
+    }
+
+    /// Ocean gradient (deep blue -> cyan -> seafoam).
+    pub fn ocean() -> ColorGradient {
+        ColorGradient::ocean()
+    }
+
+    /// Cyberpunk gradient (hot pink -> purple -> cyan).
+    pub fn cyberpunk() -> ColorGradient {
+        ColorGradient::cyberpunk()
+    }
+
+    /// Fire gradient (black -> red -> orange -> yellow -> white).
+    pub fn fire() -> ColorGradient {
+        ColorGradient::fire()
+    }
+
+    /// Ice gradient (frost blue -> light blue -> white).
+    pub fn ice() -> ColorGradient {
+        ColorGradient::ice()
+    }
+
+    /// Forest gradient (deep green -> emerald -> light green).
+    pub fn forest() -> ColorGradient {
+        ColorGradient::forest()
+    }
+
+    /// Gold gradient (dark gold -> bright gold -> pale gold).
+    pub fn gold() -> ColorGradient {
+        ColorGradient::gold()
+    }
+
+    /// Neon pink gradient (magenta -> hot pink -> cyan).
+    pub fn neon_pink() -> ColorGradient {
+        ColorGradient::neon_pink()
+    }
+
+    /// Blood gradient (near-black -> dark red -> bright crimson).
+    pub fn blood() -> ColorGradient {
+        ColorGradient::blood()
+    }
+
+    /// Matrix gradient (black -> dark green -> bright green).
+    pub fn matrix() -> ColorGradient {
+        ColorGradient::matrix()
+    }
+
+    /// Terminal gradient (dark green -> medium green -> bright green).
+    pub fn terminal() -> ColorGradient {
+        ColorGradient::terminal()
+    }
+
+    /// Lavender gradient (deep purple -> lavender -> soft pink).
+    pub fn lavender() -> ColorGradient {
+        ColorGradient::lavender()
+    }
+
+    // --- Solid color sets for ColorCycle ---
+
+    /// Neon colors: cyan, magenta, yellow, lime green.
+    pub fn neon_colors() -> Vec<PackedRgba> {
+        vec![
+            PackedRgba::rgb(0, 255, 255), // Cyan
+            PackedRgba::rgb(255, 0, 255), // Magenta
+            PackedRgba::rgb(255, 255, 0), // Yellow
+            PackedRgba::rgb(0, 255, 128), // Lime green
+        ]
+    }
+
+    /// Pastel colors: soft pink, mint, peach, periwinkle, butter.
+    pub fn pastel_colors() -> Vec<PackedRgba> {
+        vec![
+            PackedRgba::rgb(255, 182, 193), // Soft pink
+            PackedRgba::rgb(170, 255, 195), // Mint
+            PackedRgba::rgb(255, 218, 185), // Peach
+            PackedRgba::rgb(180, 180, 255), // Periwinkle
+            PackedRgba::rgb(255, 255, 186), // Butter
+        ]
+    }
+
+    /// Earth tones: terracotta, olive, clay, warm brown, sage.
+    pub fn earth_tones() -> Vec<PackedRgba> {
+        vec![
+            PackedRgba::rgb(180, 90, 60),   // Terracotta
+            PackedRgba::rgb(120, 140, 60),  // Olive
+            PackedRgba::rgb(160, 110, 80),  // Clay
+            PackedRgba::rgb(100, 70, 40),   // Warm brown
+            PackedRgba::rgb(140, 170, 120), // Sage
+        ]
+    }
+
+    /// Monochrome grays from dark to light.
+    pub fn monochrome() -> Vec<PackedRgba> {
+        vec![
+            PackedRgba::rgb(40, 40, 40),    // Near-black
+            PackedRgba::rgb(90, 90, 90),    // Dark gray
+            PackedRgba::rgb(140, 140, 140), // Medium gray
+            PackedRgba::rgb(190, 190, 190), // Light gray
+            PackedRgba::rgb(230, 230, 230), // Near-white
+        ]
+    }
+
+    /// Return all gradient presets as `(name, gradient)` pairs.
+    pub fn all_gradients() -> Vec<(&'static str, ColorGradient)> {
+        vec![
+            ("rainbow", rainbow()),
+            ("sunset", sunset()),
+            ("ocean", ocean()),
+            ("cyberpunk", cyberpunk()),
+            ("fire", fire()),
+            ("ice", ice()),
+            ("forest", forest()),
+            ("gold", gold()),
+            ("neon_pink", neon_pink()),
+            ("blood", blood()),
+            ("matrix", matrix()),
+            ("terminal", terminal()),
+            ("lavender", lavender()),
+        ]
+    }
+
+    /// Return all solid color sets as `(name, colors)` pairs.
+    pub fn all_color_sets() -> Vec<(&'static str, Vec<PackedRgba>)> {
+        vec![
+            ("neon_colors", neon_colors()),
+            ("pastel_colors", pastel_colors()),
+            ("earth_tones", earth_tones()),
+            ("monochrome", monochrome()),
+        ]
     }
 }
 
@@ -614,6 +844,49 @@ impl std::ops::Add for CharacterOffset {
 }
 
 // =============================================================================
+// Cursor Animation Types
+// =============================================================================
+
+/// Cursor visual style for text effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorStyle {
+    /// Block cursor (█).
+    #[default]
+    Block,
+    /// Underline cursor (_).
+    Underline,
+    /// Vertical bar cursor (|).
+    Bar,
+    /// Custom character cursor.
+    Custom(char),
+}
+
+impl CursorStyle {
+    /// Get the character to display for this cursor style.
+    pub fn char(&self) -> char {
+        match self {
+            Self::Block => '█',
+            Self::Underline => '_',
+            Self::Bar => '|',
+            Self::Custom(ch) => *ch,
+        }
+    }
+}
+
+/// Position of cursor relative to text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorPosition {
+    /// Cursor appears after the last visible character.
+    #[default]
+    End,
+    /// Cursor appears at a specific character index.
+    AtIndex(usize),
+    /// Cursor follows the reveal progress (for Typewriter/Reveal effects).
+    /// The cursor appears after the last revealed character.
+    AfterReveal,
+}
+
+// =============================================================================
 // Text Effects
 // =============================================================================
 
@@ -772,6 +1045,34 @@ pub enum TextEffect {
         direction: Direction,
         /// Delay between characters (0.0-1.0).
         stagger: f64,
+    },
+
+    // --- Cursor Effects ---
+    /// Blinking cursor/caret animation for typewriter and terminal effects.
+    ///
+    /// Displays a cursor character that can blink at a specified rate.
+    /// Position can be at the end, at a specific index, or following
+    /// a reveal effect's progress.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// StyledText::new("Hello World")
+    ///     .effect(TextEffect::Typewriter { visible_chars: 5.0 })
+    ///     .effect(TextEffect::Cursor {
+    ///         style: CursorStyle::Block,
+    ///         blink_speed: 2.0,
+    ///         position: CursorPosition::AfterReveal,
+    ///     })
+    /// // Cursor appears after 'Hello' (the revealed part)
+    /// ```
+    Cursor {
+        /// Visual style of the cursor.
+        style: CursorStyle,
+        /// Blinks per second. 0 = no blinking (always visible).
+        blink_speed: f64,
+        /// Position of the cursor relative to the text.
+        position: CursorPosition,
     },
 }
 
@@ -1037,7 +1338,8 @@ impl StyledText {
             | TextEffect::Wave { .. }
             | TextEffect::Bounce { .. }
             | TextEffect::Shake { .. }
-            | TextEffect::Cascade { .. } => base,
+            | TextEffect::Cascade { .. }
+            | TextEffect::Cursor { .. } => base,
         }
     }
 
@@ -1106,7 +1408,8 @@ impl StyledText {
                 | TextEffect::Wave { .. }
                 | TextEffect::Bounce { .. }
                 | TextEffect::Shake { .. }
-                | TextEffect::Cascade { .. } => {}
+                | TextEffect::Cascade { .. }
+                | TextEffect::Cursor { .. } => {}
             }
         }
 
@@ -1324,6 +1627,69 @@ impl StyledText {
         })
     }
 
+    /// Get the cursor effect if one is configured.
+    fn cursor_effect(&self) -> Option<&TextEffect> {
+        self.effects
+            .iter()
+            .find(|e| matches!(e, TextEffect::Cursor { .. }))
+    }
+
+    /// Calculate the cursor position based on CursorPosition and any reveal effects.
+    ///
+    /// Returns `None` if no cursor effect is configured.
+    /// Returns `Some(idx)` where `idx` is the character index where the cursor should appear.
+    fn cursor_index(&self) -> Option<usize> {
+        let cursor_effect = self.cursor_effect()?;
+
+        let TextEffect::Cursor { position, .. } = cursor_effect else {
+            return None;
+        };
+
+        let total = self.text.chars().count();
+
+        match position {
+            CursorPosition::End => Some(total),
+            CursorPosition::AtIndex(idx) => Some((*idx).min(total)),
+            CursorPosition::AfterReveal => {
+                // Find the reveal position from Typewriter or Cascade effects
+                for effect in &self.effects {
+                    match effect {
+                        TextEffect::Typewriter { visible_chars } => {
+                            return Some((*visible_chars as usize).min(total));
+                        }
+                        TextEffect::Cascade { speed, stagger, .. } => {
+                            let revealed = (self.time * speed / stagger.max(0.001)) as usize;
+                            return Some(revealed.min(total));
+                        }
+                        _ => {}
+                    }
+                }
+                // No reveal effect found, default to end
+                Some(total)
+            }
+        }
+    }
+
+    /// Check if the cursor should be visible based on blink speed and current time.
+    fn cursor_visible(&self) -> bool {
+        let Some(cursor_effect) = self.cursor_effect() else {
+            return false;
+        };
+
+        let TextEffect::Cursor { blink_speed, .. } = cursor_effect else {
+            return false;
+        };
+
+        if *blink_speed <= 0.0 {
+            // No blinking, always visible
+            return true;
+        }
+
+        // Blink cycle: on for half, off for half
+        let cycle = self.time * blink_speed;
+        (cycle % 1.0) < 0.5
+    }
+
     /// Render at a specific position.
     pub fn render_at(&self, x: u16, y: u16, frame: &mut Frame) {
         let total = self.text.chars().count();
@@ -1383,6 +1749,36 @@ impl StyledText {
                     flags = flags.union(CellStyleFlags::UNDERLINE);
                 }
                 cell.attrs = CellAttrs::new(flags, 0);
+            }
+        }
+
+        // Render cursor if visible
+        if self.cursor_visible() {
+            if let Some(cursor_idx) = self.cursor_index() {
+                let cursor_x = x.saturating_add(cursor_idx as u16);
+
+                // Get cursor style from effect
+                if let Some(TextEffect::Cursor { style, .. }) = self.cursor_effect() {
+                    let cursor_char = style.char();
+
+                    // Bounds check
+                    if cursor_x < frame_width {
+                        if let Some(cell) = frame.buffer.get_mut(cursor_x, y) {
+                            cell.content = CellContent::from_char(cursor_char);
+                            cell.fg = self.base_color;
+
+                            if let Some(bg) = self.bg_color {
+                                cell.bg = bg;
+                            }
+
+                            let mut flags = CellStyleFlags::empty();
+                            if self.bold {
+                                flags = flags.union(CellStyleFlags::BOLD);
+                            }
+                            cell.attrs = CellAttrs::new(flags, 0);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1647,6 +2043,443 @@ impl TransitionState {
         }
 
         overlay
+    }
+}
+
+// =============================================================================
+// Effect Sequencer / Timeline
+// =============================================================================
+
+/// Loop behavior for effect sequences.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LoopMode {
+    /// Play once and stop at end.
+    #[default]
+    Once,
+    /// Restart from beginning after completing.
+    Loop,
+    /// Reverse direction at each end (forward, backward, forward...).
+    PingPong,
+    /// Loop a specific number of times, then stop.
+    LoopCount(u32),
+}
+
+/// Playback state of a sequence.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SequenceState {
+    /// Sequence is actively playing.
+    #[default]
+    Playing,
+    /// Sequence is paused (progress frozen).
+    Paused,
+    /// Sequence has completed (for Once/LoopCount modes).
+    Completed,
+}
+
+/// Events emitted by sequence during playback.
+///
+/// Events are returned by `tick()` instead of callbacks to avoid lifetime issues.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SequenceEvent {
+    /// A new step has started playing.
+    StepStarted {
+        /// Index of the step that started.
+        step_idx: usize,
+    },
+    /// A step has finished playing.
+    StepCompleted {
+        /// Index of the step that completed.
+        step_idx: usize,
+    },
+    /// The entire sequence has completed (Once mode or LoopCount exhausted).
+    SequenceCompleted,
+    /// The sequence has looped back to the beginning.
+    SequenceLooped {
+        /// Current loop iteration (1-indexed).
+        loop_count: u32,
+    },
+}
+
+/// A single step in an effect sequence.
+#[derive(Debug, Clone)]
+pub struct SequenceStep {
+    /// The effect to apply during this step.
+    pub effect: TextEffect,
+    /// Duration of this step in seconds.
+    pub duration_secs: f64,
+    /// Optional easing override for this step.
+    pub easing: Option<Easing>,
+}
+
+impl SequenceStep {
+    /// Create a new sequence step.
+    pub fn new(effect: TextEffect, duration_secs: f64) -> Self {
+        Self {
+            effect,
+            duration_secs,
+            easing: None,
+        }
+    }
+
+    /// Create a step with custom easing.
+    pub fn with_easing(effect: TextEffect, duration_secs: f64, easing: Easing) -> Self {
+        Self {
+            effect,
+            duration_secs,
+            easing: Some(easing),
+        }
+    }
+}
+
+/// Declarative animation timeline for sequencing effects.
+///
+/// `EffectSequence` enables multi-step animations that automatically transition
+/// between effects. It supports looping, ping-pong playback, and per-step easing.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let seq = EffectSequence::builder()
+///     .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+///     .step(TextEffect::Pulse { speed: 2.0, min_alpha: 0.5 }, 2.0)
+///     .step(TextEffect::FadeOut { progress: 0.0 }, 0.5)
+///     .loop_mode(LoopMode::Loop)
+///     .easing(Easing::EaseInOut)
+///     .build();
+///
+/// // In animation loop:
+/// if let Some(event) = seq.tick(delta_time) {
+///     match event {
+///         SequenceEvent::StepCompleted { step_idx } => println!("Step {} done", step_idx),
+///         SequenceEvent::SequenceCompleted => println!("All done!"),
+///         _ => {}
+///     }
+/// }
+///
+/// // Get current effect with interpolated progress
+/// let effect = seq.current_effect();
+/// ```
+#[derive(Debug, Clone)]
+pub struct EffectSequence {
+    steps: Vec<SequenceStep>,
+    current_step: usize,
+    step_progress: f64,
+    loop_mode: LoopMode,
+    global_easing: Easing,
+    state: SequenceState,
+    /// Current loop iteration (1-indexed, for LoopCount tracking).
+    loop_iteration: u32,
+    /// Direction for PingPong mode (true = forward, false = backward).
+    forward: bool,
+}
+
+impl Default for EffectSequence {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EffectSequence {
+    /// Create an empty sequence.
+    pub fn new() -> Self {
+        Self {
+            steps: Vec::new(),
+            current_step: 0,
+            step_progress: 0.0,
+            loop_mode: LoopMode::Once,
+            global_easing: Easing::Linear,
+            state: SequenceState::Playing,
+            loop_iteration: 1,
+            forward: true,
+        }
+    }
+
+    /// Create a builder for fluent sequence construction.
+    pub fn builder() -> EffectSequenceBuilder {
+        EffectSequenceBuilder::new()
+    }
+
+    /// Advance the sequence by `delta_secs` seconds.
+    ///
+    /// Returns an optional event if a significant state change occurred.
+    /// Call this once per frame with the time delta.
+    ///
+    /// # Returns
+    /// - `Some(SequenceEvent::StepStarted)` when transitioning to a new step
+    /// - `Some(SequenceEvent::StepCompleted)` when a step finishes
+    /// - `Some(SequenceEvent::SequenceLooped)` when looping back to start
+    /// - `Some(SequenceEvent::SequenceCompleted)` when sequence ends
+    /// - `None` if no significant event occurred
+    pub fn tick(&mut self, delta_secs: f64) -> Option<SequenceEvent> {
+        // Don't advance if paused, completed, or empty
+        if self.state != SequenceState::Playing || self.steps.is_empty() {
+            return None;
+        }
+
+        let current_duration = self.steps[self.current_step].duration_secs;
+        if current_duration <= 0.0 {
+            // Zero-duration step: skip immediately
+            return self.advance_step();
+        }
+
+        // Advance progress
+        self.step_progress += delta_secs / current_duration;
+
+        // Check for step completion
+        if self.step_progress >= 1.0 {
+            self.step_progress = 1.0;
+            return self.advance_step();
+        }
+
+        None
+    }
+
+    /// Handle step advancement and looping logic.
+    fn advance_step(&mut self) -> Option<SequenceEvent> {
+        let is_last_step = if self.forward {
+            self.current_step >= self.steps.len() - 1
+        } else {
+            self.current_step == 0
+        };
+
+        if is_last_step {
+            // End of sequence (or end of direction for PingPong)
+            match self.loop_mode {
+                LoopMode::Once => {
+                    self.state = SequenceState::Completed;
+                    Some(SequenceEvent::SequenceCompleted)
+                }
+                LoopMode::Loop => {
+                    self.current_step = 0;
+                    self.step_progress = 0.0;
+                    self.loop_iteration += 1;
+                    Some(SequenceEvent::SequenceLooped {
+                        loop_count: self.loop_iteration,
+                    })
+                }
+                LoopMode::PingPong => {
+                    self.forward = !self.forward;
+                    // Don't change current_step, just reverse direction
+                    self.step_progress = 0.0;
+                    self.loop_iteration += 1;
+                    Some(SequenceEvent::SequenceLooped {
+                        loop_count: self.loop_iteration,
+                    })
+                }
+                LoopMode::LoopCount(max_loops) => {
+                    if self.loop_iteration >= max_loops {
+                        self.state = SequenceState::Completed;
+                        Some(SequenceEvent::SequenceCompleted)
+                    } else {
+                        self.current_step = 0;
+                        self.step_progress = 0.0;
+                        self.loop_iteration += 1;
+                        Some(SequenceEvent::SequenceLooped {
+                            loop_count: self.loop_iteration,
+                        })
+                    }
+                }
+            }
+        } else {
+            // Move to next/prev step
+            if self.forward {
+                self.current_step += 1;
+            } else {
+                self.current_step -= 1;
+            }
+            self.step_progress = 0.0;
+
+            // Return StepStarted (caller can infer previous step completion)
+            Some(SequenceEvent::StepStarted {
+                step_idx: self.current_step,
+            })
+        }
+    }
+
+    /// Get the current effect with progress interpolated.
+    ///
+    /// For progress-based effects (FadeIn, FadeOut, Typewriter, Scramble),
+    /// the progress value is set based on the step's progress and easing.
+    pub fn current_effect(&self) -> TextEffect {
+        if self.steps.is_empty() {
+            return TextEffect::None;
+        }
+
+        let step = &self.steps[self.current_step];
+        let easing = step.easing.unwrap_or(self.global_easing);
+        let eased_progress = easing.apply(self.step_progress);
+
+        // Clone and interpolate progress-based effects
+        match &step.effect {
+            TextEffect::FadeIn { .. } => TextEffect::FadeIn {
+                progress: eased_progress,
+            },
+            TextEffect::FadeOut { .. } => TextEffect::FadeOut {
+                progress: eased_progress,
+            },
+            TextEffect::Typewriter { .. } => {
+                // For typewriter, we need text length context which we don't have
+                // Return the effect as-is; caller should multiply by text length
+                TextEffect::Typewriter {
+                    visible_chars: eased_progress,
+                }
+            }
+            TextEffect::Scramble { .. } => TextEffect::Scramble {
+                progress: eased_progress,
+            },
+            // Non-progress effects: return as-is
+            other => other.clone(),
+        }
+    }
+
+    /// Get the overall sequence progress (0.0 to 1.0).
+    ///
+    /// This represents how far through the entire sequence we are,
+    /// accounting for all steps and their durations.
+    pub fn progress(&self) -> f64 {
+        if self.steps.is_empty() {
+            return 1.0;
+        }
+
+        let total_duration: f64 = self.steps.iter().map(|s| s.duration_secs).sum();
+        if total_duration <= 0.0 {
+            return 1.0;
+        }
+
+        let elapsed_duration: f64 = self.steps[..self.current_step]
+            .iter()
+            .map(|s| s.duration_secs)
+            .sum::<f64>()
+            + self.steps[self.current_step].duration_secs * self.step_progress;
+
+        (elapsed_duration / total_duration).clamp(0.0, 1.0)
+    }
+
+    /// Check if the sequence has completed.
+    pub fn is_complete(&self) -> bool {
+        self.state == SequenceState::Completed
+    }
+
+    /// Check if the sequence is currently playing.
+    pub fn is_playing(&self) -> bool {
+        self.state == SequenceState::Playing
+    }
+
+    /// Check if the sequence is paused.
+    pub fn is_paused(&self) -> bool {
+        self.state == SequenceState::Paused
+    }
+
+    /// Pause the sequence. Progress will freeze until resumed.
+    pub fn pause(&mut self) {
+        if self.state == SequenceState::Playing {
+            self.state = SequenceState::Paused;
+        }
+    }
+
+    /// Resume a paused sequence.
+    pub fn resume(&mut self) {
+        if self.state == SequenceState::Paused {
+            self.state = SequenceState::Playing;
+        }
+    }
+
+    /// Reset the sequence to the beginning.
+    pub fn reset(&mut self) {
+        self.current_step = 0;
+        self.step_progress = 0.0;
+        self.state = SequenceState::Playing;
+        self.loop_iteration = 1;
+        self.forward = true;
+    }
+
+    /// Get the current step index.
+    pub fn current_step_index(&self) -> usize {
+        self.current_step
+    }
+
+    /// Get the progress within the current step (0.0 to 1.0).
+    pub fn step_progress(&self) -> f64 {
+        self.step_progress
+    }
+
+    /// Get the number of steps in the sequence.
+    pub fn step_count(&self) -> usize {
+        self.steps.len()
+    }
+
+    /// Get the current loop iteration (1-indexed).
+    pub fn loop_iteration(&self) -> u32 {
+        self.loop_iteration
+    }
+
+    /// Get the current playback state.
+    pub fn state(&self) -> SequenceState {
+        self.state
+    }
+
+    /// Get the loop mode.
+    pub fn loop_mode(&self) -> LoopMode {
+        self.loop_mode
+    }
+}
+
+/// Builder for constructing effect sequences fluently.
+#[derive(Debug, Clone, Default)]
+pub struct EffectSequenceBuilder {
+    steps: Vec<SequenceStep>,
+    loop_mode: LoopMode,
+    global_easing: Easing,
+}
+
+impl EffectSequenceBuilder {
+    /// Create a new builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a step with the given effect and duration.
+    pub fn step(mut self, effect: TextEffect, duration_secs: f64) -> Self {
+        self.steps.push(SequenceStep::new(effect, duration_secs));
+        self
+    }
+
+    /// Add a step with custom easing.
+    pub fn step_with_easing(
+        mut self,
+        effect: TextEffect,
+        duration_secs: f64,
+        easing: Easing,
+    ) -> Self {
+        self.steps
+            .push(SequenceStep::with_easing(effect, duration_secs, easing));
+        self
+    }
+
+    /// Set the loop mode for the sequence.
+    pub fn loop_mode(mut self, mode: LoopMode) -> Self {
+        self.loop_mode = mode;
+        self
+    }
+
+    /// Set the global easing function (used when steps don't specify their own).
+    pub fn easing(mut self, easing: Easing) -> Self {
+        self.global_easing = easing;
+        self
+    }
+
+    /// Build the effect sequence.
+    pub fn build(self) -> EffectSequence {
+        EffectSequence {
+            steps: self.steps,
+            current_step: 0,
+            step_progress: 0.0,
+            loop_mode: self.loop_mode,
+            global_easing: self.global_easing,
+            state: SequenceState::Playing,
+            loop_iteration: 1,
+            forward: true,
+        }
     }
 }
 
@@ -2712,19 +3545,22 @@ mod tests {
         let lines = vec!["ABC".into(), "DEF".into(), "GHI".into()];
         let multi = StyledMultiLine::new(lines).reflection(Reflection::default());
         assert_eq!(multi.height(), 3);
-        assert_eq!(multi.total_height(), 6); // 3 lines + 3 reflection rows
+        // default: gap=0, height_ratio=1.0 → 3 + 0 + 3 = 6
+        assert_eq!(multi.total_height(), 6);
     }
 
     #[test]
     fn test_styled_multiline_reflection_custom() {
         let refl = Reflection {
-            height: 2,
+            gap: 0,
             start_opacity: 0.5,
             end_opacity: 0.0,
+            height_ratio: 1.0,
+            wave: 0.0,
         };
         let multi = StyledMultiLine::new(vec!["Line".into()]).reflection(refl);
-        // Reflection height is min(refl.height, source lines)
-        assert_eq!(multi.total_height(), 3); // 1 line + 2 reflection
+        // 1 line + 0 gap + ceil(1*1.0)=1 reflected = 2
+        assert_eq!(multi.total_height(), 2);
     }
 
     #[test]
@@ -2749,9 +3585,11 @@ mod tests {
         let multi = StyledMultiLine::new(vec!["█████".into(), "█   █".into(), "█████".into()])
             .base_color(PackedRgba::rgb(0, 255, 128))
             .reflection(Reflection {
-                height: 2,
+                gap: 1,
                 start_opacity: 0.4,
                 end_opacity: 0.1,
+                height_ratio: 0.67,
+                wave: 0.0,
             });
 
         let mut pool = GraphemePool::new();
@@ -2849,9 +3687,573 @@ mod tests {
     #[test]
     fn test_reflection_default() {
         let refl = Reflection::default();
-        assert_eq!(refl.height, 3);
+        assert_eq!(refl.gap, 0);
+        assert!((refl.height_ratio - 1.0).abs() < 1e-10);
+        assert!((refl.wave - 0.0).abs() < 1e-10);
         assert!((refl.start_opacity - 0.4).abs() < 1e-10);
         assert!((refl.end_opacity - 0.05).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_reflection_reflected_rows() {
+        let refl = Reflection::default();
+        assert_eq!(refl.reflected_rows(5), 5); // height_ratio=1.0 → all rows
+
+        let half = Reflection {
+            height_ratio: 0.5,
+            ..Default::default()
+        };
+        assert_eq!(half.reflected_rows(4), 2);
+        assert_eq!(half.reflected_rows(5), 3); // ceil(5*0.5) = 3
+
+        let zero = Reflection {
+            height_ratio: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(zero.reflected_rows(10), 0);
+    }
+
+    #[test]
+    fn test_reflection_gap_in_total_height() {
+        let multi = StyledMultiLine::new(vec!["AAA".into(), "BBB".into(), "CCC".into()])
+            .reflection(Reflection {
+                gap: 2,
+                height_ratio: 1.0,
+                ..Default::default()
+            });
+        // 3 lines + 2 gap + 3 reflected = 8
+        assert_eq!(multi.total_height(), 8);
+    }
+
+    #[test]
+    fn test_reflection_height_ratio_in_total_height() {
+        let multi = StyledMultiLine::new(vec!["A".into(), "B".into(), "C".into(), "D".into()])
+            .reflection(Reflection {
+                gap: 0,
+                height_ratio: 0.5,
+                ..Default::default()
+            });
+        // 4 lines + 0 gap + ceil(4*0.5)=2 reflected = 6
+        assert_eq!(multi.total_height(), 6);
+    }
+
+    #[test]
+    fn test_reflection_wave_render_no_panic() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let multi = StyledMultiLine::new(vec!["WAVE".into(), "TEST".into()])
+            .base_color(PackedRgba::rgb(255, 0, 0))
+            .time(1.5)
+            .reflection(Reflection {
+                gap: 1,
+                height_ratio: 1.0,
+                wave: 0.3,
+                ..Default::default()
+            });
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(40, 20, &mut pool);
+        multi.render_at(0, 0, &mut frame);
+        // Just verify no panic with wave shimmer active
+    }
+
+    // =========================================================================
+    // EffectSequence Tests
+    // =========================================================================
+
+    #[test]
+    fn test_sequence_single_step() {
+        // A single step should play through from 0 to 1
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 1.0)
+            .build();
+
+        assert!(!seq.is_complete());
+        assert!(seq.is_playing());
+        assert_eq!(seq.current_step_index(), 0);
+
+        // Advance halfway
+        seq.tick(0.5);
+        assert!((seq.step_progress() - 0.5).abs() < 0.01);
+        assert!(!seq.is_complete());
+
+        // Advance to completion
+        let event = seq.tick(0.5);
+        assert!(seq.is_complete());
+        assert!(matches!(event, Some(SequenceEvent::SequenceCompleted)));
+    }
+
+    #[test]
+    fn test_sequence_multi_step() {
+        // Steps should transition at duration boundaries
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 1.0)
+            .step(
+                TextEffect::Pulse {
+                    speed: 2.0,
+                    min_alpha: 0.5,
+                },
+                2.0,
+            )
+            .step(TextEffect::FadeOut { progress: 0.0 }, 1.0)
+            .build();
+
+        assert_eq!(seq.step_count(), 3);
+        assert_eq!(seq.current_step_index(), 0);
+
+        // Complete first step
+        seq.tick(1.0);
+        assert_eq!(seq.current_step_index(), 1);
+
+        // Complete second step (2s duration)
+        seq.tick(2.0);
+        assert_eq!(seq.current_step_index(), 2);
+
+        // Complete third step
+        seq.tick(1.0);
+        assert!(seq.is_complete());
+    }
+
+    #[test]
+    fn test_sequence_loop() {
+        // Loop mode should restart from step 0
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+            .loop_mode(LoopMode::Loop)
+            .build();
+
+        // Complete first pass
+        let event = seq.tick(0.5);
+        assert!(matches!(
+            event,
+            Some(SequenceEvent::SequenceLooped { loop_count: 2 })
+        ));
+        assert_eq!(seq.current_step_index(), 0);
+        assert!(!seq.is_complete());
+
+        // Loop again
+        let event = seq.tick(0.5);
+        assert!(matches!(
+            event,
+            Some(SequenceEvent::SequenceLooped { loop_count: 3 })
+        ));
+    }
+
+    #[test]
+    fn test_sequence_pingpong() {
+        // PingPong should reverse at ends
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+            .step(TextEffect::FadeOut { progress: 0.0 }, 0.5)
+            .loop_mode(LoopMode::PingPong)
+            .build();
+
+        assert_eq!(seq.current_step_index(), 0);
+
+        // Forward: step 0 -> step 1
+        seq.tick(0.5);
+        assert_eq!(seq.current_step_index(), 1);
+
+        // Complete step 1, reverse triggered
+        let event = seq.tick(0.5);
+        assert!(matches!(
+            event,
+            Some(SequenceEvent::SequenceLooped { loop_count: 2 })
+        ));
+        // In pingpong, after loop we stay at the last step but direction reverses
+        assert_eq!(seq.current_step_index(), 1);
+    }
+
+    #[test]
+    fn test_sequence_loop_count() {
+        // LoopCount should stop after N iterations
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+            .loop_mode(LoopMode::LoopCount(3))
+            .build();
+
+        // First pass
+        seq.tick(0.5);
+        assert!(!seq.is_complete());
+
+        // Second pass
+        seq.tick(0.5);
+        assert!(!seq.is_complete());
+
+        // Third pass - should complete
+        let event = seq.tick(0.5);
+        assert!(seq.is_complete());
+        assert!(matches!(event, Some(SequenceEvent::SequenceCompleted)));
+    }
+
+    #[test]
+    fn test_sequence_once_completes() {
+        // Once mode should fire SequenceCompleted at end
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+            .loop_mode(LoopMode::Once) // Default, but explicit
+            .build();
+
+        let event = seq.tick(0.5);
+        assert!(matches!(event, Some(SequenceEvent::SequenceCompleted)));
+        assert!(seq.is_complete());
+    }
+
+    #[test]
+    fn test_sequence_step_easing() {
+        // Per-step easing should override global
+        let mut seq = EffectSequence::builder()
+            .step_with_easing(TextEffect::FadeIn { progress: 0.0 }, 1.0, Easing::EaseIn)
+            .easing(Easing::Linear) // Global is Linear, but step uses EaseIn
+            .build();
+
+        // Advance halfway
+        seq.tick(0.5);
+
+        // Get current effect - should have EaseIn applied
+        let effect = seq.current_effect();
+
+        // EaseIn at t=0.5: 0.5^3 = 0.125 (much less than linear 0.5)
+        if let TextEffect::FadeIn { progress } = effect {
+            // EaseIn should give progress < 0.5
+            assert!(
+                progress < 0.3,
+                "EaseIn at 0.5 should be ~0.125, got {progress}"
+            );
+        } else {
+            panic!("Expected FadeIn effect");
+        }
+    }
+
+    #[test]
+    fn test_sequence_event_step_started() {
+        // StepStarted should fire when transitioning to a new step
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+            .step(TextEffect::FadeOut { progress: 0.0 }, 0.5)
+            .build();
+
+        // Complete first step
+        let event = seq.tick(0.5);
+
+        // Should get StepStarted for step 1
+        assert!(matches!(
+            event,
+            Some(SequenceEvent::StepStarted { step_idx: 1 })
+        ));
+    }
+
+    #[test]
+    fn test_sequence_pause_resume() {
+        // Pausing should freeze progress
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 1.0)
+            .build();
+
+        seq.tick(0.3);
+        let progress_before = seq.step_progress();
+
+        seq.pause();
+        assert!(seq.is_paused());
+
+        // Ticking while paused should not advance
+        seq.tick(0.5);
+        assert!((seq.step_progress() - progress_before).abs() < 0.001);
+
+        seq.resume();
+        assert!(seq.is_playing());
+
+        // Now ticking should advance
+        seq.tick(0.2);
+        assert!(seq.step_progress() > progress_before);
+    }
+
+    #[test]
+    fn test_sequence_reset() {
+        // Reset should return to step 0, progress 0, playing state
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 1.0)
+            .build();
+
+        seq.tick(0.5);
+        assert!(seq.step_progress() > 0.0);
+
+        seq.reset();
+
+        assert_eq!(seq.current_step_index(), 0);
+        assert!((seq.step_progress() - 0.0).abs() < 0.001);
+        assert!(seq.is_playing());
+        assert_eq!(seq.loop_iteration(), 1);
+    }
+
+    #[test]
+    fn test_sequence_empty() {
+        // Empty sequence should be complete immediately
+        let seq = EffectSequence::new();
+
+        // Empty sequence progress is 1.0 (complete)
+        assert!((seq.progress() - 1.0).abs() < 0.001);
+
+        // current_effect should return None
+        assert!(matches!(seq.current_effect(), TextEffect::None));
+    }
+
+    #[test]
+    fn test_sequence_progress_overall() {
+        // Overall progress should reflect position across all steps
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 1.0)
+            .step(TextEffect::FadeOut { progress: 0.0 }, 1.0)
+            .build();
+
+        // Total duration = 2.0 seconds
+
+        // At start
+        assert!((seq.progress() - 0.0).abs() < 0.01);
+
+        // Halfway through first step (0.5 of 2.0 total = 0.25)
+        seq.tick(0.5);
+        assert!((seq.progress() - 0.25).abs() < 0.01);
+
+        // Complete first step (1.0 of 2.0 = 0.5)
+        seq.tick(0.5);
+        assert!((seq.progress() - 0.5).abs() < 0.01);
+
+        // Halfway through second step (1.5 of 2.0 = 0.75)
+        seq.tick(0.5);
+        assert!((seq.progress() - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_sequence_builder_fluent() {
+        // Builder should support fluent chaining
+        let seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 0.5)
+            .step(
+                TextEffect::Pulse {
+                    speed: 2.0,
+                    min_alpha: 0.5,
+                },
+                2.0,
+            )
+            .step(TextEffect::FadeOut { progress: 0.0 }, 0.5)
+            .loop_mode(LoopMode::Loop)
+            .easing(Easing::EaseInOut)
+            .build();
+
+        assert_eq!(seq.step_count(), 3);
+        assert_eq!(seq.loop_mode(), LoopMode::Loop);
+    }
+
+    #[test]
+    fn test_sequence_current_effect_interpolation() {
+        // Progress-based effects should have progress interpolated
+        let mut seq = EffectSequence::builder()
+            .step(TextEffect::FadeIn { progress: 0.0 }, 1.0)
+            .build();
+
+        seq.tick(0.5);
+
+        let effect = seq.current_effect();
+        if let TextEffect::FadeIn { progress } = effect {
+            assert!((progress - 0.5).abs() < 0.01);
+        } else {
+            panic!("Expected FadeIn effect");
+        }
+    }
+
+    // =========================================================================
+    // Cursor Effect Tests (bd-28rb)
+    // =========================================================================
+
+    #[test]
+    fn test_cursor_at_end() {
+        // Cursor at End position should appear after the last character
+        let text = StyledText::new("Hello")
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed: 0.0, // No blinking
+                position: CursorPosition::End,
+            })
+            .time(0.0);
+
+        // Cursor should be at index 5 (after 'o')
+        let cursor_idx = text.cursor_index();
+        assert_eq!(cursor_idx, Some(5));
+
+        // Cursor should be visible (no blinking)
+        assert!(text.cursor_visible());
+    }
+
+    #[test]
+    fn test_cursor_blinks() {
+        // Cursor with blink_speed should toggle visibility over time
+        let blink_speed = 2.0; // 2 blinks per second
+
+        // At time 0.0, cursor should be visible (first half of cycle)
+        let text_visible = StyledText::new("Hello")
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed,
+                position: CursorPosition::End,
+            })
+            .time(0.0);
+        assert!(
+            text_visible.cursor_visible(),
+            "Cursor should be visible at t=0.0"
+        );
+
+        // At time 0.25, cursor should still be visible (cycle = 0.5, 0.5 < 0.5 is false... wait)
+        // Let me recalculate: cycle = 0.25 * 2.0 = 0.5, 0.5 % 1.0 = 0.5, 0.5 < 0.5 is false
+        let text_mid = StyledText::new("Hello")
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed,
+                position: CursorPosition::End,
+            })
+            .time(0.25);
+        assert!(
+            !text_mid.cursor_visible(),
+            "Cursor should be hidden at t=0.25 (second half of cycle)"
+        );
+
+        // At time 0.5, cursor should be visible again (new cycle starts)
+        // cycle = 0.5 * 2.0 = 1.0, 1.0 % 1.0 = 0.0, 0.0 < 0.5 is true
+        let text_new_cycle = StyledText::new("Hello")
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed,
+                position: CursorPosition::End,
+            })
+            .time(0.5);
+        assert!(
+            text_new_cycle.cursor_visible(),
+            "Cursor should be visible at t=0.5 (new cycle)"
+        );
+
+        // At time 0.75, cursor should be hidden again
+        // cycle = 0.75 * 2.0 = 1.5, 1.5 % 1.0 = 0.5, 0.5 < 0.5 is false
+        let text_hidden_again = StyledText::new("Hello")
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed,
+                position: CursorPosition::End,
+            })
+            .time(0.75);
+        assert!(
+            !text_hidden_again.cursor_visible(),
+            "Cursor should be hidden at t=0.75"
+        );
+    }
+
+    #[test]
+    fn test_cursor_after_reveal() {
+        // Cursor with AfterReveal should follow the Typewriter reveal position
+        let text = StyledText::new("Hello World")
+            .effect(TextEffect::Typewriter { visible_chars: 5.0 }) // "Hello" revealed
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed: 0.0,
+                position: CursorPosition::AfterReveal,
+            })
+            .time(0.0);
+
+        // Cursor should be at index 5 (after "Hello")
+        let cursor_idx = text.cursor_index();
+        assert_eq!(cursor_idx, Some(5));
+
+        // Test with partial reveal
+        let text_partial = StyledText::new("Hello World")
+            .effect(TextEffect::Typewriter { visible_chars: 3.5 }) // "Hel" and half of 'l'
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed: 0.0,
+                position: CursorPosition::AfterReveal,
+            })
+            .time(0.0);
+
+        // Cursor should be at index 3 (truncated to integer)
+        let cursor_idx_partial = text_partial.cursor_index();
+        assert_eq!(cursor_idx_partial, Some(3));
+    }
+
+    #[test]
+    fn test_cursor_custom_char() {
+        // Custom cursor should use the specified character
+        let custom_char = '▌';
+        let style = CursorStyle::Custom(custom_char);
+        assert_eq!(style.char(), custom_char);
+
+        // Test other cursor styles
+        assert_eq!(CursorStyle::Block.char(), '█');
+        assert_eq!(CursorStyle::Underline.char(), '_');
+        assert_eq!(CursorStyle::Bar.char(), '|');
+    }
+
+    #[test]
+    fn test_cursor_at_index() {
+        // Cursor at specific index
+        let text = StyledText::new("Hello")
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Bar,
+                blink_speed: 0.0,
+                position: CursorPosition::AtIndex(2),
+            })
+            .time(0.0);
+
+        // Cursor should be at index 2
+        assert_eq!(text.cursor_index(), Some(2));
+    }
+
+    #[test]
+    fn test_cursor_at_index_clamped() {
+        // Cursor index beyond text length should be clamped
+        let text = StyledText::new("Hi") // 2 chars
+            .effect(TextEffect::Cursor {
+                style: CursorStyle::Block,
+                blink_speed: 0.0,
+                position: CursorPosition::AtIndex(10), // Beyond text length
+            })
+            .time(0.0);
+
+        // Cursor should be clamped to 2 (text length)
+        assert_eq!(text.cursor_index(), Some(2));
+    }
+
+    #[test]
+    fn test_cursor_no_blink() {
+        // Cursor with blink_speed = 0 should always be visible
+        for time in [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 5.0, 100.0] {
+            let text = StyledText::new("Test")
+                .effect(TextEffect::Cursor {
+                    style: CursorStyle::Block,
+                    blink_speed: 0.0,
+                    position: CursorPosition::End,
+                })
+                .time(time);
+            assert!(
+                text.cursor_visible(),
+                "Cursor should always be visible with blink_speed=0 at t={time}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_cursor_effect() {
+        // Text without cursor effect should return None for cursor methods
+        let text = StyledText::new("Hello")
+            .effect(TextEffect::RainbowGradient { speed: 1.0 })
+            .time(0.0);
+
+        assert!(text.cursor_index().is_none());
+        assert!(!text.cursor_visible());
+    }
+
+    #[test]
+    fn test_cursor_default_styles() {
+        // CursorStyle and CursorPosition should have correct defaults
+        assert_eq!(CursorStyle::default(), CursorStyle::Block);
+        assert_eq!(CursorPosition::default(), CursorPosition::End);
     }
 }
 
@@ -3282,23 +4684,42 @@ impl AsciiArtText {
 // =============================================================================
 
 /// Reflection configuration for mirrored text rendering below the primary block.
+///
+/// Creates a vertically flipped copy of the source text with a gradient
+/// opacity falloff, simulating a glossy/water surface effect.
 #[derive(Debug, Clone)]
 pub struct Reflection {
-    /// Rows of reflected text (typically half the source height).
-    pub height: u16,
+    /// Rows between the primary text and the reflection (0–3 typical).
+    pub gap: u16,
     /// Starting opacity at the top of the reflection (0.0–1.0).
     pub start_opacity: f64,
     /// Ending opacity at the bottom of the reflection (0.0–1.0).
     pub end_opacity: f64,
+    /// Fraction of the source text height to reflect (0.0–1.0).
+    /// For example, 0.5 reflects only the bottom half of the text.
+    pub height_ratio: f64,
+    /// Water-ripple wave amplitude (0.0 = perfect mirror, >0 = horizontal shimmer).
+    /// Each reflection row is offset horizontally by `sin(row * 0.5 + time * 2.0) * wave`.
+    pub wave: f64,
 }
 
 impl Default for Reflection {
     fn default() -> Self {
         Self {
-            height: 3,
+            gap: 0,
             start_opacity: 0.4,
             end_opacity: 0.05,
+            height_ratio: 1.0,
+            wave: 0.0,
         }
+    }
+}
+
+impl Reflection {
+    /// Compute the number of reflected rows given a source height.
+    pub fn reflected_rows(&self, source_height: usize) -> usize {
+        let max_rows = (source_height as f64 * self.height_ratio.clamp(0.0, 1.0)).ceil() as usize;
+        max_rows.min(source_height)
     }
 }
 
@@ -3455,7 +4876,7 @@ impl StyledMultiLine {
     pub fn total_height(&self) -> usize {
         let base = self.lines.len();
         match &self.reflection {
-            Some(r) => base + r.height as usize,
+            Some(r) => base + r.gap as usize + r.reflected_rows(base),
             None => base,
         }
     }
@@ -3611,7 +5032,11 @@ impl StyledMultiLine {
         frame: &mut Frame,
     ) {
         let src_height = self.lines.len();
-        let refl_rows = (reflection.height as usize).min(src_height);
+        let refl_rows = reflection.reflected_rows(src_height);
+
+        if refl_rows == 0 {
+            return;
+        }
 
         for refl_row in 0..refl_rows {
             // Mirror: bottom line of source renders first
@@ -3627,10 +5052,22 @@ impl StyledMultiLine {
             let opacity =
                 reflection.start_opacity + (reflection.end_opacity - reflection.start_opacity) * t;
 
+            // Wave offset: horizontal shimmer for water-ripple effect
+            let wave_dx = if reflection.wave > 0.0 {
+                ((refl_row as f64 * 0.5 + self.time * 2.0).sin() * reflection.wave) as i16
+            } else {
+                0
+            };
+
             if let Some(line) = self.lines.get(src_row) {
+                let render_x = if wave_dx >= 0 {
+                    x.saturating_add(wave_dx as u16)
+                } else {
+                    x.saturating_sub(wave_dx.unsigned_abs())
+                };
                 self.render_line(
                     line,
-                    x,
+                    render_x,
                     dest_y,
                     src_row,
                     total_width,
@@ -3657,9 +5094,9 @@ impl StyledMultiLine {
             self.render_line(line, x, py, row, total_width, total_height, 1.0, frame);
         }
 
-        // Render reflection
+        // Render reflection (with gap)
         if let Some(ref reflection) = self.reflection {
-            let refl_y = y.saturating_add(total_height as u16);
+            let refl_y = y.saturating_add(total_height as u16 + reflection.gap);
             self.render_reflection(x, refl_y, total_width, reflection, frame);
         }
     }
@@ -4094,6 +5531,232 @@ impl MatrixRainState {
     /// Get column count.
     pub fn column_count(&self) -> usize {
         self.columns.len()
+    }
+}
+
+// =============================================================================
+// Palette Tests
+// =============================================================================
+
+#[cfg(test)]
+mod palette_tests {
+    use super::PackedRgba;
+    use super::palette;
+
+    #[test]
+    fn test_all_gradients_have_at_least_two_stops() {
+        for (name, grad) in palette::all_gradients() {
+            let start = grad.sample(0.0);
+            let end = grad.sample(1.0);
+            // Verify both endpoints produce valid colors (not default white from empty)
+            // and that the gradient actually has differentiation
+            assert!(
+                start.r() != end.r() || start.g() != end.g() || start.b() != end.b(),
+                "Gradient '{}' should have distinct start and end colors",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_gradient_coverage_starts_at_zero_ends_at_one() {
+        // All presets should produce a non-white color at t=0 and t=1
+        // (white is the fallback for empty gradients)
+        for (name, grad) in palette::all_gradients() {
+            let at_zero = grad.sample(0.0);
+            let at_one = grad.sample(1.0);
+            // At least one channel should differ from white-fallback (255,255,255)
+            let is_all_white = |c: PackedRgba| c.r() == 255 && c.g() == 255 && c.b() == 255;
+            assert!(
+                !is_all_white(at_zero) || !is_all_white(at_one),
+                "Gradient '{}' appears to be empty (produces all-white)",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_gradient_midpoint_samples_without_panic() {
+        for (name, grad) in palette::all_gradients() {
+            let _ = grad.sample(0.25);
+            let _ = grad.sample(0.5);
+            let _ = grad.sample(0.75);
+            // Just ensure no panic
+            let _ = name;
+        }
+    }
+
+    #[test]
+    fn test_all_color_sets_have_at_least_two_colors() {
+        for (name, colors) in palette::all_color_sets() {
+            assert!(
+                colors.len() >= 2,
+                "Color set '{}' should have at least 2 colors, got {}",
+                name,
+                colors.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_color_sets_no_duplicates() {
+        for (name, colors) in palette::all_color_sets() {
+            for (i, a) in colors.iter().enumerate() {
+                for (j, b) in colors.iter().enumerate() {
+                    if i != j {
+                        assert!(
+                            a.r() != b.r() || a.g() != b.g() || a.b() != b.b(),
+                            "Color set '{}' has duplicate at indices {} and {}",
+                            name,
+                            i,
+                            j
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_neon_colors_are_vivid() {
+        // Neon colors should have at least one channel at max brightness
+        for color in palette::neon_colors() {
+            assert!(
+                color.r() == 255 || color.g() == 255 || color.b() == 255,
+                "Neon color ({},{},{}) should have at least one saturated channel",
+                color.r(),
+                color.g(),
+                color.b()
+            );
+        }
+    }
+
+    #[test]
+    fn test_pastel_colors_are_light() {
+        // Pastels should have relatively high average brightness
+        for color in palette::pastel_colors() {
+            let avg = (color.r() as u16 + color.g() as u16 + color.b() as u16) / 3;
+            assert!(
+                avg >= 150,
+                "Pastel color ({},{},{}) avg brightness {} is too dark",
+                color.r(),
+                color.g(),
+                color.b(),
+                avg
+            );
+        }
+    }
+
+    #[test]
+    fn test_monochrome_is_achromatic() {
+        for color in palette::monochrome() {
+            assert_eq!(
+                color.r(),
+                color.g(),
+                "Monochrome ({},{},{}) should have equal R and G",
+                color.r(),
+                color.g(),
+                color.b()
+            );
+            assert_eq!(
+                color.g(),
+                color.b(),
+                "Monochrome ({},{},{}) should have equal G and B",
+                color.r(),
+                color.g(),
+                color.b()
+            );
+        }
+    }
+
+    #[test]
+    fn test_monochrome_ordered_dark_to_light() {
+        let colors = palette::monochrome();
+        for i in 1..colors.len() {
+            assert!(
+                colors[i].r() > colors[i - 1].r(),
+                "Monochrome should be ordered dark to light: index {} ({}) <= index {} ({})",
+                i,
+                colors[i].r(),
+                i - 1,
+                colors[i - 1].r()
+            );
+        }
+    }
+
+    #[test]
+    fn test_ice_gradient_is_cool_toned() {
+        let grad = palette::ice();
+        // Sample at multiple points; blue channel should dominate or be high
+        for &t in &[0.0, 0.25, 0.5, 0.75, 1.0] {
+            let c = grad.sample(t);
+            assert!(
+                c.b() >= c.r(),
+                "Ice gradient at t={} should be cool-toned: r={} > b={}",
+                t,
+                c.r(),
+                c.b()
+            );
+        }
+    }
+
+    #[test]
+    fn test_forest_gradient_is_green_dominant() {
+        let grad = palette::forest();
+        for &t in &[0.0, 0.25, 0.5, 0.75, 1.0] {
+            let c = grad.sample(t);
+            assert!(
+                c.g() >= c.r() && c.g() >= c.b(),
+                "Forest gradient at t={} should be green-dominant: ({},{},{})",
+                t,
+                c.r(),
+                c.g(),
+                c.b()
+            );
+        }
+    }
+
+    #[test]
+    fn test_blood_gradient_is_red_dominant() {
+        let grad = palette::blood();
+        for &t in &[0.25, 0.5, 0.75, 1.0] {
+            let c = grad.sample(t);
+            assert!(
+                c.r() >= c.g() && c.r() >= c.b(),
+                "Blood gradient at t={} should be red-dominant: ({},{},{})",
+                t,
+                c.r(),
+                c.g(),
+                c.b()
+            );
+        }
+    }
+
+    #[test]
+    fn test_matrix_gradient_is_green_channel() {
+        let grad = palette::matrix();
+        // At end, should be bright green with no red
+        let end = grad.sample(1.0);
+        assert_eq!(end.r(), 0, "Matrix end should have no red");
+        assert!(end.g() > 200, "Matrix end should be bright green");
+    }
+
+    #[test]
+    fn test_all_gradients_count() {
+        assert_eq!(
+            palette::all_gradients().len(),
+            13,
+            "Should have 13 gradient presets (5 original + 8 new)"
+        );
+    }
+
+    #[test]
+    fn test_all_color_sets_count() {
+        assert_eq!(
+            palette::all_color_sets().len(),
+            4,
+            "Should have 4 color sets"
+        );
     }
 }
 

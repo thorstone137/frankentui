@@ -19,6 +19,7 @@
 //! | `filesize` | [`filesize`] | Human-readable file size formatting |
 //! | `filepicker` | [`filepicker`] | File picker state utilities |
 //! | `forms` | [`forms`] | Form layout and input widgets |
+//! | `validation` | [`validation`] | Form validation framework with composable validators |
 //! | `image` | [`image`] | Terminal image protocols (iTerm2/Kitty) |
 //! | `live` | [`live`] | Live-updating display (depends on console) |
 //! | `logging` | [`logging`] | Tracing subscriber for TUI logging |
@@ -29,6 +30,7 @@
 //! | `timer` | [`timer`] | Countdown timer utility |
 //! | `traceback` | [`traceback`] | Error/stacktrace display |
 //! | `theme` | [`theme`] | Color themes + palette tokens |
+//! | `terminal` | [`terminal`] | ANSI escape sequence parser for terminal emulation |
 //! | `text-effects` | [`text_effects`] | Animated text effects (gradients, fades, ASCII art) |
 //! | `visual-fx` | [`visual_fx`] | Feature-gated visual FX primitives (backdrops, CPU/GPU adapters) |
 
@@ -50,8 +52,14 @@ pub mod diagram;
 #[cfg(feature = "export")]
 pub mod export;
 
+#[cfg(feature = "filesize")]
+pub mod filesize;
+
 #[cfg(feature = "forms")]
 pub mod forms;
+
+#[cfg(feature = "validation")]
+pub mod validation;
 
 #[cfg(feature = "image")]
 pub mod image;
@@ -74,9 +82,6 @@ pub mod syntax;
 #[cfg(feature = "filepicker")]
 pub mod filepicker;
 
-#[cfg(feature = "filesize")]
-pub mod filesize;
-
 #[cfg(feature = "traceback")]
 pub mod traceback;
 
@@ -88,6 +93,9 @@ pub mod timer;
 
 #[cfg(feature = "theme")]
 pub mod theme;
+
+#[cfg(feature = "terminal")]
+pub mod terminal;
 
 #[cfg(feature = "text-effects")]
 pub mod text_effects;
