@@ -493,8 +493,10 @@ impl<A: Animation> Animation for Delayed<A> {
 }
 
 pub mod group;
+pub mod stagger;
 pub mod timeline;
 pub use group::AnimationGroup;
+pub use stagger::{stagger_offsets, stagger_offsets_with_jitter, StaggerMode};
 pub use timeline::Timeline;
 
 // ---------------------------------------------------------------------------

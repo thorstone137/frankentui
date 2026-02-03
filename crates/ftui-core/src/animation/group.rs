@@ -184,11 +184,13 @@ impl AnimationGroup {
     }
 
     /// Get a mutable reference to a named animation.
-    pub fn get_mut(&mut self, label: &str) -> Option<&mut dyn Animation> {
-        self.members
-            .iter_mut()
-            .find(|m| m.label == label)
-            .map(|m| m.animation.as_mut())
+    pub fn get_mut(&mut self, label: &str) -> Option<&mut Box<dyn Animation>> {
+        for member in &mut self.members {
+            if member.label == label {
+                return Some(&mut member.animation);
+            }
+        }
+        None
     }
 
     /// Get a reference to an animation by index.
