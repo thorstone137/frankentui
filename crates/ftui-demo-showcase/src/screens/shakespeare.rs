@@ -388,7 +388,6 @@ impl ShakespeareMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FocusPanel {
     Search,
     Text,
@@ -493,7 +492,7 @@ impl Screen for Shakespeare {
                     self.set_focus(FocusPanel::Search);
                 }
                 (KeyCode::Tab, Modifiers::NONE) => {
-                    self.focus = match self.focus {
+                    let next = match self.focus {
                         FocusPanel::Text => FocusPanel::Navigator,
                         FocusPanel::Navigator => FocusPanel::Toc,
                         FocusPanel::Toc => FocusPanel::Insights,
@@ -501,6 +500,7 @@ impl Screen for Shakespeare {
                         FocusPanel::Search => FocusPanel::Text,
                         FocusPanel::Status => FocusPanel::Text,
                     };
+                    self.set_focus(next);
                 }
                 (KeyCode::Char('n'), Modifiers::NONE) => self.next_match(),
                 (KeyCode::Char('N'), Modifiers::NONE) | (KeyCode::Char('n'), Modifiers::SHIFT) => {
@@ -549,10 +549,10 @@ impl Screen for Shakespeare {
                     self.scroll_to(self.total_lines());
                 }
                 (KeyCode::Enter, Modifiers::NONE) => {
-                    if self.focus == FocusPanel::Toc {
-                        if let Some(entry) = self.toc_entries.get(self.toc_selected) {
-                            self.scroll_to(entry.line.saturating_sub(2));
-                        }
+                    if self.focus == FocusPanel::Toc
+                        && let Some(entry) = self.toc_entries.get(self.toc_selected)
+                    {
+                        self.scroll_to(entry.line.saturating_sub(2));
                     }
                 }
                 _ => {}
@@ -1243,23 +1243,23 @@ impl Shakespeare {
         }
 
         let rows = Flex::vertical()
-            .constraints([Constraint::Fixed(1), Constraint::Fixed(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+                Constraint::Min(1),
+            ])
             .split(inner);
 
-        let header = StyledText::new(format!(
-            "{} · {}",
-            self.mode.label(),
-            self.mode.subtitle()
-        ))
-        .effect(TextEffect::AnimatedGradient {
-            gradient: ColorGradient::cyberpunk(),
-            speed: 0.55,
-        })
-        .effect(TextEffect::Glow {
-            color: theme::accent::ACCENT_7.into(),
-            intensity: 0.4,
-        })
-        .time(self.time);
+        let header = StyledText::new(format!("{} · {}", self.mode.label(), self.mode.subtitle()))
+            .effect(TextEffect::AnimatedGradient {
+                gradient: ColorGradient::cyberpunk(),
+                speed: 0.55,
+            })
+            .effect(TextEffect::Glow {
+                color: theme::accent::ACCENT_7.into(),
+                intensity: 0.4,
+            })
+            .time(self.time);
         header.render(rows[0], frame);
 
         let spotlight = self.current_spotlight_line();
@@ -1288,7 +1288,11 @@ impl Shakespeare {
         }
 
         let fx_rows = Flex::vertical()
-            .constraints([Constraint::Fixed(1), Constraint::Fixed(1), Constraint::Fixed(1)])
+            .constraints([
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+            ])
             .split(rows[2]);
 
         let cue_one = StyledText::new("CURTAIN UP · emotional arc ignites")
@@ -1320,6 +1324,7 @@ impl Shakespeare {
                 line_gap: 2,
                 scroll: true,
                 scroll_speed: 0.8,
+                flicker: 0.05,
             })
             .time(self.time);
         cue_three.render(fx_rows[2], frame);
@@ -1343,7 +1348,11 @@ impl Shakespeare {
         }
 
         let rows = Flex::vertical()
-            .constraints([Constraint::Fixed(1), Constraint::Fixed(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+                Constraint::Min(1),
+            ])
             .split(inner);
 
         let cue_header = StyledText::new("LIVE CUES · timing + intensity")
@@ -1406,7 +1415,11 @@ impl Shakespeare {
         }
 
         let rows = Flex::vertical()
-            .constraints([Constraint::Fixed(1), Constraint::Fixed(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+                Constraint::Min(1),
+            ])
             .split(inner);
 
         let headline = StyledText::new("INSTANT SEARCH INTELLIGENCE")
