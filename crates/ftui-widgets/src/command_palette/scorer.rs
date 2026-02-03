@@ -414,12 +414,18 @@ impl BayesianScorer {
 
         if tag_match && result.match_type != MatchType::NoMatch {
             // Strong positive evidence
-            result.evidence.add(
-                EvidenceKind::TagMatch,
-                3.0, // 3:1 in favor
-                EvidenceDescription::Static("query matches tag"),
-            );
-            result.score = result.evidence.posterior_probability();
+            if self.track_evidence {
+                result.evidence.add(
+                    EvidenceKind::TagMatch,
+                    3.0, // 3:1 in favor
+                    EvidenceDescription::Static("query matches tag"),
+                );
+                result.score = result.evidence.posterior_probability();
+            } else if (0.0..1.0).contains(&result.score) {
+                let odds = result.score / (1.0 - result.score);
+                let boosted = odds * 3.0;
+                result.score = boosted / (1.0 + boosted);
+            }
         }
 
         result
@@ -427,26 +433,36 @@ impl BayesianScorer {
 
     /// Score when query is empty (returns all items with neutral score).
     fn score_empty_query(&self, title: &str) -> MatchResult {
-        let mut evidence = EvidenceLedger::new();
-        evidence.add(
-            EvidenceKind::MatchType,
-            1.0, // Neutral prior
-            EvidenceDescription::Static("empty query matches all"),
-        );
-
         // Shorter titles are more specific, slight preference
         let length_factor = 1.0 + (1.0 / (title.len() as f64 + 1.0)) * 0.1;
-        evidence.add(
-            EvidenceKind::TitleLength,
-            length_factor,
-            EvidenceDescription::TitleLengthChars { len: title.len() },
-        );
-
-        MatchResult {
-            score: evidence.posterior_probability(),
-            match_type: MatchType::Fuzzy, // Treat as weak match
-            match_positions: Vec::new(),
-            evidence,
+        if self.track_evidence {
+            let mut evidence = EvidenceLedger::new();
+            evidence.add(
+                EvidenceKind::MatchType,
+                1.0, // Neutral prior
+                EvidenceDescription::Static("empty query matches all"),
+            );
+            evidence.add(
+                EvidenceKind::TitleLength,
+                length_factor,
+                EvidenceDescription::TitleLengthChars { len: title.len() },
+            );
+            let score = evidence.posterior_probability();
+            MatchResult {
+                score,
+                match_type: MatchType::Fuzzy, // Treat as weak match
+                match_positions: Vec::new(),
+                evidence,
+            }
+        } else {
+            let odds = length_factor;
+            let score = odds / (1.0 + odds);
+            MatchResult {
+                score,
+                match_type: MatchType::Fuzzy,
+                match_positions: Vec::new(),
+                evidence: EvidenceLedger::new(),
+            }
         }
     }
 
@@ -665,6 +681,38 @@ impl BayesianScorer {
         title: &str,
     ) -> MatchResult {
         let positions_ref = positions.as_slice();
+        if !self.track_evidence {
+            let mut combined_bf = match_type.prior_odds();
+
+            if let Some(&first_pos) = positions_ref.first() {
+                let position_factor = 1.0 + (1.0 / (first_pos as f64 + 1.0)) * 0.5;
+                combined_bf *= position_factor;
+            }
+
+            let word_boundary_count = self.count_word_boundaries(positions_ref, title);
+            if word_boundary_count > 0 {
+                let boundary_factor = 1.0 + (word_boundary_count as f64 * 0.3);
+                combined_bf *= boundary_factor;
+            }
+
+            if match_type == MatchType::Fuzzy && positions_ref.len() > 1 {
+                let total_gap = self.total_gap(positions_ref);
+                let gap_factor = 1.0 / (1.0 + total_gap as f64 * 0.1);
+                combined_bf *= gap_factor;
+            }
+
+            let length_factor = 1.0 + (query.len() as f64 / title.len() as f64) * 0.2;
+            combined_bf *= length_factor;
+
+            let score = combined_bf / (1.0 + combined_bf);
+            return MatchResult {
+                score,
+                match_type,
+                match_positions: positions,
+                evidence: EvidenceLedger::new(),
+            };
+        }
+
         let mut evidence = EvidenceLedger::new();
 
         // Prior odds from match type
