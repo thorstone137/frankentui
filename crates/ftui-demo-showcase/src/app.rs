@@ -1522,6 +1522,7 @@ impl Model for AppModel {
 
         let inner = content_block.inner(chunks[1]);
         content_block.render(chunks[1], frame);
+        crate::chrome::register_pane_hit(frame, inner, self.current_screen);
 
         // Screen content (wrapped in error boundary)
         self.screens.view(self.current_screen, frame, inner);
@@ -1704,6 +1705,8 @@ impl AppModel {
     fn cache_hit_grid(&self, frame: &Frame) {
         if let Some(ref grid) = frame.hit_grid {
             self.last_hit_grid.replace(Some(grid.clone()));
+        } else {
+            self.last_hit_grid.replace(None);
         }
     }
 
