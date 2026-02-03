@@ -1,4 +1,4 @@
-# Fixes Summary - Session 2026-02-01 (Part 22)
+# Fixes Summary - Session 2026-02-03 (Part 23)
 
 ## 59. Markdown Link Rendering
 **File:** `crates/ftui-extras/src/markdown.rs`
@@ -31,3 +31,23 @@ All tasks are complete. The codebase has been extensively refactored for Unicode
 **Fix:**
     - Removed the unconditional `clear_rows` block.
     - Added logic to safely clear only the remainder rows if the new buffer is shorter than the visible UI height.
+
+## 64. TextArea Forward Scrolling
+**File:** `crates/ftui-widgets/src/textarea.rs`
+**Issue:** `ensure_cursor_visible` used a hardcoded heuristic (width 40, height 20) to clamp the scroll offset. This caused premature and incorrect horizontal scrolling on wide terminals (e.g., width > 40), effectively limiting the usable view width.
+**Fix:**
+    - Removed the heuristic forward-scrolling checks (max-side clamping) in `ensure_cursor_visible_with_height`.
+    - Allowed the `render` method (which knows the actual viewport size) to handle forward scrolling adjustments naturally.
+
+## 65. Table Partial Row Rendering
+**File:** `crates/ftui-widgets/src/table.rs`
+**Issue:** The rendering loop strictly required the full row height to be visible. If a row (especially a tall multiline row) partially extended below the viewport, it was skipped entirely, leaving empty space at the bottom.
+**Fix:**
+    - Changed the loop termination condition to check if `y >= max_y` instead of pre-checking row fit.
+    - Relied on `Frame` clipping to safely render partially visible rows.
+
+## 66. Scrollbar Unicode Rendering
+**File:** `crates/ftui-widgets/src/scrollbar.rs`
+**Issue:** Symbols were rendered using `symbol.chars().next()`, which breaks multi-byte graphemes (e.g., emoji with modifiers, complex symbols).
+**Fix:**
+    - Replaced manual `Cell` construction with `draw_text_span`, which correctly handles grapheme clusters.

@@ -43,6 +43,8 @@ Spans for the render kernel (buffer, diff, presenter).
 | `ftui.render.diff` | Buffer diff computation | `changes_count`, `rows_skipped`, `duration_us` |
 | `ftui.render.present` | ANSI emission | `bytes_written`, `runs_count`, `duration_us` |
 | `ftui.render.flush` | Output flush | `duration_us`, `sync_mode` |
+| `ftui.reflow.apply` | Resize application outcome | `width`, `height`, `debounce_ms`, `latency_ms`, `rate_hz` |
+| `ftui.reflow.placeholder` | Resize placeholder shown | `width`, `height`, `rate_hz` |
 
 ### 3.3 Decision Events
 
@@ -52,7 +54,7 @@ Point-in-time events for auditable decisions.
 |------------|-------------|--------|
 | `ftui.decision.degradation` | Degradation level change | `level`, `reason`, `budget_remaining` |
 | `ftui.decision.fallback` | Capability fallback | `capability`, `fallback_to`, `reason` |
-| `ftui.decision.resize` | Resize handling decision | `strategy`, `debounce_active`, `coalesced` |
+| `ftui.decision.resize` | Resize handling decision | `strategy`, `debounce_active`, `coalesced`, `same_size`, `width`, `height`, `rate_hz` |
 | `ftui.decision.screen_mode` | Screen mode selection | `mode`, `ui_height`, `anchor` |
 
 ### 3.4 Input Events

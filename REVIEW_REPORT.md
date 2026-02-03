@@ -45,6 +45,8 @@ A comprehensive code review of the FrankenTUI codebase was conducted, focusing o
 2.  **Unicode/Grapheme Rendering:** Fixed multiple instances in `CommandPalette` and `Scrollbar` where code iterated over `char`s instead of graphemes, potentially breaking complex characters. Refactored to use `unicode-segmentation` and proper width calculation.
 3.  **Search Highlighting:** Fixed a bug in `LogViewer` where search highlighting could split multi-byte graphemes (e.g. accented chars), causing rendering corruption. Added logic to snap match ranges to grapheme boundaries.
 4.  **Virtualized Rendering Ghosting:** Fixed a bug in `VirtualizedList` where items in the overscan region (above the viewport) were incorrectly rendered at the top of the screen (`y=0`) due to coordinate clamping. Added a check to skip rendering items that start off-screen.
+5.  **TextArea Scrolling:** Fixed a bug where `TextArea` used hardcoded heuristic limits for auto-scrolling, causing issues on wide terminals. Removed the heuristic to rely on the render loop for accurate forward scrolling.
+6.  **Table Rendering:** Fixed a bug where `Table` skipped partially visible rows at the bottom. Updated logic to allow partial rendering, improving UX for constrained layouts.
 
 ## 4. Recommendations
 

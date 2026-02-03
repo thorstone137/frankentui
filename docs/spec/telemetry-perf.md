@@ -108,6 +108,21 @@ cargo bench -p ftui-runtime --features telemetry --bench telemetry_bench -- "red
 cargo bench -p ftui-runtime --features telemetry --bench telemetry_bench -- "validation/"
 ```
 
+### Budget Enforcement Script
+
+The global budget runner includes telemetry benches and checks:
+
+```bash
+./scripts/bench_budget.sh --check-only
+```
+
+To re-run benches (including `ftui-runtime:telemetry_bench` with
+`--features telemetry`) and emit JSONL:
+
+```bash
+./scripts/bench_budget.sh --json
+```
+
 ### Baseline with Hyperfine
 
 For absolute timing, use hyperfine with a minimal test program:
@@ -138,6 +153,10 @@ Benchmarks run in CI with the following gates:
   run: |
     # Parse criterion output and verify budgets
     ./scripts/check_telemetry_budgets.sh bench_output.txt
+
+- name: Check budgets (preferred)
+  run: |
+    ./scripts/bench_budget.sh --check-only
 ```
 
 ## Profiling
