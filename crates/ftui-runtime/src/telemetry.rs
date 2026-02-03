@@ -15,7 +15,7 @@
 //! exists.
 //!
 //! ```ignore
-//! let _guard = TelemetryConfig::from_env()?.install()?;
+//! let _guard = TelemetryConfig::from_env().install()?;
 //! // Runtime loop...
 //! // Guard dropped on exit, flushes spans
 //! ```
@@ -26,7 +26,7 @@
 //! already manages a tracing subscriber. Attach the layer to your subscriber.
 //!
 //! ```ignore
-//! let (otel_layer, provider) = TelemetryConfig::from_env()?.build_layer()?;
+//! let (otel_layer, provider) = TelemetryConfig::from_env().build_layer()?;
 //! let subscriber = Registry::default().with(otel_layer).with(my_other_layer);
 //! subscriber.try_init()?; // Fails if a global subscriber already exists.
 //! // Keep provider alive until shutdown.
@@ -792,7 +792,10 @@ mod tests {
     #[test]
     fn test_redact_path() {
         use std::path::Path;
-        assert_eq!(redact::path(Path::new("/home/user/secret.txt")), "[redacted:path]");
+        assert_eq!(
+            redact::path(Path::new("/home/user/secret.txt")),
+            "[redacted:path]"
+        );
     }
 
     #[test]
