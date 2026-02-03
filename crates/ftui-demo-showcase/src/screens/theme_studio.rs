@@ -14,10 +14,10 @@ use ftui_render::cell::{Cell, PackedRgba};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::{Style, StyleFlags};
+use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::paragraph::Paragraph;
-use ftui_widgets::Widget;
 
 use super::{HelpEntry, Screen};
 use crate::theme::{self, ThemeId};
@@ -48,7 +48,11 @@ struct ColorToken {
 }
 
 impl ColorToken {
-    const fn new(name: &'static str, category: &'static str, get_color: fn() -> PackedRgba) -> Self {
+    const fn new(
+        name: &'static str,
+        category: &'static str,
+        get_color: fn() -> PackedRgba,
+    ) -> Self {
         Self {
             name,
             category,
@@ -98,34 +102,66 @@ impl ThemeStudioDemo {
         vec![
             // Foreground colors
             ColorToken::new("fg::PRIMARY", "Foreground", || theme::fg::PRIMARY.resolve()),
-            ColorToken::new("fg::SECONDARY", "Foreground", || theme::fg::SECONDARY.resolve()),
+            ColorToken::new("fg::SECONDARY", "Foreground", || {
+                theme::fg::SECONDARY.resolve()
+            }),
             ColorToken::new("fg::MUTED", "Foreground", || theme::fg::MUTED.resolve()),
-            ColorToken::new("fg::DISABLED", "Foreground", || theme::fg::DISABLED.resolve()),
+            ColorToken::new("fg::DISABLED", "Foreground", || {
+                theme::fg::DISABLED.resolve()
+            }),
             // Background colors
             ColorToken::new("bg::DEEP", "Background", || theme::bg::DEEP.resolve()),
             ColorToken::new("bg::BASE", "Background", || theme::bg::BASE.resolve()),
             ColorToken::new("bg::SURFACE", "Background", || theme::bg::SURFACE.resolve()),
             ColorToken::new("bg::OVERLAY", "Background", || theme::bg::OVERLAY.resolve()),
-            ColorToken::new("bg::HIGHLIGHT", "Background", || theme::bg::HIGHLIGHT.resolve()),
+            ColorToken::new("bg::HIGHLIGHT", "Background", || {
+                theme::bg::HIGHLIGHT.resolve()
+            }),
             // Accent colors
-            ColorToken::new("accent::PRIMARY", "Accent", || theme::accent::PRIMARY.resolve()),
-            ColorToken::new("accent::SECONDARY", "Accent", || theme::accent::SECONDARY.resolve()),
-            ColorToken::new("accent::SUCCESS", "Accent", || theme::accent::SUCCESS.resolve()),
-            ColorToken::new("accent::WARNING", "Accent", || theme::accent::WARNING.resolve()),
+            ColorToken::new("accent::PRIMARY", "Accent", || {
+                theme::accent::PRIMARY.resolve()
+            }),
+            ColorToken::new("accent::SECONDARY", "Accent", || {
+                theme::accent::SECONDARY.resolve()
+            }),
+            ColorToken::new("accent::SUCCESS", "Accent", || {
+                theme::accent::SUCCESS.resolve()
+            }),
+            ColorToken::new("accent::WARNING", "Accent", || {
+                theme::accent::WARNING.resolve()
+            }),
             ColorToken::new("accent::ERROR", "Accent", || theme::accent::ERROR.resolve()),
             ColorToken::new("accent::INFO", "Accent", || theme::accent::INFO.resolve()),
             ColorToken::new("accent::LINK", "Accent", || theme::accent::LINK.resolve()),
             // Status colors
-            ColorToken::new("StatusOpen", "Status", || theme::ColorToken::StatusOpen.resolve()),
-            ColorToken::new("StatusInProgress", "Status", || theme::ColorToken::StatusInProgress.resolve()),
-            ColorToken::new("StatusBlocked", "Status", || theme::ColorToken::StatusBlocked.resolve()),
-            ColorToken::new("StatusClosed", "Status", || theme::ColorToken::StatusClosed.resolve()),
+            ColorToken::new("StatusOpen", "Status", || {
+                theme::ColorToken::StatusOpen.resolve()
+            }),
+            ColorToken::new("StatusInProgress", "Status", || {
+                theme::ColorToken::StatusInProgress.resolve()
+            }),
+            ColorToken::new("StatusBlocked", "Status", || {
+                theme::ColorToken::StatusBlocked.resolve()
+            }),
+            ColorToken::new("StatusClosed", "Status", || {
+                theme::ColorToken::StatusClosed.resolve()
+            }),
             // Priority colors
-            ColorToken::new("PriorityP0", "Priority", || theme::ColorToken::PriorityP0.resolve()),
-            ColorToken::new("PriorityP1", "Priority", || theme::ColorToken::PriorityP1.resolve()),
-            ColorToken::new("PriorityP2", "Priority", || theme::ColorToken::PriorityP2.resolve()),
-            ColorToken::new("PriorityP3", "Priority", || theme::ColorToken::PriorityP3.resolve()),
-            ColorToken::new("PriorityP4", "Priority", || theme::ColorToken::PriorityP4.resolve()),
+            ColorToken::new("PriorityP0", "Priority", || {
+                theme::ColorToken::PriorityP0.resolve()
+            }),
+            ColorToken::new("PriorityP1", "Priority", || {
+                theme::ColorToken::PriorityP1.resolve()
+            }),
+            ColorToken::new("PriorityP2", "Priority", || {
+                theme::ColorToken::PriorityP2.resolve()
+            }),
+            ColorToken::new("PriorityP3", "Priority", || {
+                theme::ColorToken::PriorityP3.resolve()
+            }),
+            ColorToken::new("PriorityP4", "Priority", || {
+                theme::ColorToken::PriorityP4.resolve()
+            }),
         ]
     }
 
@@ -375,9 +411,10 @@ palette = 7={}
             };
             if name_x < line_area.x + line_area.width {
                 let available = (line_area.x + line_area.width).saturating_sub(name_x);
-                Paragraph::new(&*padded_name)
-                    .style(name_style)
-                    .render(Rect::new(name_x, line_area.y, available.min(name_width as u16), 1), frame);
+                Paragraph::new(&*padded_name).style(name_style).render(
+                    Rect::new(name_x, line_area.y, available.min(name_width as u16), 1),
+                    frame,
+                );
             }
 
             // Render hex value
@@ -403,9 +440,10 @@ palette = 7={}
             let rating_x = ratio_x + 7;
             if rating_x + rating.len() as u16 <= line_area.x + line_area.width {
                 let rating_style = Style::new().fg(rating_color).attrs(StyleFlags::BOLD);
-                Paragraph::new(rating)
-                    .style(rating_style)
-                    .render(Rect::new(rating_x, line_area.y, rating.len() as u16, 1), frame);
+                Paragraph::new(rating).style(rating_style).render(
+                    Rect::new(rating_x, line_area.y, rating.len() as u16, 1),
+                    frame,
+                );
             }
         }
     }
@@ -478,20 +516,16 @@ impl Screen for ThemeStudioDemo {
                 KeyCode::Enter => {
                     if self.focus == Focus::Presets {
                         self.apply_preset();
-                        self.export_status = Some(format!(
-                            "Applied theme: {}",
-                            theme::current_theme().name()
-                        ));
+                        self.export_status =
+                            Some(format!("Applied theme: {}", theme::current_theme().name()));
                     }
                 }
                 // Cycle theme globally (Ctrl+T)
                 KeyCode::Char('t') if modifiers.contains(Modifiers::CTRL) => {
                     theme::cycle_theme();
                     self.preset_index = theme::current_theme().index();
-                    self.export_status = Some(format!(
-                        "Switched to: {}",
-                        theme::current_theme().name()
-                    ));
+                    self.export_status =
+                        Some(format!("Switched to: {}", theme::current_theme().name()));
                 }
                 // Export
                 KeyCode::Char('e') | KeyCode::Char('E') => {
@@ -583,6 +617,27 @@ impl Screen for ThemeStudioDemo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers};
+
+    fn press(code: KeyCode) -> Event {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: Modifiers::NONE,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    fn ctrl_press(code: KeyCode) -> Event {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: Modifiers::CTRL,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Initialization Tests
+    // -----------------------------------------------------------------------
 
     #[test]
     fn new_creates_valid_instance() {
@@ -590,6 +645,29 @@ mod tests {
         assert!(!demo.tokens.is_empty());
         assert_eq!(demo.focus, Focus::Presets);
     }
+
+    #[test]
+    fn default_same_as_new() {
+        let a = ThemeStudioDemo::new();
+        let b = ThemeStudioDemo::default();
+        assert_eq!(a.focus, b.focus);
+        assert_eq!(a.preset_index, b.preset_index);
+        assert_eq!(a.token_index, b.token_index);
+    }
+
+    #[test]
+    fn token_list_has_expected_categories() {
+        let demo = ThemeStudioDemo::new();
+        let categories: std::collections::HashSet<_> =
+            demo.tokens.iter().map(|t| t.category).collect();
+        assert!(categories.contains(&"Foreground"));
+        assert!(categories.contains(&"Background"));
+        assert!(categories.contains(&"Accent"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Contrast Ratio + WCAG Tests
+    // -----------------------------------------------------------------------
 
     #[test]
     fn contrast_ratio_calculation() {
@@ -602,6 +680,28 @@ mod tests {
     }
 
     #[test]
+    fn contrast_ratio_symmetric() {
+        let a = PackedRgba::rgb(100, 150, 200);
+        let b = PackedRgba::rgb(50, 75, 100);
+        let ratio_ab = ThemeStudioDemo::contrast_ratio(a, b);
+        let ratio_ba = ThemeStudioDemo::contrast_ratio(b, a);
+        assert!(
+            (ratio_ab - ratio_ba).abs() < 0.01,
+            "Contrast ratio should be symmetric"
+        );
+    }
+
+    #[test]
+    fn contrast_ratio_same_color() {
+        let color = PackedRgba::rgb(128, 128, 128);
+        let ratio = ThemeStudioDemo::contrast_ratio(color, color);
+        assert!(
+            (ratio - 1.0).abs() < 0.01,
+            "Same colors should have 1:1 contrast"
+        );
+    }
+
+    #[test]
     fn wcag_rating_thresholds() {
         assert_eq!(ThemeStudioDemo::wcag_rating(7.5).0, "AAA");
         assert_eq!(ThemeStudioDemo::wcag_rating(5.0).0, "AA");
@@ -610,11 +710,50 @@ mod tests {
     }
 
     #[test]
+    fn wcag_rating_boundary_values() {
+        // Exact boundaries
+        assert_eq!(ThemeStudioDemo::wcag_rating(7.0).0, "AAA");
+        assert_eq!(ThemeStudioDemo::wcag_rating(4.5).0, "AA");
+        assert_eq!(ThemeStudioDemo::wcag_rating(3.0).0, "AA Large");
+        // Just below boundaries
+        assert_eq!(ThemeStudioDemo::wcag_rating(6.99).0, "AA");
+        assert_eq!(ThemeStudioDemo::wcag_rating(4.49).0, "AA Large");
+        assert_eq!(ThemeStudioDemo::wcag_rating(2.99).0, "Fail");
+    }
+
+    // -----------------------------------------------------------------------
+    // Color Hex Formatting Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
     fn color_hex_format() {
         let color = PackedRgba::rgb(255, 128, 0);
         let hex = ThemeStudioDemo::color_hex(color);
         assert_eq!(hex, "#FF8000");
     }
+
+    #[test]
+    fn color_hex_black() {
+        let black = PackedRgba::rgb(0, 0, 0);
+        assert_eq!(ThemeStudioDemo::color_hex(black), "#000000");
+    }
+
+    #[test]
+    fn color_hex_white() {
+        let white = PackedRgba::rgb(255, 255, 255);
+        assert_eq!(ThemeStudioDemo::color_hex(white), "#FFFFFF");
+    }
+
+    #[test]
+    fn color_hex_always_uppercase() {
+        let color = PackedRgba::rgb(171, 205, 239);
+        let hex = ThemeStudioDemo::color_hex(color);
+        assert_eq!(hex, hex.to_uppercase());
+    }
+
+    // -----------------------------------------------------------------------
+    // Export Tests
+    // -----------------------------------------------------------------------
 
     #[test]
     fn export_json_produces_valid_output() {
@@ -626,9 +765,234 @@ mod tests {
     }
 
     #[test]
+    fn export_json_contains_all_color_keys() {
+        let demo = ThemeStudioDemo::new();
+        let json = demo.export_json();
+        // Check key colors are present
+        assert!(json.contains("\"fg_primary\":"));
+        assert!(json.contains("\"fg_secondary\":"));
+        assert!(json.contains("\"accent_primary\":"));
+        assert!(json.contains("\"accent_success\":"));
+        assert!(json.contains("\"accent_error\":"));
+    }
+
+    #[test]
+    fn export_json_hex_format() {
+        let demo = ThemeStudioDemo::new();
+        let json = demo.export_json();
+        // All color values should start with #
+        assert!(json.matches('#').count() > 5, "Should have hex colors");
+    }
+
+    // -----------------------------------------------------------------------
+    // Focus and Navigation Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
     fn focus_toggle_cycles() {
         let focus = Focus::Presets;
         assert_eq!(focus.toggle(), Focus::TokenInspector);
         assert_eq!(focus.toggle().toggle(), Focus::Presets);
+    }
+
+    #[test]
+    fn tab_toggles_focus() {
+        let mut demo = ThemeStudioDemo::new();
+        assert_eq!(demo.focus, Focus::Presets);
+        demo.update(&press(KeyCode::Tab));
+        assert_eq!(demo.focus, Focus::TokenInspector);
+        demo.update(&press(KeyCode::Tab));
+        assert_eq!(demo.focus, Focus::Presets);
+    }
+
+    #[test]
+    fn preset_navigation_up_saturates() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.preset_index = 0;
+        demo.update(&press(KeyCode::Up));
+        assert_eq!(demo.preset_index, 0, "Should not go below 0");
+    }
+
+    #[test]
+    fn preset_navigation_down_saturates() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.preset_index = ThemeId::ALL.len() - 1;
+        demo.update(&press(KeyCode::Down));
+        assert_eq!(
+            demo.preset_index,
+            ThemeId::ALL.len() - 1,
+            "Should not exceed max"
+        );
+    }
+
+    #[test]
+    fn token_navigation_requires_focus() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.token_index = 0;
+        // Switch to TokenInspector
+        demo.update(&press(KeyCode::Tab));
+        demo.token_index = 0;
+        demo.update(&press(KeyCode::Down));
+        assert_eq!(demo.token_index, 1, "Should navigate tokens when focused");
+    }
+
+    #[test]
+    fn vim_navigation_j_moves_down() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.preset_index = 0;
+        demo.update(&press(KeyCode::Char('j')));
+        assert!(demo.preset_index > 0 || ThemeId::ALL.len() == 1);
+    }
+
+    #[test]
+    fn vim_navigation_k_moves_up() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.preset_index = 2;
+        demo.update(&press(KeyCode::Char('k')));
+        assert_eq!(demo.preset_index, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Theme Application Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enter_applies_preset() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.preset_index = 1; // Darcula
+        demo.update(&press(KeyCode::Enter));
+        assert!(demo.export_status.is_some(), "Should show status message");
+    }
+
+    #[test]
+    fn ctrl_t_cycles_theme() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.update(&ctrl_press(KeyCode::Char('t')));
+        // Preset index should update to match global theme
+        assert_eq!(demo.preset_index, theme::current_theme().index());
+        assert!(demo.export_status.is_some(), "Should show status message");
+    }
+
+    // -----------------------------------------------------------------------
+    // Export Key Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn e_key_triggers_export() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.update(&press(KeyCode::Char('e')));
+        assert!(demo.export_status.is_some());
+        assert!(demo.export_status.as_ref().unwrap().contains("Exported"));
+    }
+
+    #[test]
+    fn shift_e_key_triggers_export() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.update(&press(KeyCode::Char('E')));
+        assert!(demo.export_status.is_some());
+    }
+
+    #[test]
+    fn export_status_clears_on_next_key() {
+        let mut demo = ThemeStudioDemo::new();
+        demo.update(&press(KeyCode::Char('e')));
+        assert!(demo.export_status.is_some());
+        demo.update(&press(KeyCode::Down));
+        assert!(
+            demo.export_status.is_none(),
+            "Status should clear on key press"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Screen Trait Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn title_is_theme_studio() {
+        let demo = ThemeStudioDemo::new();
+        assert_eq!(demo.title(), "Theme Studio");
+    }
+
+    #[test]
+    fn tab_label_is_themes() {
+        let demo = ThemeStudioDemo::new();
+        assert_eq!(demo.tab_label(), "Themes");
+    }
+
+    #[test]
+    fn keybindings_not_empty() {
+        let demo = ThemeStudioDemo::new();
+        let bindings = demo.keybindings();
+        assert!(!bindings.is_empty());
+    }
+
+    #[test]
+    fn keybindings_contain_expected_keys() {
+        let demo = ThemeStudioDemo::new();
+        let bindings = demo.keybindings();
+        let keys: Vec<_> = bindings.iter().map(|b| b.key).collect();
+        assert!(keys.iter().any(|k| k.contains("Tab")));
+        assert!(keys.iter().any(|k| k.contains("j") || k.contains("k")));
+    }
+
+    #[test]
+    fn tick_updates_tick_count() {
+        let mut demo = ThemeStudioDemo::new();
+        assert_eq!(demo.tick_count, 0);
+        demo.tick(1);
+        assert_eq!(demo.tick_count, 1);
+        demo.tick(100);
+        assert_eq!(demo.tick_count, 100);
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge Case Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_ignores_non_key_events() {
+        let mut demo = ThemeStudioDemo::new();
+        let initial_focus = demo.focus;
+        let initial_preset = demo.preset_index;
+        // Mouse event should be ignored
+        let mouse_event = Event::Mouse(ftui_core::event::MouseEvent {
+            kind: ftui_core::event::MouseEventKind::Moved,
+            x: 0,
+            y: 0,
+            modifiers: Modifiers::NONE,
+        });
+        demo.update(&mouse_event);
+        assert_eq!(demo.focus, initial_focus);
+        assert_eq!(demo.preset_index, initial_preset);
+    }
+
+    #[test]
+    fn update_ignores_key_release() {
+        let mut demo = ThemeStudioDemo::new();
+        let initial_preset = demo.preset_index;
+        let release_event = Event::Key(KeyEvent {
+            code: KeyCode::Down,
+            modifiers: Modifiers::NONE,
+            kind: KeyEventKind::Release,
+        });
+        demo.update(&release_event);
+        assert_eq!(
+            demo.preset_index, initial_preset,
+            "Key release should be ignored"
+        );
+    }
+
+    #[test]
+    fn unhandled_keys_do_not_panic() {
+        let mut demo = ThemeStudioDemo::new();
+        // Various keys that shouldn't be handled
+        demo.update(&press(KeyCode::F(1)));
+        demo.update(&press(KeyCode::Home));
+        demo.update(&press(KeyCode::End));
+        demo.update(&press(KeyCode::PageUp));
+        demo.update(&press(KeyCode::Char('x')));
+        demo.update(&press(KeyCode::Char('z')));
+        // No panic = success
     }
 }
