@@ -600,7 +600,8 @@ impl<M: Model> Program<M, Stdout> {
         let budget = RenderBudget::from_config(&config.budget);
         let locale_context = config.locale_context.clone();
         let locale_version = locale_context.version();
-        let resize_coalescer = ResizeCoalescer::new(config.resize_coalescer.clone(), (width, height));
+        let resize_coalescer =
+            ResizeCoalescer::new(config.resize_coalescer.clone(), (width, height));
         let subscriptions = SubscriptionManager::new();
         let (task_sender, task_receiver) = std::sync::mpsc::channel();
 
@@ -812,11 +813,11 @@ impl<M: Model, W: Write + Send> Program<M, W> {
                     behavior = ?self.resize_behavior,
                     "Resize event received"
                 );
+                // Clamp to minimum 1 to prevent Buffer::new panic on zero dimensions
+                let width = width.max(1);
+                let height = height.max(1);
                 match self.resize_behavior {
                     ResizeBehavior::Immediate => {
-                        // Clamp to minimum 1 to prevent Buffer::new panic on zero dimensions
-                        let width = width.max(1);
-                        let height = height.max(1);
                         self.resize_coalescer
                             .record_external_apply(width, height, Instant::now());
                         let result = self.apply_resize(width, height, Duration::ZERO, false);
@@ -1468,9 +1469,9 @@ impl<M: Model> AppBuilder<M> {
         self
     }
 
-    /// Set the resize debounce duration (steady-state delay).
-    pub fn resize_debounce(mut self, debounce: Duration) -> Self {
-        self.config.resize_coalescer.steady_delay_ms = debounce.as_millis() as u64;
+    /// Set the resize coalescer configuration.
+    pub fn resize_coalescer(mut self, config: CoalescerConfig) -> Self {
+        self.config.resize_coalescer = config;
         self
     }
 
@@ -2140,64 +2141,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn resize_debouncer_no_action_for_same_size() {
-        let mut debouncer = ResizeDebouncer::new(Duration::from_millis(100), (80, 24));
-
-        // Resize to the same size should be no-op
-        let action = debouncer.handle_resize(80, 24);
-        assert!(matches!(action, ResizeAction::None));
-    }
-
-    #[test]
-    fn resize_debouncer_time_until_apply() {
-        let mut debouncer = ResizeDebouncer::new(Duration::from_millis(100), (80, 24));
-        let now = Instant::now();
-
-        // No pending resize
-        assert!(debouncer.time_until_apply(now).is_none());
-
-        // Start resize
-        debouncer.handle_resize_at(100, 40, now);
-
-        // Should have ~100ms until apply
-        let time_left = debouncer.time_until_apply(now).unwrap();
-        assert!(time_left <= Duration::from_millis(100));
-        assert!(time_left > Duration::from_millis(90));
-
-        // After 50ms, should have ~50ms left
-        let time_left = debouncer
-            .time_until_apply(now + Duration::from_millis(50))
-            .unwrap();
-        assert!(time_left <= Duration::from_millis(50));
-    }
-
-    #[test]
-    fn resize_debouncer_resets_timer_on_new_resize() {
-        let mut debouncer = ResizeDebouncer::new(Duration::from_millis(100), (80, 24));
-        let now = Instant::now();
-
-        debouncer.handle_resize_at(100, 40, now);
-
-        // At 90ms (before debounce completes), resize again
-        debouncer.handle_resize_at(120, 50, now + Duration::from_millis(90));
-
-        // At 100ms from start, should still be pending (timer reset)
-        assert!(matches!(
-            debouncer.tick_at(now + Duration::from_millis(100)),
-            ResizeAction::None
-        ));
-
-        // At 200ms from start (100ms after second resize), should apply
-        assert!(matches!(
-            debouncer.tick_at(now + Duration::from_millis(200)),
-            ResizeAction::ApplyResize {
-                width: 120,
-                height: 50,
-                ..
-            }
-        ));
-    }
+    // Resize coalescer timing invariants are covered in resize_coalescer.rs tests.
 
     #[test]
     fn cmd_log_creates_log_command() {
@@ -2267,9 +2211,19 @@ mod tests {
     }
 
     #[test]
-    fn program_config_with_resize_debounce() {
-        let config = ProgramConfig::default().with_resize_debounce(Duration::from_millis(200));
-        assert_eq!(config.resize_debounce, Duration::from_millis(200));
+    fn program_config_with_resize_coalescer() {
+        let config = ProgramConfig::default().with_resize_coalescer(CoalescerConfig {
+            steady_delay_ms: 8,
+            burst_delay_ms: 20,
+            hard_deadline_ms: 80,
+            burst_enter_rate: 12.0,
+            burst_exit_rate: 6.0,
+            cooldown_frames: 2,
+            rate_window_size: 6,
+            enable_logging: true,
+        });
+        assert_eq!(config.resize_coalescer.steady_delay_ms, 8);
+        assert!(config.resize_coalescer.enable_logging);
     }
 
     #[test]
@@ -2287,7 +2241,7 @@ mod tests {
     #[test]
     fn program_config_with_legacy_resize_disabled_keeps_default() {
         let config = ProgramConfig::default().with_legacy_resize(false);
-        assert_eq!(config.resize_behavior, ResizeBehavior::Placeholder);
+        assert_eq!(config.resize_behavior, ResizeBehavior::Throttled);
     }
 
     #[test]
@@ -2380,27 +2334,6 @@ mod tests {
 
         // Task should have completed synchronously
         assert!(sim.model().completed);
-    }
-
-    #[test]
-    fn resize_action_eq() {
-        // Test ResizeAction equality
-        assert_eq!(ResizeAction::None, ResizeAction::None);
-        assert_eq!(ResizeAction::ShowPlaceholder, ResizeAction::ShowPlaceholder);
-
-        let action1 = ResizeAction::ApplyResize {
-            width: 100,
-            height: 50,
-            elapsed: Duration::from_millis(100),
-        };
-        let action2 = ResizeAction::ApplyResize {
-            width: 100,
-            height: 50,
-            elapsed: Duration::from_millis(100),
-        };
-        assert_eq!(action1, action2);
-
-        assert_ne!(ResizeAction::None, ResizeAction::ShowPlaceholder);
     }
 
     #[test]
@@ -2596,35 +2529,6 @@ mod tests {
         // Verify the frame has the correct dimensions
         // In inline mode with ui_height=10, the frame should be 10 rows tall,
         // NOT the full terminal height (e.g., 24).
-    }
-
-    #[test]
-    fn placeholder_centered_in_ui_region() {
-        // Verify resize placeholder is centered within the visible UI region,
-        // not the full terminal height.
-        //
-        // With ui_height=10 and terminal height=24:
-        // - BEFORE fix: placeholder at y=12 (24/2), which may be outside UI region
-        // - AFTER fix: placeholder at y=5 (10/2), centered in visible region
-        use crate::terminal_writer::{ScreenMode, TerminalWriter, UiAnchor};
-        use ftui_core::terminal_capabilities::TerminalCapabilities;
-
-        let output = Vec::new();
-        let mut writer = TerminalWriter::new(
-            output,
-            ScreenMode::Inline { ui_height: 10 },
-            UiAnchor::Bottom,
-            TerminalCapabilities::basic(),
-        );
-        writer.set_size(80, 24);
-
-        // ui_height should be 10, not 24
-        let ui_height = writer.ui_height();
-        assert_eq!(ui_height, 10);
-
-        // Placeholder should be centered at y = 10/2 = 5
-        let expected_placeholder_y = ui_height / 2;
-        assert_eq!(expected_placeholder_y, 5);
     }
 
     #[test]

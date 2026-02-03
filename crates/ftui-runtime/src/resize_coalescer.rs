@@ -525,6 +525,32 @@ impl ResizeCoalescer {
         self
     }
 
+    /// Record an externally-applied resize (immediate path).
+    pub fn record_external_apply(&mut self, width: u16, height: u16, now: Instant) {
+        self.event_count += 1;
+        self.event_times.push_back(now);
+        while self.event_times.len() > self.config.rate_window_size {
+            self.event_times.pop_front();
+        }
+        self.update_regime(now);
+
+        self.pending_size = None;
+        self.window_start = None;
+        self.last_event = Some(now);
+        self.last_applied = (width, height);
+        self.last_render = now;
+        self.events_in_window = 0;
+        self.cooldown_remaining = 0;
+
+        self.log_decision(now, "apply_immediate", false, Some(0.0), Some(0.0));
+
+        if let Some(ref hooks) = self.telemetry_hooks
+            && let Some(entry) = self.logs.last()
+        {
+            hooks.fire_resize_applied(entry);
+        }
+    }
+
     /// Get current regime transition count.
     #[must_use]
     pub fn regime_transition_count(&self) -> u64 {
@@ -722,20 +748,6 @@ impl ResizeCoalescer {
     /// Get decision logs (if logging enabled).
     pub fn logs(&self) -> &[DecisionLog] {
         &self.logs
-    }
-
-    /// Record that a resize was applied externally (e.g. immediate mode).
-    ///
-    /// Updates internal tracking so the coalescer knows the current applied
-    /// size and clears any pending resize that matches.
-    pub fn record_external_apply(&mut self, width: u16, height: u16, now: Instant) {
-        self.last_applied = (width, height);
-        self.last_render = now;
-        if self.pending_size == Some((width, height)) {
-            self.pending_size = None;
-            self.window_start = None;
-            self.last_event = None;
-        }
     }
 
     /// Clear decision logs.
@@ -976,7 +988,7 @@ impl ResizeCoalescer {
 
         let time_since_render_ms = now.duration_since(self.last_render).as_secs_f64() * 1000.0;
 
-        let applied_size = if action == "apply" || action == "apply_forced" {
+        let applied_size = if action == "apply" || action == "apply_forced" || action == "apply_immediate" {
             Some(self.last_applied)
         } else {
             None
