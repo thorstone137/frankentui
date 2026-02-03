@@ -189,6 +189,7 @@ pub mod undo_support;
 /// Inline validation error display widget.
 pub mod validation_error;
 pub mod virtualized;
+pub mod voi_debug_overlay;
 
 pub use align::{Align, VerticalAlignment};
 pub use badge::Badge;
@@ -213,6 +214,10 @@ pub use status_line::{StatusItem, StatusLine};
 pub use virtualized::{
     HeightCache, ItemHeight, RenderItem, Virtualized, VirtualizedList, VirtualizedListState,
     VirtualizedStorage,
+};
+pub use voi_debug_overlay::{
+    VoiDebugOverlay, VoiDecisionSummary, VoiLedgerEntry, VoiObservationSummary, VoiOverlayData,
+    VoiOverlayStyle, VoiPosteriorSummary,
 };
 
 // Toast notification widget

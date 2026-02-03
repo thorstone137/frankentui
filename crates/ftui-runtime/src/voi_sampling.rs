@@ -310,6 +310,21 @@ pub struct VoiSummary {
     pub avg_ms_between_samples: f64,
 }
 
+/// Snapshot of VOI sampler state for debug overlays.
+#[derive(Debug, Clone)]
+pub struct VoiSamplerSnapshot {
+    pub captured_ms: u64,
+    pub alpha: f64,
+    pub beta: f64,
+    pub posterior_mean: f64,
+    pub posterior_variance: f64,
+    pub expected_variance_after: f64,
+    pub voi_gain: f64,
+    pub last_decision: Option<VoiDecision>,
+    pub last_observation: Option<VoiObservation>,
+    pub recent_logs: Vec<VoiLogEntry>,
+}
+
 /// VOI-driven sampler with Beta-Bernoulli posterior and e-process control.
 #[derive(Debug, Clone)]
 pub struct VoiSampler {
@@ -591,6 +606,35 @@ impl VoiSampler {
             .map(VoiLogEntry::to_jsonl)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Create a snapshot of the sampler state for debug overlays.
+    #[must_use]
+    pub fn snapshot(&self, max_logs: usize, captured_ms: u64) -> VoiSamplerSnapshot {
+        let expected_after = expected_variance_after(self.alpha, self.beta);
+        let variance = beta_variance(self.alpha, self.beta);
+        let voi_gain = (variance - expected_after).max(0.0);
+        let mut recent_logs: Vec<VoiLogEntry> = self
+            .logs
+            .iter()
+            .rev()
+            .take(max_logs.max(1))
+            .cloned()
+            .collect();
+        recent_logs.reverse();
+
+        VoiSamplerSnapshot {
+            captured_ms,
+            alpha: self.alpha,
+            beta: self.beta,
+            posterior_mean: beta_mean(self.alpha, self.beta),
+            posterior_variance: variance,
+            expected_variance_after: expected_after,
+            voi_gain,
+            last_decision: self.last_decision.clone(),
+            last_observation: self.last_observation.clone(),
+            recent_logs,
+        }
     }
 
     fn push_log(&mut self, entry: VoiLogEntry) {
