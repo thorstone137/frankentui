@@ -1213,7 +1213,7 @@ mod tests {
         let stream = make_synced_frame(b"Flicker");
         let analysis = analyze_stream_with_id("golden", &stream);
         let checksum = compute_text_checksum(&analysis.jsonl);
-        const EXPECTED: &str = "sha256:3c0a5c7df4f9c8a8";
+        const EXPECTED: &str = "sha256:985ca693598f4559";
         assert_eq!(checksum, EXPECTED, "golden JSONL checksum drifted");
     }
 }

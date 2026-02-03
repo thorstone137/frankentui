@@ -625,17 +625,17 @@ impl<W: Write> TerminalWriter<W> {
         self.cursor_saved = false;
 
         // Apply requested cursor position (relative to UI)
-        if let Some((cx, cy)) = cursor {
-            if cy < visible_height {
-                // Move to UI start + cursor y
-                let abs_y = ui_y_start.saturating_add(cy);
-                write!(
-                    self.writer(),
-                    "\x1b[{};{}H",
-                    abs_y.saturating_add(1),
-                    cx.saturating_add(1)
-                )?;
-            }
+        if let Some((cx, cy)) = cursor
+            && cy < visible_height
+        {
+            // Move to UI start + cursor y
+            let abs_y = ui_y_start.saturating_add(cy);
+            write!(
+                self.writer(),
+                "\x1b[{};{}H",
+                abs_y.saturating_add(1),
+                cx.saturating_add(1)
+            )?;
         }
 
         // End sync output

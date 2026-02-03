@@ -494,11 +494,11 @@ impl VirtualTerminal {
             }
             b'8' => {
                 // DEC restore cursor
-                if !(self.quirks.tmux_nested_cursor && self.alternate_screen) {
-                    if let Some((x, y)) = self.saved_cursor {
-                        self.cursor_x = x.min(self.width.saturating_sub(1));
-                        self.cursor_y = y.min(self.height.saturating_sub(1));
-                    }
+                if !(self.quirks.tmux_nested_cursor && self.alternate_screen)
+                    && let Some((x, y)) = self.saved_cursor
+                {
+                    self.cursor_x = x.min(self.width.saturating_sub(1));
+                    self.cursor_y = y.min(self.height.saturating_sub(1));
                 }
                 self.parse_state = ParseState::Ground;
             }

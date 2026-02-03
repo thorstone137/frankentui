@@ -870,4 +870,204 @@ mod tests {
         let p = Painter::new(3, 5, Mode::Braille);
         assert_eq!(p.cell_size(), (2, 2));
     }
+
+    // -----------------------------------------------------------------------
+    // Metaball Canvas Adapter Tests (visual-fx feature)
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "visual-fx")]
+    mod metaball_adapter_tests {
+        use super::*;
+        use crate::visual_fx::effects::sampling::{BallState, MetaballFieldSampler};
+        use crate::visual_fx::FxQuality;
+
+        #[test]
+        fn metaball_field_renders_pixels() {
+            let balls = vec![BallState {
+                x: 0.5,
+                y: 0.5,
+                r2: 0.04, // radius^2 = 0.04 -> radius = 0.2
+                hue: 0.5,
+            }];
+            let sampler = MetaballFieldSampler::new(balls);
+
+            let mut painter = Painter::new(20, 20, Mode::Braille);
+            painter.render_metaball_field(
+                &sampler,
+                1.0,
+                0.1,
+                FxQuality::Full,
+                |_hue, intensity| {
+                    let c = (intensity * 255.0) as u8;
+                    PackedRgba::rgb(c, c, c)
+                },
+            );
+
+            // Center pixel should be set (ball is at center)
+            assert!(painter.get(10, 10), "center pixel should be set");
+
+            // Corners should be unset (too far from ball)
+            assert!(!painter.get(0, 0), "corner should be unset");
+            assert!(!painter.get(19, 19), "opposite corner should be unset");
+        }
+
+        #[test]
+        fn metaball_field_respects_quality_off() {
+            let balls = vec![BallState {
+                x: 0.5,
+                y: 0.5,
+                r2: 0.25,
+                hue: 0.0,
+            }];
+            let sampler = MetaballFieldSampler::new(balls);
+
+            let mut painter = Painter::new(10, 10, Mode::Braille);
+            painter.render_metaball_field(
+                &sampler,
+                1.0,
+                0.0,
+                FxQuality::Off,
+                |_, _| PackedRgba::RED,
+            );
+
+            // Nothing should be set when quality is Off
+            for y in 0..10 {
+                for x in 0..10 {
+                    assert!(!painter.get(x, y), "no pixels should be set when off");
+                }
+            }
+        }
+
+        #[test]
+        fn metaball_field_empty_painter_is_safe() {
+            let sampler = MetaballFieldSampler::new(vec![]);
+
+            let mut painter = Painter::new(0, 0, Mode::Braille);
+            painter.render_metaball_field(
+                &sampler,
+                1.0,
+                0.5,
+                FxQuality::Full,
+                |_, _| PackedRgba::RED,
+            );
+            // Should not panic
+        }
+
+        #[test]
+        fn metaball_field_colors_are_applied() {
+            let balls = vec![BallState {
+                x: 0.5,
+                y: 0.5,
+                r2: 0.25, // Large ball covering most of canvas
+                hue: 0.3,
+            }];
+            let sampler = MetaballFieldSampler::new(balls);
+
+            let expected_color = PackedRgba::rgb(255, 0, 0);
+            let mut painter = Painter::new(4, 4, Mode::Braille);
+            painter.render_metaball_field(
+                &sampler,
+                0.1, // Low threshold - most pixels should be set
+                0.0,
+                FxQuality::Full,
+                |_, _| expected_color,
+            );
+
+            // At least the center should have color
+            if let Some(idx) = painter.index(2, 2) {
+                assert!(painter.pixels[idx], "center should be set");
+                assert_eq!(
+                    painter.colors[idx],
+                    Some(expected_color),
+                    "color should match"
+                );
+            }
+        }
+
+        #[test]
+        fn metaball_field_multiple_balls() {
+            let balls = vec![
+                BallState {
+                    x: 0.25,
+                    y: 0.5,
+                    r2: 0.02,
+                    hue: 0.0,
+                },
+                BallState {
+                    x: 0.75,
+                    y: 0.5,
+                    r2: 0.02,
+                    hue: 0.5,
+                },
+            ];
+            let sampler = MetaballFieldSampler::new(balls);
+
+            let mut painter = Painter::new(20, 10, Mode::Braille);
+            painter.render_metaball_field(
+                &sampler,
+                0.5,
+                0.1,
+                FxQuality::Full,
+                |hue, _| {
+                    // Use hue to distinguish balls
+                    if hue < 0.25 {
+                        PackedRgba::RED
+                    } else {
+                        PackedRgba::BLUE
+                    }
+                },
+            );
+
+            // Left side should have pixels (near first ball)
+            assert!(painter.get(5, 5), "left side should have pixels");
+            // Right side should have pixels (near second ball)
+            assert!(painter.get(15, 5), "right side should have pixels");
+        }
+
+        #[test]
+        fn metaball_field_threshold_controls_visibility() {
+            let balls = vec![BallState {
+                x: 0.5,
+                y: 0.5,
+                r2: 0.01, // Small ball
+                hue: 0.0,
+            }];
+            let sampler = MetaballFieldSampler::new(balls);
+
+            // High threshold - fewer pixels
+            let mut high_thresh = Painter::new(20, 20, Mode::Braille);
+            high_thresh.render_metaball_field(
+                &sampler,
+                10.0, // Very high threshold
+                5.0,
+                FxQuality::Full,
+                |_, _| PackedRgba::RED,
+            );
+
+            // Low threshold - more pixels
+            let mut low_thresh = Painter::new(20, 20, Mode::Braille);
+            low_thresh.render_metaball_field(
+                &sampler,
+                0.1, // Low threshold
+                0.0,
+                FxQuality::Full,
+                |_, _| PackedRgba::RED,
+            );
+
+            let high_count: usize = (0..20)
+                .flat_map(|y| (0..20).map(move |x| (x, y)))
+                .filter(|&(x, y)| high_thresh.get(x, y))
+                .count();
+
+            let low_count: usize = (0..20)
+                .flat_map(|y| (0..20).map(move |x| (x, y)))
+                .filter(|&(x, y)| low_thresh.get(x, y))
+                .count();
+
+            assert!(
+                low_count >= high_count,
+                "lower threshold should render more pixels: low={low_count} high={high_count}"
+            );
+        }
+    }
 }
