@@ -8,22 +8,32 @@ use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::{Style, StyleFlags};
+use ftui_text::WrapMode;
 use ftui_widgets::Badge;
 use ftui_widgets::StatefulWidget;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::columns::{Column, Columns};
+use ftui_widgets::input::TextInput;
 use ftui_widgets::json_view::JsonView;
-use ftui_widgets::list::{List, ListItem, ListState};
+use ftui_widgets::layout::Layout;
+use ftui_widgets::list::{List, ListItem};
 use ftui_widgets::paginator::{Paginator, PaginatorMode};
+use ftui_widgets::panel::Panel;
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::progress::ProgressBar;
 use ftui_widgets::rule::Rule;
 use ftui_widgets::scrollbar::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ftui_widgets::sparkline::Sparkline;
 use ftui_widgets::spinner::SpinnerState;
+use ftui_widgets::status_line::{StatusItem, StatusLine};
+use ftui_widgets::stopwatch::{Stopwatch, StopwatchFormat, StopwatchState};
 use ftui_widgets::table::{Row, Table};
+use ftui_widgets::textarea::{TextArea, TextAreaState};
+use ftui_widgets::toast::{Toast, ToastIcon};
 use ftui_widgets::tree::{Tree, TreeGuides, TreeNode};
+use std::time::Duration;
 
 use super::{HelpEntry, Screen};
 use crate::theme;
@@ -34,11 +44,11 @@ const SECTION_COUNT: usize = 7;
 
 /// Section names.
 const SECTION_NAMES: [&str; SECTION_COUNT] = [
-    "A: Borders",
-    "B: Text Styles",
-    "C: Colors",
-    "D: Interactive",
-    "E: Data",
+    "A: Inputs",
+    "B: Display",
+    "C: Status",
+    "D: Data Viz",
+    "E: Navigation",
     "F: Layout",
     "G: Utility",
 ];
@@ -48,7 +58,6 @@ pub struct WidgetGallery {
     current_section: usize,
     tick_count: u64,
     spinner_state: SpinnerState,
-    list_state: ListState,
 }
 
 impl Default for WidgetGallery {
@@ -59,14 +68,10 @@ impl Default for WidgetGallery {
 
 impl WidgetGallery {
     pub fn new() -> Self {
-        let mut list_state = ListState::default();
-        list_state.selected = Some(0);
-        list_state.offset = 0;
         Self {
             current_section: 0,
             tick_count: 0,
             spinner_state: SpinnerState::default(),
-            list_state,
         }
     }
 }
@@ -171,11 +176,11 @@ impl WidgetGallery {
 
     fn render_section_content(&self, frame: &mut Frame, area: Rect) {
         match self.current_section {
-            0 => self.render_borders(frame, area),
-            1 => self.render_text_styles(frame, area),
-            2 => self.render_colors(frame, area),
-            3 => self.render_interactive(frame, area),
-            4 => self.render_data_widgets(frame, area),
+            0 => self.render_inputs(frame, area),
+            1 => self.render_display_widgets(frame, area),
+            2 => self.render_status_widgets(frame, area),
+            3 => self.render_data_viz(frame, area),
+            4 => self.render_navigation_widgets(frame, area),
             5 => self.render_layout_widgets(frame, area),
             6 => self.render_utility_widgets(frame, area),
             _ => {}
@@ -187,6 +192,32 @@ impl WidgetGallery {
             .mode(PaginatorMode::Dots)
             .style(Style::new().fg(theme::fg::MUTED));
         pag.render(area, frame);
+    }
+
+    // -----------------------------------------------------------------------
+    // Section B: Display
+    // -----------------------------------------------------------------------
+    fn render_display_widgets(&self, frame: &mut Frame, area: Rect) {
+        let rows = Flex::vertical()
+            .constraints([Constraint::Percentage(45.0), Constraint::Percentage(55.0)])
+            .split(area);
+
+        let top_cols = Flex::horizontal()
+            .constraints([Constraint::Percentage(50.0), Constraint::Percentage(50.0)])
+            .split(rows[0]);
+        self.render_borders(frame, top_cols[0]);
+        self.render_text_styles(frame, top_cols[1]);
+
+        let bottom_cols = Flex::horizontal()
+            .constraints([
+                Constraint::Percentage(34.0),
+                Constraint::Percentage(33.0),
+                Constraint::Percentage(33.0),
+            ])
+            .split(rows[1]);
+        self.render_paragraph_wraps(frame, bottom_cols[0]);
+        self.render_lists_and_table(frame, bottom_cols[1]);
+        self.render_code_and_quote(frame, bottom_cols[2]);
     }
 
     // -----------------------------------------------------------------------
@@ -334,8 +365,133 @@ impl WidgetGallery {
         }
     }
 
+    fn render_paragraph_wraps(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Paragraph Wrap")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let rows = Flex::vertical()
+            .constraints([
+                Constraint::Percentage(34.0),
+                Constraint::Percentage(33.0),
+                Constraint::Percentage(33.0),
+            ])
+            .split(inner);
+        let sample = "The quick brown fox jumps over the lazy dog.";
+        let modes = [
+            ("Word", WrapMode::Word),
+            ("Char", WrapMode::Char),
+            ("None", WrapMode::None),
+        ];
+
+        for (row, (label, mode)) in rows.iter().zip(modes.iter()) {
+            let text = format!("{label}: {sample}");
+            Paragraph::new(text)
+                .wrap(*mode)
+                .style(Style::new().fg(theme::fg::SECONDARY))
+                .render(*row, frame);
+        }
+    }
+
+    fn render_lists_and_table(&self, frame: &mut Frame, area: Rect) {
+        let rows = Flex::vertical()
+            .constraints([Constraint::Percentage(45.0), Constraint::Percentage(55.0)])
+            .split(area);
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Lists")
+            .style(theme::content_border());
+        let inner = block.inner(rows[0]);
+        block.render(rows[0], frame);
+
+        let items = vec![
+            ListItem::new("• Bullet item"),
+            ListItem::new("• Second item"),
+            ListItem::new("  ◦ Nested item"),
+            ListItem::new("1. Numbered item"),
+            ListItem::new("2. Another item"),
+        ];
+        Widget::render(
+            &List::new(items).style(Style::new().fg(theme::fg::SECONDARY)),
+            inner,
+            frame,
+        );
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Table")
+            .style(theme::content_border());
+        let inner = block.inner(rows[1]);
+        block.render(rows[1], frame);
+
+        let header = Row::new(["Name", "Type", "Size"]).style(theme::title());
+        let table_rows = vec![
+            Row::new(["main.rs", "Rust", "4.2 KB"]),
+            Row::new(["README.md", "MD", "3.4 KB"]),
+            Row::new(["config.toml", "TOML", "1.1 KB"]),
+        ];
+        let widths = [
+            Constraint::Min(8),
+            Constraint::Fixed(5),
+            Constraint::Fixed(7),
+        ];
+        Widget::render(
+            &Table::new(table_rows, widths)
+                .header(header)
+                .style(Style::new().fg(theme::fg::SECONDARY)),
+            inner,
+            frame,
+        );
+    }
+
+    fn render_code_and_quote(&self, frame: &mut Frame, area: Rect) {
+        let rows = Flex::vertical()
+            .constraints([Constraint::Percentage(55.0), Constraint::Percentage(45.0)])
+            .split(area);
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Code Block")
+            .style(theme::content_border());
+        let inner = block.inner(rows[0]);
+        block.render(rows[0], frame);
+        Paragraph::new("fn main() {\n    println!(\"hello\");\n}")
+            .style(Style::new().fg(theme::accent::INFO))
+            .render(inner, frame);
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Blockquote + Rule")
+            .style(theme::content_border());
+        let inner = block.inner(rows[1]);
+        block.render(rows[1], frame);
+        Paragraph::new("> Deterministic output beats clever output.")
+            .style(Style::new().fg(theme::fg::MUTED))
+            .render(inner, frame);
+
+        if inner.height > 1 {
+            let rule_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+            Rule::new()
+                .style(Style::new().fg(theme::fg::MUTED))
+                .render(rule_area, frame);
+        }
+    }
+
     // -----------------------------------------------------------------------
-    // Section C: Colors
+    // Status Palette + Badges
     // -----------------------------------------------------------------------
     fn render_colors(&self, frame: &mut Frame, area: Rect) {
         let rows = Flex::vertical()
@@ -490,23 +646,92 @@ impl WidgetGallery {
     }
 
     // -----------------------------------------------------------------------
-    // Section D: Interactive
+    // Section C: Status
     // -----------------------------------------------------------------------
-    fn render_interactive(&self, frame: &mut Frame, area: Rect) {
+    fn render_status_widgets(&self, frame: &mut Frame, area: Rect) {
+        let cols = Flex::horizontal()
+            .constraints([Constraint::Percentage(55.0), Constraint::Percentage(45.0)])
+            .split(area);
+
+        self.render_colors(frame, cols[0]);
+        self.render_status_activity(frame, cols[1]);
+    }
+
+    fn render_status_activity(&self, frame: &mut Frame, area: Rect) {
         let rows = Flex::vertical()
             .constraints([
+                Constraint::Fixed(7),
                 Constraint::Fixed(3),
-                Constraint::Percentage(40.0),
-                Constraint::Percentage(40.0),
+                Constraint::Min(3),
             ])
             .split(area);
 
-        // TextInput demos
+        self.render_progress_bars(frame, rows[0]);
+        self.render_spinners(frame, rows[1]);
+        self.render_toast_demo(frame, rows[2]);
+    }
+
+    fn render_spinners(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Spinners")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.height == 0 {
+            return;
+        }
+
+        let top_row = Rect::new(inner.x, inner.y, inner.width, 1);
+        let dots_idx = self.spinner_state.current_frame % ftui_widgets::spinner::DOTS.len();
+        let dots_frame = ftui_widgets::spinner::DOTS[dots_idx];
+        Paragraph::new(format!("{dots_frame} Loading (DOTS)"))
+            .style(Style::new().fg(theme::accent::PRIMARY))
+            .render(top_row, frame);
+
+        if inner.height >= 2 {
+            let bot_row = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+            let line_idx = self.spinner_state.current_frame % ftui_widgets::spinner::LINE.len();
+            let line_frame = ftui_widgets::spinner::LINE[line_idx];
+            Paragraph::new(format!("{line_frame} Processing (LINE)"))
+                .style(Style::new().fg(theme::accent::SECONDARY))
+                .render(bot_row, frame);
+        }
+    }
+
+    fn render_toast_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Toast")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        let toast = Toast::new("Settings saved successfully")
+            .title("Success")
+            .icon(ToastIcon::Success)
+            .persistent();
+        toast.render(inner, frame);
+    }
+
+    // -----------------------------------------------------------------------
+    // Section A: Inputs
+    // -----------------------------------------------------------------------
+    fn render_inputs(&self, frame: &mut Frame, area: Rect) {
+        let rows = Flex::vertical()
+            .constraints([
+                Constraint::Fixed(3),
+                Constraint::Fixed(6),
+                Constraint::Min(3),
+            ])
+            .split(area);
+
         self.render_text_inputs(frame, rows[0]);
-        // List and Table side by side
-        self.render_list_and_table(frame, rows[1]);
-        // Tree widget
-        self.render_tree(frame, rows[2]);
+        self.render_text_area(frame, rows[1]);
+        self.render_input_controls(frame, rows[2]);
     }
 
     fn render_text_inputs(&self, frame: &mut Frame, area: Rect) {
@@ -522,8 +747,12 @@ impl WidgetGallery {
             .style(theme::content_border());
         let inner = block.inner(cols[0]);
         block.render(cols[0], frame);
-        Paragraph::new("demo@example.com")
-            .style(Style::new().fg(theme::fg::PRIMARY))
+        TextInput::new()
+            .with_value("demo@example.com")
+            .with_placeholder("name@example.com")
+            .with_style(Style::new().fg(theme::fg::PRIMARY))
+            .with_cursor_style(Style::new().fg(theme::accent::PRIMARY))
+            .with_focused(true)
             .render(inner, frame);
 
         // Masked input
@@ -534,73 +763,71 @@ impl WidgetGallery {
             .style(theme::content_border());
         let inner = block.inner(cols[1]);
         block.render(cols[1], frame);
-        Paragraph::new("••••••••")
-            .style(Style::new().fg(theme::fg::MUTED))
+        TextInput::new()
+            .with_value("s3cr3t")
+            .with_mask('•')
+            .with_style(Style::new().fg(theme::fg::PRIMARY))
+            .with_placeholder("••••••••")
             .render(inner, frame);
     }
 
-    fn render_list_and_table(&self, frame: &mut Frame, area: Rect) {
-        let cols = Flex::horizontal()
-            .constraints([Constraint::Percentage(40.0), Constraint::Percentage(60.0)])
-            .split(area);
-
-        // List
+    fn render_text_area(&self, frame: &mut Frame, area: Rect) {
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("List")
+            .title("TextArea")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        let text =
+            "FrankenTUI text area\n- Multi-line editing\n- Soft wrap enabled\n- Line numbers";
+        let text_area = TextArea::new()
+            .with_text(text)
+            .with_focus(true)
+            .with_line_numbers(true)
+            .with_soft_wrap(true)
+            .with_style(Style::new().fg(theme::fg::PRIMARY))
+            .with_cursor_line_style(Style::new().bg(theme::alpha::SURFACE));
+        let mut state = TextAreaState::default();
+        StatefulWidget::render(&text_area, inner, frame, &mut state);
+    }
+
+    fn render_input_controls(&self, frame: &mut Frame, area: Rect) {
+        let cols = Flex::horizontal()
+            .constraints([Constraint::Percentage(50.0), Constraint::Percentage(50.0)])
+            .split(area);
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Checkboxes + Radios")
             .style(theme::content_border());
         let inner = block.inner(cols[0]);
         block.render(cols[0], frame);
+        Paragraph::new(
+            "[ ] Enable autosave\n\
+             [x] Sync on save\n\
+             ( ) Light theme\n\
+             (*) Dark theme",
+        )
+        .style(Style::new().fg(theme::fg::SECONDARY))
+        .render(inner, frame);
 
-        let items: Vec<ListItem> = (0..10)
-            .map(|i| {
-                let style = if Some(i) == self.list_state.selected {
-                    Style::new()
-                        .fg(theme::accent::PRIMARY)
-                        .attrs(StyleFlags::BOLD)
-                } else {
-                    Style::new().fg(theme::fg::SECONDARY)
-                };
-                ListItem::new(format!("Item {}", i + 1)).style(style)
-            })
-            .collect();
-        Widget::render(
-            &List::new(items).style(Style::new().fg(theme::fg::SECONDARY)),
-            inner,
-            frame,
-        );
-
-        // Table
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Table")
+            .title("Select + Number + Slider")
             .style(theme::content_border());
         let inner = block.inner(cols[1]);
         block.render(cols[1], frame);
-
-        let header = Row::new(["Name", "Type", "Size", "Modified"]).style(theme::title());
-        let table_rows: Vec<Row> = vec![
-            Row::new(["main.rs", "Rust", "4.2 KB", "2m ago"]),
-            Row::new(["lib.rs", "Rust", "12.8 KB", "5m ago"]),
-            Row::new(["config.toml", "TOML", "1.1 KB", "1h ago"]),
-            Row::new(["README.md", "Markdown", "3.4 KB", "2d ago"]),
-            Row::new(["Cargo.lock", "Lock", "89 KB", "2m ago"]),
-        ];
-        let widths = [
-            Constraint::Min(10),
-            Constraint::Fixed(8),
-            Constraint::Fixed(8),
-            Constraint::Fixed(10),
-        ];
-        Widget::render(
-            &Table::new(table_rows, widths)
-                .header(header)
-                .style(Style::new().fg(theme::fg::SECONDARY)),
-            inner,
-            frame,
-        );
+        Paragraph::new(
+            "Select: [High ▾]\n\
+             Number: [-]  42  [+]\n\
+             Slider: 30%  [■■■■■─────]",
+        )
+        .style(Style::new().fg(theme::fg::SECONDARY))
+        .render(inner, frame);
     }
 
     fn render_tree(&self, frame: &mut Frame, area: Rect) {
@@ -632,17 +859,86 @@ impl WidgetGallery {
     }
 
     // -----------------------------------------------------------------------
-    // Section E: Data Widgets
+    // Section D: Data Viz
     // -----------------------------------------------------------------------
-    fn render_data_widgets(&self, frame: &mut Frame, area: Rect) {
+    fn render_data_viz(&self, frame: &mut Frame, area: Rect) {
         let rows = Flex::vertical()
-            .constraints([Constraint::Fixed(7), Constraint::Min(4)])
+            .constraints([
+                Constraint::Fixed(3),
+                Constraint::Fixed(4),
+                Constraint::Min(4),
+            ])
             .split(area);
 
-        // Progress bars
-        self.render_progress_bars(frame, rows[0]);
-        // JSON view and spinner
-        self.render_json_and_spinner(frame, rows[1]);
+        self.render_sparklines(frame, rows[0]);
+        self.render_mini_bars(frame, rows[1]);
+        self.render_json_view(frame, rows[2]);
+    }
+
+    fn render_sparklines(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Sparklines")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.height == 0 {
+            return;
+        }
+
+        let rows = Flex::vertical()
+            .constraints([Constraint::Fixed(1), Constraint::Fixed(1)])
+            .split(inner);
+        let data_up = [1.0, 2.0, 4.0, 3.0, 6.0, 5.0, 7.0, 8.0];
+        let data_down = [8.0, 7.0, 6.0, 4.0, 3.0, 2.0, 2.0, 1.0];
+
+        Sparkline::new(&data_up)
+            .style(Style::new().fg(theme::accent::PRIMARY))
+            .render(rows[0], frame);
+        if rows.len() > 1 {
+            Sparkline::new(&data_down)
+                .style(Style::new().fg(theme::accent::WARNING))
+                .render(rows[1], frame);
+        }
+    }
+
+    fn render_mini_bars(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Mini Bars")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.height == 0 {
+            return;
+        }
+
+        let rows = Flex::vertical()
+            .constraints([
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+            ])
+            .split(inner);
+        let metrics = [
+            ("CPU", 0.72, theme::accent::ERROR),
+            ("Mem", 0.48, theme::accent::WARNING),
+            ("IO", 0.35, theme::accent::INFO),
+        ];
+
+        for (row, (label, ratio, color)) in rows.iter().zip(metrics.iter()) {
+            let label = format!("{label} {:>3}%", (ratio * 100.0) as u32);
+            ProgressBar::new()
+                .ratio(*ratio)
+                .label(&label)
+                .style(Style::new().fg(theme::fg::MUTED))
+                .gauge_style(Style::new().fg(*color).bg(theme::alpha::SURFACE))
+                .render(*row, frame);
+        }
     }
 
     fn render_progress_bars(&self, frame: &mut Frame, area: Rect) {
@@ -691,19 +987,14 @@ impl WidgetGallery {
         }
     }
 
-    fn render_json_and_spinner(&self, frame: &mut Frame, area: Rect) {
-        let cols = Flex::horizontal()
-            .constraints([Constraint::Percentage(65.0), Constraint::Percentage(35.0)])
-            .split(area);
-
-        // JsonView
+    fn render_json_view(&self, frame: &mut Frame, area: Rect) {
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title("JsonView")
             .style(theme::content_border());
-        let inner = block.inner(cols[0]);
-        block.render(cols[0], frame);
+        let inner = block.inner(area);
+        block.render(area, frame);
 
         let sample_json = r#"{"name": "FrankenTUI", "version": "0.1.0", "widgets": 28, "features": ["charts", "forms", "canvas"], "nested": {"key": "value"}}"#;
         JsonView::new(sample_json)
@@ -718,57 +1009,48 @@ impl WidgetGallery {
             .with_literal_style(Style::new().fg(theme::accent::ERROR))
             .with_punct_style(Style::new().fg(theme::fg::MUTED))
             .render(inner, frame);
+    }
 
-        // Spinner
+    // -----------------------------------------------------------------------
+    // Section E: Navigation
+    // -----------------------------------------------------------------------
+    fn render_navigation_widgets(&self, frame: &mut Frame, area: Rect) {
+        let rows = Flex::vertical()
+            .constraints([
+                Constraint::Fixed(3),
+                Constraint::Min(4),
+                Constraint::Fixed(3),
+            ])
+            .split(area);
+
+        self.render_tabs_and_breadcrumbs(frame, rows[0]);
+        self.render_tree(frame, rows[1]);
+        self.render_paginator_modes(frame, rows[2]);
+    }
+
+    fn render_tabs_and_breadcrumbs(&self, frame: &mut Frame, area: Rect) {
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Spinners")
+            .title("Tabs + Breadcrumbs")
             .style(theme::content_border());
-        let inner = block.inner(cols[1]);
-        block.render(cols[1], frame);
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        if inner.height == 0 {
+            return;
+        }
+
+        let tab_row = Rect::new(inner.x, inner.y, inner.width, 1);
+        Paragraph::new(" [Widgets]  Logs  Settings ")
+            .style(Style::new().fg(theme::accent::PRIMARY))
+            .render(tab_row, frame);
 
         if inner.height >= 2 {
-            // Show dots spinner on first row
-            let top_row = Rect {
-                x: inner.x,
-                y: inner.y,
-                width: inner.width,
-                height: 1,
-            };
-            let dots_idx = self.spinner_state.current_frame % ftui_widgets::spinner::DOTS.len();
-            let dots_frame = ftui_widgets::spinner::DOTS[dots_idx];
-            Paragraph::new(format!("{dots_frame} Loading (DOTS)"))
-                .style(Style::new().fg(theme::accent::PRIMARY))
-                .render(top_row, frame);
-
-            // Show line spinner on second row
-            if inner.height >= 2 {
-                let bot_row = Rect {
-                    x: inner.x,
-                    y: inner.y + 1,
-                    width: inner.width,
-                    height: 1,
-                };
-                let line_idx = self.spinner_state.current_frame % ftui_widgets::spinner::LINE.len();
-                let line_frame = ftui_widgets::spinner::LINE[line_idx];
-                Paragraph::new(format!("{line_frame} Processing (LINE)"))
-                    .style(Style::new().fg(theme::accent::SECONDARY))
-                    .render(bot_row, frame);
-            }
-
-            // Show tick count
-            if inner.height >= 4 {
-                let info_row = Rect {
-                    x: inner.x,
-                    y: inner.y + 3,
-                    width: inner.width,
-                    height: 1,
-                };
-                Paragraph::new(format!("Frame: {}", self.spinner_state.current_frame))
-                    .style(theme::muted())
-                    .render(info_row, frame);
-            }
+            let crumb_row = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+            Paragraph::new("Home / Gallery / Widgets")
+                .style(Style::new().fg(theme::fg::MUTED))
+                .render(crumb_row, frame);
         }
     }
 
@@ -778,9 +1060,10 @@ impl WidgetGallery {
     fn render_layout_widgets(&self, frame: &mut Frame, area: Rect) {
         let rows = Flex::vertical()
             .constraints([
-                Constraint::Percentage(40.0),
                 Constraint::Percentage(30.0),
-                Constraint::Percentage(30.0),
+                Constraint::Percentage(25.0),
+                Constraint::Percentage(25.0),
+                Constraint::Percentage(20.0),
             ])
             .split(area);
 
@@ -788,8 +1071,10 @@ impl WidgetGallery {
         self.render_columns_demo(frame, rows[0]);
         // Flex demo
         self.render_flex_demo(frame, rows[1]);
-        // Padding demo
-        self.render_padding_demo(frame, rows[2]);
+        // Grid layout demo
+        self.render_grid_demo(frame, rows[2]);
+        // Panel/padding demo
+        self.render_panel_demo(frame, rows[3]);
     }
 
     fn render_columns_demo(&self, frame: &mut Frame, area: Rect) {
@@ -884,31 +1169,75 @@ impl WidgetGallery {
         }
     }
 
-    fn render_padding_demo(&self, frame: &mut Frame, area: Rect) {
-        let pad_x = theme::spacing::SM;
-        let pad_y = theme::spacing::XS;
-
-        let title = format!("Padding ({pad_x},{pad_x},{pad_y},{pad_y})");
+    fn render_grid_demo(&self, frame: &mut Frame, area: Rect) {
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(title.as_str())
+            .title("Grid Layout")
             .style(theme::content_border());
         let inner = block.inner(area);
         block.render(area, frame);
 
-        // Apply padding manually to show the concept
-        let padded = Rect {
-            x: inner.x + pad_x,
-            y: inner.y + pad_y,
-            width: inner.width.saturating_sub(pad_x * 2),
-            height: inner.height.saturating_sub(pad_y * 2),
-        };
-        Paragraph::new(format!(
-            "Content inside padding.\nPadding: left={pad_x}, right={pad_x}, top={pad_y}, bottom={pad_y}"
-        ))
-            .style(Style::new().fg(theme::accent::INFO))
-            .render(padded, frame);
+        let layout = Layout::new()
+            .rows([
+                Constraint::Fixed(1),
+                Constraint::Min(1),
+                Constraint::Fixed(1),
+            ])
+            .columns([Constraint::Percentage(50.0), Constraint::Percentage(50.0)])
+            .child(
+                Panel::new(Paragraph::new("Header").style(theme::title()))
+                    .border_type(BorderType::Rounded),
+                0,
+                0,
+                1,
+                2,
+            )
+            .child(
+                Panel::new(Paragraph::new("Left")).border_type(BorderType::Rounded),
+                1,
+                0,
+                1,
+                1,
+            )
+            .child(
+                Panel::new(Paragraph::new("Right")).border_type(BorderType::Rounded),
+                1,
+                1,
+                1,
+                1,
+            )
+            .child(
+                Panel::new(Paragraph::new("Footer")).border_type(BorderType::Rounded),
+                2,
+                0,
+                1,
+                2,
+            );
+        layout.render(inner, frame);
+    }
+
+    fn render_panel_demo(&self, frame: &mut Frame, area: Rect) {
+        let pad_x = theme::spacing::SM;
+        let pad_y = theme::spacing::XS;
+
+        let content = Paragraph::new(
+            "Panels wrap content with borders,\n\
+             titles, and inner padding.\n\
+             Useful for cards and tool panes.",
+        )
+        .style(Style::new().fg(theme::accent::INFO));
+
+        let panel = Panel::new(content)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Panel Card")
+            .subtitle("padding demo")
+            .padding((pad_y, pad_x))
+            .border_style(Style::new().fg(theme::accent::SECONDARY))
+            .style(Style::new().bg(theme::alpha::SURFACE));
+
+        panel.render(area, frame);
     }
 
     // -----------------------------------------------------------------------
@@ -918,8 +1247,9 @@ impl WidgetGallery {
         let rows = Flex::vertical()
             .constraints([
                 Constraint::Fixed(1),
+                Constraint::Fixed(2),
                 Constraint::Fixed(3),
-                Constraint::Min(3),
+                Constraint::Min(2),
             ])
             .split(area);
 
@@ -930,11 +1260,46 @@ impl WidgetGallery {
             .style(Style::new().fg(theme::accent::SECONDARY))
             .render(rows[0], frame);
 
-        // Scrollbar demo
-        self.render_scrollbar_demo(frame, rows[1]);
+        self.render_status_line(frame, rows[1]);
+        self.render_scrollbar_demo(frame, rows[2]);
+        self.render_stopwatch_demo(frame, rows[3]);
+    }
 
-        // Paginator modes + summary
-        self.render_paginator_modes(frame, rows[2]);
+    fn render_status_line(&self, frame: &mut Frame, area: Rect) {
+        let status = StatusLine::new()
+            .left(StatusItem::text("[NORMAL]"))
+            .left(StatusItem::key_hint("^S", "Save"))
+            .center(StatusItem::text("widget_gallery.rs"))
+            .right(StatusItem::progress(42, 100))
+            .right(StatusItem::text("Ln 12, Col 4"))
+            .style(
+                Style::new()
+                    .fg(theme::fg::PRIMARY)
+                    .bg(theme::alpha::SURFACE),
+            )
+            .separator("  ");
+        status.render(area, frame);
+    }
+
+    fn render_stopwatch_demo(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Stopwatch")
+            .style(theme::content_border());
+        let inner = block.inner(area);
+        block.render(area, frame);
+
+        let mut state = StopwatchState::new();
+        state.start();
+        state.tick(Duration::from_secs(93));
+
+        let widget = Stopwatch::new()
+            .format(StopwatchFormat::Digital)
+            .label("Uptime ")
+            .running_style(Style::new().fg(theme::accent::SUCCESS))
+            .stopped_style(Style::new().fg(theme::fg::MUTED));
+        StatefulWidget::render(&widget, inner, frame, &mut state);
     }
 
     fn render_scrollbar_demo(&self, frame: &mut Frame, area: Rect) {
@@ -1029,12 +1394,51 @@ impl WidgetGallery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ftui_render::cell::CellContent;
+    use ftui_render::grapheme_pool::GraphemePool;
 
     #[test]
     fn gallery_initial_state() {
         let gallery = WidgetGallery::new();
         assert_eq!(gallery.current_section, 0);
         assert_eq!(gallery.tick_count, 0);
+    }
+
+    #[test]
+    fn gallery_renders_all_sections() {
+        let mut gallery = WidgetGallery::new();
+        let mut pool = GraphemePool::new();
+
+        for section in 0..SECTION_COUNT {
+            gallery.current_section = section;
+            let mut frame = Frame::new(120, 40, &mut pool);
+            gallery.view(&mut frame, Rect::new(0, 0, 120, 40));
+
+            let mut has_content = false;
+            for y in 0..40 {
+                for x in 0..120 {
+                    if let Some(cell) = frame.buffer.get(x, y)
+                        && cell.content != CellContent::EMPTY
+                    {
+                        has_content = true;
+                        break;
+                    }
+                }
+                if has_content {
+                    break;
+                }
+            }
+
+            assert!(has_content, "section {section} rendered empty frame");
+        }
+    }
+
+    #[test]
+    fn gallery_handles_small_terminals() {
+        let gallery = WidgetGallery::new();
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(20, 5, &mut pool);
+        gallery.view(&mut frame, Rect::new(0, 0, 20, 5));
     }
 
     #[test]

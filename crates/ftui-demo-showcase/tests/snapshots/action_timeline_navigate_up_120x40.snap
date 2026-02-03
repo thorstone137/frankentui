@@ -2,19 +2,19 @@
 │Follow[F]: OFF  Component[C]: all  Severity[S]: all  Type[T]: all  Clear[X]                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─────────────────────────Event Timeline──────────────────────────╮╭───────────────────Event Detail────────────────────╮
-│   0 TRACE core    input   Key event processed                   ││ID: 7                                              │
-│   1 DEBUG core    input   Key event processed                   ││Tick: 6                                            │
-│   2 INFO  runtime input   Key event processed                   ││Severity: DEBUG                                    │
-│   3 WARN  runtime cmd     Command dispatched to model           ││Component: widgets                                 │
-│   4 ERROR render  cmd     Command dispatched to model           ││Type: sub                                          │
-│   5 TRACE render  cmd     Command dispatched to model           ││                                                   │
-│   6 DEBUG widgets sub     Subscription tick delivered           ││Summary:                                           │
-│   7 INFO  widgets sub     Subscription tick delivered           ││  Subscription tick delivered                      │
-│   8 WARN  core    sub     Subscription tick delivered           ││                                                   │
-│   9 ERROR core    render  Frame diff computed                   ││Fields:                                            │
-│  10 TRACE runtime render  Frame diff computed                   ││  latency_ms: 20                                   │
-│  11 DEBUG runtime render  Frame diff computed                   ││  diff_cells: 78                                   │
-│                                                                 ││  ansi_bytes: 282                                  │
+│   1 DEBUG core    input   Key event processed                   ││ID: 8                                              │
+│   2 INFO  runtime input   Key event processed                   ││Tick: 7                                            │
+│   3 WARN  runtime cmd     Command dispatched to model           ││Severity: INFO                                     │
+│   4 ERROR render  cmd     Command dispatched to model           ││Component: widgets                                 │
+│   5 TRACE render  cmd     Command dispatched to model           ││Type: sub                                          │
+│   6 DEBUG widgets sub     Subscription tick delivered           ││                                                   │
+│   7 INFO  widgets sub     Subscription tick delivered           ││Summary:                                           │
+│   8 WARN  core    sub     Subscription tick delivered           ││  Subscription tick delivered                      │
+│   9 ERROR core    render  Frame diff computed                   ││                                                   │
+│  10 TRACE runtime render  Frame diff computed                   ││Fields:                                            │
+│  11 DEBUG runtime render  Frame diff computed                   ││  latency_ms: 2                                    │
+│  11 INFO  runtime cmd     Auto-follow disabled                  ││  diff_cells: 91                                   │
+│                                                                 ││  ansi_bytes: 329                                  │
 │                                                                 ││                                                   │
 │                                                                 ││                                                   │
 │                                                                 ││                                                   │

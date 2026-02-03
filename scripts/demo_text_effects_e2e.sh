@@ -107,8 +107,9 @@ main() {
 
     # Run demo with timeout and capture output
     # Note: The demo may not have a headless mode yet, so we just build-check
-    if cargo check -p ftui-demo-showcase --features "text-effects" 2>&1 | tee "$LOG_FILE.check"; then
-        log_pass "Demo showcase builds with text-effects feature"
+    # text-effects is a feature in ftui-extras, not ftui-demo-showcase
+    if cargo check -p ftui-demo-showcase 2>&1 | tee "$LOG_FILE.check"; then
+        log_pass "Demo showcase builds successfully"
     else
         log_warn "Demo showcase check had warnings"
     fi

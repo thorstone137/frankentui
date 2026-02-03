@@ -1,10 +1,10 @@
-▸ A: Borders │   B: Text Styles │   C: C
-+ASCII------+┌──Square───┐╭────Rounded╮ 
-|Border: ASC|│Border: Squ││Border: Rou│ 
-|Align: Left|│Align: Cent││Align: Righ│ 
-+-----------+└───────────┘╰───────────╯ 
-╔Double═════╗┏━━━Heavy━━━┓╭─────Custom╮ 
-║Border: Dou║┃Border: Hea┃│Border: Cus│ 
-║Align: Left║┃Align: Cent┃│Align: Righ│ 
-╚═══════════╝┗━━━━━━━━━━━┛╰───────────╯ 
+▸ A: Inputs │   B: Display │   C: Status
+╭TextInput─────────╮╭Masked Input──────╮
+│demo@example.com  ││••••••            │
+╰──────────────────╯╰──────────────────╯
+╭TextArea──────────────────────────────╮
+│1  FrankenTUI text area               │
+│2  - Multi-line editing               │
+│3  - Soft wrap enabled                │
+╰──────────────────────────────────────╯
 *......                                 

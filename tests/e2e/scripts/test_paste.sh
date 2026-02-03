@@ -13,6 +13,7 @@ source "$LIB_DIR/pty.sh"
 
 E2E_SUITE_SCRIPT="$SCRIPT_DIR/test_paste.sh"
 export E2E_SUITE_SCRIPT
+export PTY_CANONICALIZE=1
 ONLY_CASE="${E2E_ONLY_CASE:-}"
 FIXTURE_DIR="$E2E_ROOT/fixtures"
 
@@ -68,6 +69,7 @@ paste_basic() {
     local output_file="$E2E_LOG_DIR/paste_basic.pty"
 
     log_test_start "paste_basic"
+    PTY_TEST_NAME="paste_basic"
 
     PTY_SEND=$'\x1b[200~hello paste\x1b[201~' \
     PTY_SEND_DELAY_MS=300 \
@@ -75,7 +77,8 @@ paste_basic() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Paste: hello paste" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Paste: hello paste" "$canonical_file" || return 1
 }
 
 paste_multiline() {
@@ -83,6 +86,7 @@ paste_multiline() {
     local output_file="$E2E_LOG_DIR/paste_multiline.pty"
 
     log_test_start "paste_multiline"
+    PTY_TEST_NAME="paste_multiline"
 
     PTY_SEND=$'\x1b[200~line_one\nline_two\nline_three\x1b[201~' \
     PTY_SEND_DELAY_MS=300 \
@@ -90,9 +94,10 @@ paste_multiline() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Paste: line_one" "$output_file" || return 1
-    grep -a -q "line_two" "$output_file" || return 1
-    grep -a -q "line_three" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Paste: line_one" "$canonical_file" || return 1
+    grep -a -q "line_two" "$canonical_file" || return 1
+    grep -a -q "line_three" "$canonical_file" || return 1
 }
 
 paste_large() {
@@ -100,6 +105,7 @@ paste_large() {
     local output_file="$E2E_LOG_DIR/paste_large.pty"
 
     log_test_start "paste_large"
+    PTY_TEST_NAME="paste_large"
 
     local payload
     payload="$(printf 'a%.0s' {1..4096})"
@@ -110,7 +116,8 @@ paste_large() {
     PTY_TIMEOUT=5 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Paste:" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Paste:" "$canonical_file" || return 1
     local size
     size=$(wc -c < "$output_file" | tr -d ' ')
     [[ "$size" -gt 2000 ]] || return 1
@@ -122,6 +129,7 @@ paste_unicode() {
     local fixture="$FIXTURE_DIR/paste_unicode.txt"
 
     log_test_start "paste_unicode"
+    PTY_TEST_NAME="paste_unicode"
 
     if [[ ! -f "$fixture" ]]; then
         log_error "Missing fixture: $fixture"
@@ -137,8 +145,9 @@ paste_unicode() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Paste: こんにちは" "$output_file" || return 1
-    grep -a -q "café" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Paste: こんにちは" "$canonical_file" || return 1
+    grep -a -q "café" "$canonical_file" || return 1
 }
 
 paste_embedded_escape() {
@@ -146,6 +155,7 @@ paste_embedded_escape() {
     local output_file="$E2E_LOG_DIR/paste_embedded_escape.pty"
 
     log_test_start "paste_embedded_escape"
+    PTY_TEST_NAME="paste_embedded_escape"
 
     local payload
     payload=$'alpha\x1b[31mbeta\x1b[0m gamma'
@@ -156,9 +166,10 @@ paste_embedded_escape() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Paste: alpha" "$output_file" || return 1
-    grep -a -q "beta" "$output_file" || return 1
-    grep -a -q "gamma" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Paste: alpha" "$canonical_file" || return 1
+    grep -a -q "beta" "$canonical_file" || return 1
+    grep -a -q "gamma" "$canonical_file" || return 1
 }
 
 paste_dos_limit() {
@@ -167,6 +178,7 @@ paste_dos_limit() {
     local payload_file="$E2E_LOG_DIR/paste_dos_payload.bin"
 
     log_test_start "paste_dos_limit"
+    PTY_TEST_NAME="paste_dos_limit"
 
     if [[ -z "${E2E_PYTHON:-}" ]]; then
         log_test_fail "paste_dos_limit" "E2E_PYTHON missing"
@@ -204,8 +216,9 @@ PY
     PTY_TIMEOUT=6 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Paste: TAIL-" "$output_file" || return 1
-    if grep -a -q "PREFIX-" "$output_file"; then
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Paste: TAIL-" "$canonical_file" || return 1
+    if grep -a -q "PREFIX-" "$canonical_file"; then
         return 1
     fi
 }

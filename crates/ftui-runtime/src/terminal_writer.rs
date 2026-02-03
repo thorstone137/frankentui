@@ -113,6 +113,12 @@ pub enum UiAnchor {
     Top,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InlineRegion {
+    start: u16,
+    height: u16,
+}
+
 /// Unified terminal output coordinator.
 ///
 /// Enforces the one-writer rule and implements inline mode correctly.
@@ -146,6 +152,8 @@ pub struct TerminalWriter<W: Write> {
     inline_strategy: InlineStrategy,
     /// Whether a scroll region is currently active.
     scroll_region_active: bool,
+    /// Last inline UI region for clearing on shrink.
+    last_inline_region: Option<InlineRegion>,
 }
 
 impl<W: Write> TerminalWriter<W> {
@@ -180,6 +188,7 @@ impl<W: Write> TerminalWriter<W> {
             cursor_saved: false,
             inline_strategy,
             scroll_region_active: false,
+            last_inline_region: None,
         }
     }
 
@@ -404,6 +413,53 @@ impl<W: Write> TerminalWriter<W> {
         Ok(())
     }
 
+    fn clear_rows(&mut self, start_row: u16, height: u16) -> io::Result<()> {
+        let start_row = start_row.min(self.term_height);
+        let end_row = start_row.saturating_add(height).min(self.term_height);
+        for row in start_row..end_row {
+            write!(self.writer(), "\x1b[{};1H", row.saturating_add(1))?;
+            self.writer().write_all(ERASE_LINE)?;
+        }
+        Ok(())
+    }
+
+    fn clear_inline_region_diff(&mut self, current: InlineRegion) -> io::Result<()> {
+        let Some(previous) = self.last_inline_region else {
+            return Ok(());
+        };
+
+        let prev_start = previous.start.min(self.term_height);
+        let prev_end = previous
+            .start
+            .saturating_add(previous.height)
+            .min(self.term_height);
+        if prev_start >= prev_end {
+            return Ok(());
+        }
+
+        let curr_start = current.start.min(self.term_height);
+        let curr_end = current
+            .start
+            .saturating_add(current.height)
+            .min(self.term_height);
+
+        if curr_start > prev_start {
+            let clear_end = curr_start.min(prev_end);
+            if clear_end > prev_start {
+                self.clear_rows(prev_start, clear_end - prev_start)?;
+            }
+        }
+
+        if curr_end < prev_end {
+            let clear_start = curr_end.max(prev_start);
+            if prev_end > clear_start {
+                self.clear_rows(clear_start, prev_end - clear_start)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Present a UI frame.
     ///
     /// In inline mode, this:
@@ -484,22 +540,27 @@ impl<W: Write> TerminalWriter<W> {
     /// overwriting the UI, reducing redraw work.
     fn present_inline(&mut self, buffer: &Buffer, ui_height: u16) -> io::Result<()> {
         let visible_height = ui_height.min(self.term_height);
-        if visible_height == 0 {
-            return Ok(());
-        }
         let ui_y_start = self.ui_start_row();
+        let current_region = InlineRegion {
+            start: ui_y_start,
+            height: visible_height,
+        };
 
         // Activate scroll region if strategy calls for it
         {
             let _span = debug_span!("scroll_region").entered();
-            match self.inline_strategy {
-                InlineStrategy::ScrollRegion => {
-                    self.activate_scroll_region(visible_height)?;
+            if visible_height > 0 {
+                match self.inline_strategy {
+                    InlineStrategy::ScrollRegion => {
+                        self.activate_scroll_region(visible_height)?;
+                    }
+                    InlineStrategy::Hybrid => {
+                        self.activate_scroll_region(visible_height)?;
+                    }
+                    InlineStrategy::OverlayRedraw => {}
                 }
-                InlineStrategy::Hybrid => {
-                    self.activate_scroll_region(visible_height)?;
-                }
-                InlineStrategy::OverlayRedraw => {}
+            } else if self.scroll_region_active {
+                self.deactivate_scroll_region()?;
             }
         }
 
@@ -513,41 +574,36 @@ impl<W: Write> TerminalWriter<W> {
         self.writer().write_all(CURSOR_SAVE)?;
         self.cursor_saved = true;
 
-        // Move to UI anchor and clear UI region
-        {
-            let _span = debug_span!("clear_ui", rows = visible_height).entered();
-            write!(self.writer(), "\x1b[{};1H", ui_y_start.saturating_add(1))?;
+        self.clear_inline_region_diff(current_region)?;
 
-            for i in 0..visible_height {
-                write!(
-                    self.writer(),
-                    "\x1b[{};1H",
-                    ui_y_start.saturating_add(i).saturating_add(1)
-                )?;
-                self.writer().write_all(ERASE_LINE)?;
+        if visible_height > 0 {
+            // Move to UI anchor and clear UI region
+            {
+                let _span = debug_span!("clear_ui", rows = visible_height).entered();
+                write!(self.writer(), "\x1b[{};1H", ui_y_start.saturating_add(1))?;
+                self.clear_rows(ui_y_start, visible_height)?;
+                write!(self.writer(), "\x1b[{};1H", ui_y_start.saturating_add(1))?;
             }
 
-            write!(self.writer(), "\x1b[{};1H", ui_y_start.saturating_add(1))?;
-        }
-
-        // Compute diff
-        let diff = {
-            let _span = debug_span!("diff_compute").entered();
-            if let Some(ref prev) = self.prev_buffer {
-                if prev.width() == buffer.width() && prev.height() == buffer.height() {
-                    BufferDiff::compute(prev, buffer)
+            // Compute diff
+            let diff = {
+                let _span = debug_span!("diff_compute").entered();
+                if let Some(ref prev) = self.prev_buffer {
+                    if prev.width() == buffer.width() && prev.height() == buffer.height() {
+                        BufferDiff::compute(prev, buffer)
+                    } else {
+                        self.create_full_diff(buffer)
+                    }
                 } else {
                     self.create_full_diff(buffer)
                 }
-            } else {
-                self.create_full_diff(buffer)
-            }
-        };
+            };
 
-        // Emit diff
-        {
-            let _span = debug_span!("emit").entered();
-            self.emit_diff(buffer, &diff, Some(visible_height), ui_y_start)?;
+            // Emit diff
+            {
+                let _span = debug_span!("emit").entered();
+                self.emit_diff(buffer, &diff, Some(visible_height), ui_y_start)?;
+            }
         }
 
         // Reset style so subsequent log output doesn't inherit UI styling.
@@ -564,6 +620,11 @@ impl<W: Write> TerminalWriter<W> {
         }
 
         self.writer().flush()?;
+        self.last_inline_region = if visible_height > 0 {
+            Some(current_region)
+        } else {
+            None
+        };
 
         Ok(())
     }
@@ -851,6 +912,7 @@ impl<W: Write> TerminalWriter<W> {
         self.writer().write_all(b"\x1b[2J\x1b[1;1H")?;
         self.writer().flush()?;
         self.prev_buffer = None;
+        self.last_inline_region = None;
         Ok(())
     }
 
@@ -1000,6 +1062,24 @@ mod tests {
         caps.true_color = true;
         caps.sync_output = true;
         caps
+    }
+
+    fn find_nth(haystack: &[u8], needle: &[u8], nth: usize) -> Option<usize> {
+        if nth == 0 {
+            return None;
+        }
+        let mut count = 0;
+        let mut i = 0;
+        while i + needle.len() <= haystack.len() {
+            if &haystack[i..i + needle.len()] == needle {
+                count += 1;
+                if count == nth {
+                    return Some(i);
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     #[test]
@@ -1456,6 +1536,44 @@ mod tests {
             "cursor row {} exceeds terminal height",
             max_row
         );
+    }
+
+    #[test]
+    fn inline_shrink_clears_stale_rows() {
+        let mut output = Vec::new();
+        {
+            let mut writer = TerminalWriter::new(
+                &mut output,
+                ScreenMode::InlineAuto {
+                    min_height: 1,
+                    max_height: 6,
+                },
+                UiAnchor::Bottom,
+                basic_caps(),
+            );
+            writer.set_size(10, 10);
+
+            let buffer = Buffer::new(10, 6);
+            writer.set_auto_ui_height(6);
+            writer.present_ui(&buffer).unwrap();
+
+            writer.set_auto_ui_height(3);
+            writer.present_ui(&buffer).unwrap();
+        }
+
+        let second_save = find_nth(&output, CURSOR_SAVE, 2).expect("expected second cursor save");
+        let after_save = &output[second_save..];
+        let restore_idx = after_save
+            .windows(CURSOR_RESTORE.len())
+            .position(|w| w == CURSOR_RESTORE)
+            .expect("expected cursor restore after second save");
+        let segment = &after_save[..restore_idx];
+        let erase_count = segment
+            .windows(ERASE_LINE.len())
+            .filter(|w| *w == ERASE_LINE)
+            .count();
+
+        assert_eq!(erase_count, 6, "expected clears for stale + new rows");
     }
 
     // --- Scroll-region optimization tests ---

@@ -24,7 +24,7 @@
 │  16 DEBUG core    caps    Capability probe updated              ││                                                   │
 │  18 WARN  runtime budget  Render budget degraded                ││                                                   │
 │  20 TRACE render  budget  Render budget degraded                ││                                                   │
-│                                                                 ││                                                   │
+│  20 INFO  runtime cmd     Auto-follow disabled                  ││                                                   │
 │                                                                 ││                                                   │
 │                                                                 ││                                                   │
 │                                                                 ││                                                   │

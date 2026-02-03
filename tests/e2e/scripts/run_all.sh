@@ -123,17 +123,23 @@ run_suite "cleanup" "$SCRIPT_DIR/test_cleanup.sh"
 if $QUICK; then
     log_warn "Skipping extended tests (--quick)"
 else
-    run_suite "altscreen" "$SCRIPT_DIR/test_altscreen.sh"
-    run_suite "input"     "$SCRIPT_DIR/test_input.sh"
-    run_suite "ansi"      "$SCRIPT_DIR/test_ansi.sh"
-    run_suite "unicode"   "$SCRIPT_DIR/test_unicode.sh"
-    run_suite "focus"     "$SCRIPT_DIR/test_focus_events.sh"
-    run_suite "paste"     "$SCRIPT_DIR/test_paste.sh"
-    run_suite "osc8"      "$SCRIPT_DIR/test_osc8.sh"
-    run_suite "kitty"     "$SCRIPT_DIR/test_kitty_keyboard.sh"
-    run_suite "mouse_sgr" "$SCRIPT_DIR/test_mouse_sgr.sh"
-    run_suite "resize"    "$SCRIPT_DIR/test_resize_scroll_region.sh"
-    run_suite "mux"       "$SCRIPT_DIR/test_mux.sh"
+    run_suite "altscreen"  "$SCRIPT_DIR/test_altscreen.sh"
+    run_suite "input"      "$SCRIPT_DIR/test_input.sh"
+    run_suite "keybinding" "$SCRIPT_DIR/test_keybinding.sh"
+    run_suite "ansi"       "$SCRIPT_DIR/test_ansi.sh"
+    run_suite "unicode"    "$SCRIPT_DIR/test_unicode.sh"
+    run_suite "focus"      "$SCRIPT_DIR/test_focus_events.sh"
+    run_suite "paste"      "$SCRIPT_DIR/test_paste.sh"
+    run_suite "osc8"       "$SCRIPT_DIR/test_osc8.sh"
+    run_suite "kitty"      "$SCRIPT_DIR/test_kitty_keyboard.sh"
+    run_suite "mouse_sgr"  "$SCRIPT_DIR/test_mouse_sgr.sh"
+    run_suite "resize"     "$SCRIPT_DIR/test_resize_scroll_region.sh"
+    run_suite "mux"        "$SCRIPT_DIR/test_mux.sh"
+
+    # Demo screen E2E tests (bd-11ck.4)
+    if [[ -x "$SCRIPT_DIR/test_action_timeline.sh" ]]; then
+        run_suite "action_timeline" "$SCRIPT_DIR/test_action_timeline.sh"
+    fi
 fi
 
 # Finalize JSON summary

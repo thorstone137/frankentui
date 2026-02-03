@@ -27,9 +27,14 @@
 //!
 //! Feature-gated under `validation`.
 
+pub mod async_validation;
 pub mod deadline;
 mod validators;
 
+pub use async_validation::{
+    AsyncValidationCoordinator, AsyncValidator, InFlightValidation, SharedValidationCoordinator,
+    ValidationEvent, ValidationToken, ValidationTrace,
+};
 pub use validators::{
     // Composition
     All,

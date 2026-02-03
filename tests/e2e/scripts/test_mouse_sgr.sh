@@ -29,6 +29,7 @@ source "$LIB_DIR/pty.sh"
 
 E2E_SUITE_SCRIPT="$SCRIPT_DIR/test_mouse_sgr.sh"
 export E2E_SUITE_SCRIPT
+export PTY_CANONICALIZE=1
 ONLY_CASE="${E2E_ONLY_CASE:-}"
 
 # All test cases for skip reporting
@@ -98,6 +99,7 @@ mouse_left_click_release() {
     local output_file="$E2E_LOG_DIR/mouse_left_click_release.pty"
 
     log_test_start "mouse_left_click_release"
+    PTY_TEST_NAME="mouse_left_click_release"
 
     # Button code 0 = Left, M=press, m=release
     PTY_SEND=$'\x1b[<0;10;5M\x1b[<0;10;5m' \
@@ -108,8 +110,9 @@ mouse_left_click_release() {
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
     # Verify button type is explicitly Left
-    grep -a -q "Mouse: Down(Left)" "$output_file" || return 1
-    grep -a -q "Mouse: Up(Left)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left)" "$canonical_file" || return 1
+    grep -a -q "Mouse: Up(Left)" "$canonical_file" || return 1
 }
 
 mouse_middle_click() {
@@ -117,6 +120,7 @@ mouse_middle_click() {
     local output_file="$E2E_LOG_DIR/mouse_middle_click.pty"
 
     log_test_start "mouse_middle_click"
+    PTY_TEST_NAME="mouse_middle_click"
 
     # Button code 1 = Middle
     PTY_SEND=$'\x1b[<1;20;10M\x1b[<1;20;10m' \
@@ -126,8 +130,9 @@ mouse_middle_click() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Mouse: Down(Middle)" "$output_file" || return 1
-    grep -a -q "Mouse: Up(Middle)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Middle)" "$canonical_file" || return 1
+    grep -a -q "Mouse: Up(Middle)" "$canonical_file" || return 1
 }
 
 mouse_right_click() {
@@ -135,6 +140,7 @@ mouse_right_click() {
     local output_file="$E2E_LOG_DIR/mouse_right_click.pty"
 
     log_test_start "mouse_right_click"
+    PTY_TEST_NAME="mouse_right_click"
 
     # Button code 2 = Right
     PTY_SEND=$'\x1b[<2;15;8M\x1b[<2;15;8m' \
@@ -144,8 +150,9 @@ mouse_right_click() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Mouse: Down(Right)" "$output_file" || return 1
-    grep -a -q "Mouse: Up(Right)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Right)" "$canonical_file" || return 1
+    grep -a -q "Mouse: Up(Right)" "$canonical_file" || return 1
 }
 
 mouse_move_event() {
@@ -153,6 +160,7 @@ mouse_move_event() {
     local output_file="$E2E_LOG_DIR/mouse_move_event.pty"
 
     log_test_start "mouse_move_event"
+    PTY_TEST_NAME="mouse_move_event"
 
     # Button code 32 = motion bit set (no button held)
     PTY_SEND=$'\x1b[<32;12;6M' \
@@ -162,7 +170,8 @@ mouse_move_event() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Mouse: Moved" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Moved" "$canonical_file" || return 1
 }
 
 mouse_drag_left() {
@@ -170,6 +179,7 @@ mouse_drag_left() {
     local output_file="$E2E_LOG_DIR/mouse_drag_left.pty"
 
     log_test_start "mouse_drag_left"
+    PTY_TEST_NAME="mouse_drag_left"
 
     # Button code 32 = motion with left button (0+32=32)
     # Note: Drag vs Move depends on whether a button was pressed first
@@ -182,9 +192,10 @@ mouse_drag_left() {
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
     # Should see Down, motion events, then Up
-    grep -a -q "Mouse: Down(Left)" "$output_file" || return 1
-    grep -a -q "Mouse: Moved" "$output_file" || return 1
-    grep -a -q "Mouse: Up(Left)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left)" "$canonical_file" || return 1
+    grep -a -q "Mouse: Moved" "$canonical_file" || return 1
+    grep -a -q "Mouse: Up(Left)" "$canonical_file" || return 1
 }
 
 mouse_scroll_events() {
@@ -192,6 +203,7 @@ mouse_scroll_events() {
     local output_file="$E2E_LOG_DIR/mouse_scroll_events.pty"
 
     log_test_start "mouse_scroll_events"
+    PTY_TEST_NAME="mouse_scroll_events"
 
     # Button codes 64=ScrollUp, 65=ScrollDown
     PTY_SEND=$'\x1b[<64;15;7M\x1b[<65;15;7M' \
@@ -201,8 +213,9 @@ mouse_scroll_events() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Mouse: ScrollUp" "$output_file" || return 1
-    grep -a -q "Mouse: ScrollDown" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: ScrollUp" "$canonical_file" || return 1
+    grep -a -q "Mouse: ScrollDown" "$canonical_file" || return 1
 }
 
 mouse_coordinates() {
@@ -210,6 +223,7 @@ mouse_coordinates() {
     local output_file="$E2E_LOG_DIR/mouse_coordinates.pty"
 
     log_test_start "mouse_coordinates"
+    PTY_TEST_NAME="mouse_coordinates"
 
     # SGR uses 1-based coords, harness displays 0-based (x-1, y-1)
     # Send click at (25, 12) in 1-based → expect (24, 11) in 0-based
@@ -221,7 +235,8 @@ mouse_coordinates() {
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
     # Verify coordinates are parsed correctly (0-indexed: 24, 11)
-    grep -a -q "Mouse: Down(Left) @ 24,11" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left) @ 24,11" "$canonical_file" || return 1
 }
 
 mouse_large_coords() {
@@ -229,6 +244,7 @@ mouse_large_coords() {
     local output_file="$E2E_LOG_DIR/mouse_large_coords.pty"
 
     log_test_start "mouse_large_coords"
+    PTY_TEST_NAME="mouse_large_coords"
 
     # SGR supports coords > 223 (unlike legacy X10 protocol)
     # Send click at (300, 150) in 1-based → expect (299, 149) in 0-based
@@ -240,7 +256,8 @@ mouse_large_coords() {
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
     # Verify large coordinates are handled correctly
-    grep -a -q "Mouse: Down(Left) @ 299,149" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left) @ 299,149" "$canonical_file" || return 1
 }
 
 mouse_shift_click() {
@@ -248,6 +265,7 @@ mouse_shift_click() {
     local output_file="$E2E_LOG_DIR/mouse_shift_click.pty"
 
     log_test_start "mouse_shift_click"
+    PTY_TEST_NAME="mouse_shift_click"
 
     # Button code with Shift modifier: 0 (left) + 4 (shift) = 4
     PTY_SEND=$'\x1b[<4;10;10M' \
@@ -258,7 +276,8 @@ mouse_shift_click() {
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
     # Should still be a Left button Down
-    grep -a -q "Mouse: Down(Left)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left)" "$canonical_file" || return 1
 }
 
 mouse_ctrl_click() {
@@ -266,6 +285,7 @@ mouse_ctrl_click() {
     local output_file="$E2E_LOG_DIR/mouse_ctrl_click.pty"
 
     log_test_start "mouse_ctrl_click"
+    PTY_TEST_NAME="mouse_ctrl_click"
 
     # Button code with Ctrl modifier: 0 (left) + 16 (ctrl) = 16
     PTY_SEND=$'\x1b[<16;10;10M' \
@@ -275,7 +295,8 @@ mouse_ctrl_click() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Mouse: Down(Left)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left)" "$canonical_file" || return 1
 }
 
 mouse_alt_click() {
@@ -283,6 +304,7 @@ mouse_alt_click() {
     local output_file="$E2E_LOG_DIR/mouse_alt_click.pty"
 
     log_test_start "mouse_alt_click"
+    PTY_TEST_NAME="mouse_alt_click"
 
     # Button code with Alt/Meta modifier: 0 (left) + 8 (alt) = 8
     PTY_SEND=$'\x1b[<8;10;10M' \
@@ -292,7 +314,8 @@ mouse_alt_click() {
     PTY_TIMEOUT=4 \
         pty_run "$output_file" "$E2E_HARNESS_BIN"
 
-    grep -a -q "Mouse: Down(Left)" "$output_file" || return 1
+    local canonical_file="${PTY_CANONICAL_FILE:-$output_file}"
+    grep -a -q "Mouse: Down(Left)" "$canonical_file" || return 1
 }
 
 FAILURES=0

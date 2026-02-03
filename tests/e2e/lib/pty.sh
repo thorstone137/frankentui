@@ -1,6 +1,132 @@
 #!/bin/bash
 set -euo pipefail
 
+PTY_CANONICALIZE="${PTY_CANONICALIZE:-0}"
+PTY_CANONICALIZE_BIN="${PTY_CANONICALIZE_BIN:-}"
+PTY_CANONICALIZE_BUILT="${PTY_CANONICALIZE_BUILT:-}"
+
+resolve_canonicalize_bin() {
+    if [[ -n "${PTY_CANONICALIZE_BIN:-}" && -x "$PTY_CANONICALIZE_BIN" ]]; then
+        echo "$PTY_CANONICALIZE_BIN"
+        return 0
+    fi
+
+    local debug_bin="$PROJECT_ROOT/target/debug/pty_canonicalize"
+    local release_bin="$PROJECT_ROOT/target/release/pty_canonicalize"
+    if [[ -x "$debug_bin" ]]; then
+        echo "$debug_bin"
+        return 0
+    fi
+    if [[ -x "$release_bin" ]]; then
+        echo "$release_bin"
+        return 0
+    fi
+
+    if [[ "$PTY_CANONICALIZE" != "1" ]]; then
+        return 1
+    fi
+
+    if [[ -n "${PTY_CANONICALIZE_BUILT:-}" ]]; then
+        return 1
+    fi
+
+    if ! command -v cargo >/dev/null 2>&1; then
+        return 1
+    fi
+
+    (cd "$PROJECT_ROOT" && cargo build -q -p ftui-pty --bin pty_canonicalize) || return 1
+    PTY_CANONICALIZE_BUILT=1
+
+    if [[ -x "$debug_bin" ]]; then
+        echo "$debug_bin"
+        return 0
+    fi
+    if [[ -x "$release_bin" ]]; then
+        echo "$release_bin"
+        return 0
+    fi
+
+    return 1
+}
+
+pty_canonicalize_file() {
+    local input_file="$1"
+    local output_file="$2"
+    local cols="$3"
+    local rows="$4"
+    local bin
+    if ! bin="$(resolve_canonicalize_bin)"; then
+        return 1
+    fi
+    "$bin" --input "$input_file" --output "$output_file" --cols "$cols" --rows "$rows"
+}
+
+pty_record_metadata() {
+    local output_file="$1"
+    local exit_code="$2"
+    local cols="$3"
+    local rows="$4"
+    local jsonl="${PTY_JSONL:-}"
+    if [[ -z "$jsonl" ]]; then
+        if [[ -z "${E2E_LOG_DIR:-}" ]]; then
+            return 0
+        fi
+        jsonl="$E2E_LOG_DIR/pty_metadata.jsonl"
+    fi
+
+    mkdir -p "$(dirname "$jsonl")"
+
+    local canonical_file="${PTY_CANONICAL_FILE:-}"
+    local output_bytes=0
+    local canonical_bytes=0
+    if [[ -f "$output_file" ]]; then
+        output_bytes=$(wc -c < "$output_file" | tr -d ' ')
+    fi
+    if [[ -n "$canonical_file" && -f "$canonical_file" ]]; then
+        canonical_bytes=$(wc -c < "$canonical_file" | tr -d ' ')
+    fi
+
+    local output_sha=""
+    local canonical_sha=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        if [[ -f "$output_file" ]]; then
+            output_sha=$(sha256sum "$output_file" | awk '{print $1}')
+        fi
+        if [[ -n "$canonical_file" && -f "$canonical_file" ]]; then
+            canonical_sha=$(sha256sum "$canonical_file" | awk '{print $1}')
+        fi
+    fi
+
+    local test_name="${PTY_TEST_NAME:-}"
+    if [[ -z "$test_name" ]]; then
+        test_name="$(basename "$output_file")"
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        jq -nc \
+            --arg timestamp "$(date -Iseconds)" \
+            --arg test_name "$test_name" \
+            --arg output_file "$output_file" \
+            --arg canonical_file "$canonical_file" \
+            --arg term "${TERM:-}" \
+            --arg colorterm "${COLORTERM:-}" \
+            --arg no_color "${NO_COLOR:-}" \
+            --arg output_sha "$output_sha" \
+            --arg canonical_sha "$canonical_sha" \
+            --argjson output_bytes "$output_bytes" \
+            --argjson canonical_bytes "$canonical_bytes" \
+            --argjson cols "$cols" \
+            --argjson rows "$rows" \
+            --argjson exit_code "$exit_code" \
+            '{timestamp:$timestamp,test_name:$test_name,output_file:$output_file,canonical_file:$canonical_file,cols:$cols,rows:$rows,exit_code:$exit_code,output_bytes:$output_bytes,canonical_bytes:$canonical_bytes,output_sha256:$output_sha,canonical_sha256:$canonical_sha,term:$term,colorterm:$colorterm,no_color:$no_color}' \
+            >> "$jsonl"
+    else
+        printf '{"timestamp":"%s","test_name":"%s","output_file":"%s","canonical_file":"%s","cols":%s,"rows":%s,"exit_code":%s,"output_bytes":%s,"canonical_bytes":%s,"output_sha256":"%s","canonical_sha256":"%s","term":"%s","colorterm":"%s","no_color":"%s"}\n' \
+            "$(date -Iseconds)" "$test_name" "$output_file" "$canonical_file" "$cols" "$rows" "$exit_code" "$output_bytes" "$canonical_bytes" "$output_sha" "$canonical_sha" "${TERM:-}" "${COLORTERM:-}" "${NO_COLOR:-}" \
+            >> "$jsonl"
+    fi
+}
+
 pty_run() {
     local output_file="$1"
     shift
@@ -225,6 +351,19 @@ PY
         else
             exit_code=$?
         fi
+        PTY_LAST_OUTPUT="$output_file"
+        PTY_LAST_EXIT="$exit_code"
+        PTY_CANONICAL_FILE=""
+
+        if [[ "$PTY_CANONICALIZE" == "1" && -f "$output_file" ]]; then
+            local canonical_file="${output_file%.pty}.canonical.txt"
+            if pty_canonicalize_file "$output_file" "$canonical_file" "$cols" "$rows"; then
+                PTY_CANONICAL_FILE="$canonical_file"
+            fi
+        fi
+
+        pty_record_metadata "$output_file" "$exit_code" "$cols" "$rows"
+
         if [[ "$retries" -le 1 ]]; then
             return "$exit_code"
         fi

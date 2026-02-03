@@ -21,6 +21,9 @@ use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ftui_core::geometry::Rect;
 use ftui_extras::canvas::{CanvasRef, Mode, Painter};
 use ftui_extras::text_effects::{ColorGradient, TransitionState};
+use ftui_extras::visual_fx::{
+    Backdrop, FxQuality, MetaballsFx, PlasmaFx, PlasmaPalette, ThemeInputs,
+};
 use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
@@ -29,6 +32,7 @@ use ftui_widgets::Widget;
 use ftui_widgets::paragraph::Paragraph;
 
 use super::{HelpEntry, Screen};
+use crate::theme;
 
 /// Visual effects demo screen.
 pub struct VisualEffectsScreen {
@@ -38,12 +42,14 @@ pub struct VisualEffectsScreen {
     frame: u64,
     /// Global time for animations.
     time: f64,
-    /// Metaballs state.
-    metaballs: MetaballsState,
+    /// Metaballs backdrop (ftui-extras).
+    metaballs_backdrop: RefCell<Backdrop>,
     /// 3D shape state.
     shape3d: Shape3DState,
-    /// Plasma state.
-    plasma: PlasmaState,
+    /// Plasma backdrop (ftui-extras).
+    plasma_backdrop: RefCell<Backdrop>,
+    /// Current plasma palette.
+    plasma_palette: PlasmaPalette,
     /// Particle system state.
     particles: ParticleState,
     /// Matrix rain state.
@@ -289,178 +295,24 @@ fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
     )
 }
 
-// =============================================================================
-// Metaballs - Organic blobs with beautiful color mixing
-// =============================================================================
+const PLASMA_PALETTES: [PlasmaPalette; 5] = [
+    PlasmaPalette::Sunset,
+    PlasmaPalette::Ocean,
+    PlasmaPalette::Fire,
+    PlasmaPalette::Neon,
+    PlasmaPalette::Cyberpunk,
+];
 
-#[derive(Debug, Clone)]
-struct Metaball {
-    x: f64,
-    y: f64,
-    vx: f64,
-    vy: f64,
-    radius: f64,
-    hue: f64,
-    phase: f64,
+fn current_fx_theme() -> ThemeInputs {
+    ThemeInputs::from(theme::palette(theme::current_theme()))
 }
 
-#[derive(Debug, Clone)]
-struct MetaballsState {
-    balls: Vec<Metaball>,
-}
-
-impl Default for MetaballsState {
-    fn default() -> Self {
-        Self {
-            balls: vec![
-                Metaball {
-                    x: 0.3,
-                    y: 0.4,
-                    vx: 0.008,
-                    vy: 0.006,
-                    radius: 0.18,
-                    hue: 0.0,
-                    phase: 0.0,
-                },
-                Metaball {
-                    x: 0.7,
-                    y: 0.6,
-                    vx: -0.007,
-                    vy: 0.009,
-                    radius: 0.15,
-                    hue: 0.2,
-                    phase: 1.0,
-                },
-                Metaball {
-                    x: 0.5,
-                    y: 0.3,
-                    vx: 0.006,
-                    vy: -0.008,
-                    radius: 0.20,
-                    hue: 0.4,
-                    phase: 2.0,
-                },
-                Metaball {
-                    x: 0.2,
-                    y: 0.7,
-                    vx: -0.009,
-                    vy: -0.005,
-                    radius: 0.12,
-                    hue: 0.6,
-                    phase: 3.0,
-                },
-                Metaball {
-                    x: 0.8,
-                    y: 0.2,
-                    vx: 0.005,
-                    vy: 0.007,
-                    radius: 0.16,
-                    hue: 0.8,
-                    phase: 4.0,
-                },
-                Metaball {
-                    x: 0.4,
-                    y: 0.8,
-                    vx: -0.006,
-                    vy: -0.007,
-                    radius: 0.14,
-                    hue: 0.1,
-                    phase: 5.0,
-                },
-                Metaball {
-                    x: 0.6,
-                    y: 0.5,
-                    vx: 0.007,
-                    vy: -0.006,
-                    radius: 0.17,
-                    hue: 0.5,
-                    phase: 6.0,
-                },
-            ],
-        }
-    }
-}
-
-impl MetaballsState {
-    fn update(&mut self, time: f64) {
-        for ball in &mut self.balls {
-            // Pulsating radius
-            let pulse = 1.0 + 0.15 * (time * 2.0 + ball.phase).sin();
-            ball.radius = ball.radius.clamp(0.08, 0.25);
-
-            ball.x += ball.vx * pulse;
-            ball.y += ball.vy * pulse;
-
-            // Soft bounce with slight randomization
-            if ball.x < 0.05 || ball.x > 0.95 {
-                ball.vx = -ball.vx * 0.98;
-                ball.x = ball.x.clamp(0.05, 0.95);
-            }
-            if ball.y < 0.05 || ball.y > 0.95 {
-                ball.vy = -ball.vy * 0.98;
-                ball.y = ball.y.clamp(0.05, 0.95);
-            }
-
-            // Slowly shift hue for color cycling
-            ball.hue = (ball.hue + 0.002) % 1.0;
-        }
-    }
-
-    fn render(&self, painter: &mut Painter, width: u16, height: u16, time: f64) {
-        let threshold = 1.0;
-        let glow_threshold = 0.6;
-
-        for py in 0..height as i32 {
-            for px in 0..width as i32 {
-                let x = px as f64 / width as f64;
-                let y = py as f64 / height as f64;
-
-                let mut sum = 0.0;
-                let mut weighted_hue = 0.0;
-                let mut total_weight = 0.0;
-
-                for ball in &self.balls {
-                    let dx = x - ball.x;
-                    let dy = y - ball.y;
-                    let dist_sq = dx * dx + dy * dy;
-                    let pulse = 1.0 + 0.15 * (time * 2.0 + ball.phase).sin();
-                    let r = ball.radius * pulse;
-
-                    if dist_sq > 0.0001 {
-                        let contribution = (r * r) / dist_sq;
-                        sum += contribution;
-                        weighted_hue += ball.hue * contribution;
-                        total_weight += contribution;
-                    } else {
-                        sum += 100.0;
-                        weighted_hue += ball.hue * 100.0;
-                        total_weight += 100.0;
-                    }
-                }
-
-                if sum > glow_threshold {
-                    let avg_hue = if total_weight > 0.0 {
-                        weighted_hue / total_weight
-                    } else {
-                        0.0
-                    };
-
-                    let intensity = if sum > threshold {
-                        1.0
-                    } else {
-                        (sum - glow_threshold) / (threshold - glow_threshold)
-                    };
-
-                    // Beautiful gradient based on field intensity
-                    let saturation = 0.7 + 0.3 * intensity;
-                    let value = 0.3 + 0.7 * intensity;
-                    let (r, g, b) = hsv_to_rgb(avg_hue * 360.0, saturation, value);
-
-                    painter.point_colored(px, py, PackedRgba::rgb(r, g, b));
-                }
-            }
-        }
-    }
+fn next_plasma_palette(current: PlasmaPalette) -> PlasmaPalette {
+    let idx = PLASMA_PALETTES
+        .iter()
+        .position(|&palette| palette == current)
+        .unwrap_or(0);
+    PLASMA_PALETTES[(idx + 1) % PLASMA_PALETTES.len()]
 }
 
 // =============================================================================
@@ -804,68 +656,6 @@ impl Shape3DState {
 
                 painter.line_colored(x0, y0, x1, y1, Some(PackedRgba::rgb(r, g, b)));
                 painter.line_colored(x0, y0, x2, y2, Some(PackedRgba::rgb(r, g, b)));
-            }
-        }
-    }
-}
-
-// =============================================================================
-// Plasma - Psychedelic patterns with palette switching
-// =============================================================================
-
-#[derive(Debug, Clone)]
-struct PlasmaState {
-    time: f64,
-    palette: usize,
-}
-
-impl Default for PlasmaState {
-    fn default() -> Self {
-        Self {
-            time: 0.0,
-            palette: 0,
-        }
-    }
-}
-
-impl PlasmaState {
-    fn update(&mut self) {
-        self.time += 0.06;
-    }
-
-    fn cycle_palette(&mut self) {
-        self.palette = (self.palette + 1) % 5;
-    }
-
-    fn get_color(&self, t: f64) -> PackedRgba {
-        match self.palette {
-            0 => palette_sunset(t),
-            1 => palette_ocean(t),
-            2 => palette_fire(t),
-            3 => palette_neon(t),
-            _ => palette_cyberpunk(t),
-        }
-    }
-
-    fn render(&self, painter: &mut Painter, width: u16, height: u16) {
-        for py in 0..height as i32 {
-            for px in 0..width as i32 {
-                let x = px as f64 / width as f64 * 6.0;
-                let y = py as f64 / height as f64 * 6.0;
-
-                // Complex plasma function with multiple wave patterns
-                let v1 = (x * 1.5 + self.time).sin();
-                let v2 = (y * 1.8 + self.time * 0.8).sin();
-                let v3 = ((x + y) * 1.2 + self.time * 0.6).sin();
-                let v4 = ((x * x + y * y).sqrt() * 2.0 - self.time * 1.2).sin();
-                let v5 = (((x - 3.0).powi(2) + (y - 3.0).powi(2)).sqrt() * 1.8 + self.time).cos();
-                let v6 = ((x * 2.0).sin() * (y * 2.0).cos() + self.time * 0.5).sin();
-
-                let value = (v1 + v2 + v3 + v4 + v5 + v6) / 6.0;
-                let normalized = (value + 1.0) / 2.0;
-
-                let color = self.get_color(normalized);
-                painter.point_colored(px, py, color);
             }
         }
     }
@@ -2316,13 +2106,24 @@ fn rand_simple() -> f64 {
 
 impl Default for VisualEffectsScreen {
     fn default() -> Self {
+        let theme_inputs = current_fx_theme();
+        let mut metaballs_backdrop =
+            Backdrop::new(Box::new(MetaballsFx::default_theme()), theme_inputs);
+        metaballs_backdrop.set_effect_opacity(0.6);
+
+        let plasma_palette = PlasmaPalette::Sunset;
+        let mut plasma_backdrop =
+            Backdrop::new(Box::new(PlasmaFx::new(plasma_palette)), theme_inputs);
+        plasma_backdrop.set_effect_opacity(0.6);
+
         Self {
             effect: EffectType::Metaballs,
             frame: 0,
             time: 0.0,
-            metaballs: MetaballsState::default(),
+            metaballs_backdrop: RefCell::new(metaballs_backdrop),
             shape3d: Shape3DState::default(),
-            plasma: PlasmaState::default(),
+            plasma_backdrop: RefCell::new(plasma_backdrop),
+            plasma_palette,
             particles: ParticleState::default(),
             matrix: MatrixState::default(),
             tunnel: TunnelState::default(),
@@ -2361,6 +2162,15 @@ impl VisualEffectsScreen {
         );
         self.transition.set_speed(0.04); // Smooth transition
     }
+
+    fn cycle_plasma_palette(&mut self) {
+        self.plasma_palette = next_plasma_palette(self.plasma_palette);
+        let theme_inputs = current_fx_theme();
+        let mut plasma_backdrop =
+            Backdrop::new(Box::new(PlasmaFx::new(self.plasma_palette)), theme_inputs);
+        plasma_backdrop.set_effect_opacity(0.6);
+        *self.plasma_backdrop.borrow_mut() = plasma_backdrop;
+    }
 }
 
 impl Screen for VisualEffectsScreen {
@@ -2390,7 +2200,7 @@ impl Screen for VisualEffectsScreen {
                             self.shape3d.shape = self.shape3d.shape.next();
                         }
                         EffectType::Plasma => {
-                            self.plasma.cycle_palette();
+                            self.cycle_plasma_palette();
                         }
                         _ => {}
                     }
@@ -2444,37 +2254,55 @@ impl Screen for VisualEffectsScreen {
             height: area.height.saturating_sub(1),
         };
 
-        // Reuse cached painter (grow-only) and render current effect.
-        {
-            let mut painter = self.painter.borrow_mut();
-            painter.ensure_for_area(canvas_area, Mode::Braille);
-            painter.clear();
-            let (pw, ph) = painter.size();
+        let use_backdrop = matches!(self.effect, EffectType::Metaballs | EffectType::Plasma);
+        if use_backdrop {
+            let area_cells = canvas_area.width as usize * canvas_area.height as usize;
+            let quality = FxQuality::from_degradation_with_area(frame.degradation, area_cells);
+            let theme_inputs = current_fx_theme();
 
-            match self.effect {
-                EffectType::Metaballs => self.metaballs.render(&mut painter, pw, ph, self.time),
-                EffectType::Shape3D => self.shape3d.render(&mut painter, pw, ph, self.time),
-                EffectType::Plasma => self.plasma.render(&mut painter, pw, ph),
-                EffectType::Particles => self.particles.render(&mut painter, pw, ph),
-                EffectType::Matrix => self.matrix.render(&mut painter, pw, ph),
-                EffectType::Tunnel => self.tunnel.render(&mut painter, pw, ph),
-                EffectType::Fire => self.fire.render(&mut painter, pw, ph),
-                EffectType::ReactionDiffusion => {
-                    self.reaction_diffusion.render(&mut painter, pw, ph)
+            let mut backdrop = match self.effect {
+                EffectType::Metaballs => self.metaballs_backdrop.borrow_mut(),
+                EffectType::Plasma => self.plasma_backdrop.borrow_mut(),
+                _ => unreachable!("backdrop only used for metaballs/plasma"),
+            };
+            backdrop.set_theme(theme_inputs);
+            backdrop.set_quality(quality);
+            backdrop.set_time(self.frame, self.time);
+            backdrop.render(canvas_area, frame);
+        } else {
+            // Reuse cached painter (grow-only) and render current effect.
+            {
+                let mut painter = self.painter.borrow_mut();
+                painter.ensure_for_area(canvas_area, Mode::Braille);
+                painter.clear();
+                let (pw, ph) = painter.size();
+
+                match self.effect {
+                    EffectType::Shape3D => self.shape3d.render(&mut painter, pw, ph, self.time),
+                    EffectType::Particles => self.particles.render(&mut painter, pw, ph),
+                    EffectType::Matrix => self.matrix.render(&mut painter, pw, ph),
+                    EffectType::Tunnel => self.tunnel.render(&mut painter, pw, ph),
+                    EffectType::Fire => self.fire.render(&mut painter, pw, ph),
+                    EffectType::ReactionDiffusion => {
+                        self.reaction_diffusion.render(&mut painter, pw, ph)
+                    }
+                    EffectType::StrangeAttractor => self.attractor.render(&mut painter, pw, ph),
+                    EffectType::Mandelbrot => self.mandelbrot.render(&mut painter, pw, ph),
+                    EffectType::Lissajous => self.lissajous.render(&mut painter, pw, ph),
+                    EffectType::FlowField => self.flow_field.render(&mut painter, pw, ph),
+                    EffectType::Julia => self.julia.render(&mut painter, pw, ph),
+                    EffectType::WaveInterference => {
+                        self.wave_interference.render(&mut painter, pw, ph)
+                    }
+                    EffectType::Spiral => self.spiral.render(&mut painter, pw, ph),
+                    EffectType::SpinLattice => self.spin_lattice.render(&mut painter, pw, ph),
+                    EffectType::Metaballs | EffectType::Plasma => {}
                 }
-                EffectType::StrangeAttractor => self.attractor.render(&mut painter, pw, ph),
-                EffectType::Mandelbrot => self.mandelbrot.render(&mut painter, pw, ph),
-                EffectType::Lissajous => self.lissajous.render(&mut painter, pw, ph),
-                EffectType::FlowField => self.flow_field.render(&mut painter, pw, ph),
-                EffectType::Julia => self.julia.render(&mut painter, pw, ph),
-                EffectType::WaveInterference => self.wave_interference.render(&mut painter, pw, ph),
-                EffectType::Spiral => self.spiral.render(&mut painter, pw, ph),
-                EffectType::SpinLattice => self.spin_lattice.render(&mut painter, pw, ph),
-            }
 
-            // Render canvas to frame without cloning painter buffers.
-            let canvas = CanvasRef::from_painter(&painter);
-            canvas.render(canvas_area, frame);
+                // Render canvas to frame without cloning painter buffers.
+                let canvas = CanvasRef::from_painter(&painter);
+                canvas.render(canvas_area, frame);
+            }
         }
 
         // Render transition overlay if active
@@ -2516,9 +2344,7 @@ impl Screen for VisualEffectsScreen {
         self.time += 0.1;
 
         // Update all effects (so they're ready when switched to)
-        self.metaballs.update(self.time);
         self.shape3d.update();
-        self.plasma.update();
         self.particles.update();
 
         // Initialize dimension-dependent effects
@@ -2595,8 +2421,10 @@ mod tests {
     use ftui_render::grapheme_pool::GraphemePool;
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn painter_buffer_reused_at_stable_size() {
-        let screen = VisualEffectsScreen::default();
+        let mut screen = VisualEffectsScreen::default();
+        screen.effect = EffectType::Shape3D;
         let mut pool = GraphemePool::new();
         let mut frame = Frame::new(60, 20, &mut pool);
         let area = Rect::new(0, 0, 60, 20);
@@ -2610,8 +2438,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn painter_buffer_grows_only_on_resize() {
-        let screen = VisualEffectsScreen::default();
+        let mut screen = VisualEffectsScreen::default();
+        screen.effect = EffectType::Shape3D;
         let mut pool = GraphemePool::new();
         let mut frame = Frame::new(80, 40, &mut pool);
 

@@ -1841,6 +1841,111 @@ mod tests {
                     "wide char at boundary position {} (width {}) should be rejected",
                     last_pos, width);
             }
+
+            // =====================================================================
+            // DoubleBuffer property tests (bd-1rz0.4.4)
+            // =====================================================================
+
+            #[test]
+            fn double_buffer_swap_is_involution(ops in proptest::collection::vec(proptest::bool::ANY, 0..100)) {
+                let mut db = DoubleBuffer::new(10, 10);
+                let initial_idx = db.current_idx;
+
+                for do_swap in &ops {
+                    if *do_swap {
+                        db.swap();
+                    }
+                }
+
+                let swap_count = ops.iter().filter(|&&x| x).count();
+                let expected_idx = if swap_count % 2 == 0 { initial_idx } else { 1 - initial_idx };
+
+                prop_assert_eq!(db.current_idx, expected_idx,
+                    "After {} swaps, index should be {} but was {}",
+                    swap_count, expected_idx, db.current_idx);
+            }
+
+            #[test]
+            fn double_buffer_resize_preserves_invariant(
+                init_w in 1u16..200,
+                init_h in 1u16..100,
+                new_w in 1u16..200,
+                new_h in 1u16..100,
+            ) {
+                let mut db = DoubleBuffer::new(init_w, init_h);
+                db.resize(new_w, new_h);
+
+                prop_assert_eq!(db.width(), new_w);
+                prop_assert_eq!(db.height(), new_h);
+                prop_assert!(db.dimensions_match(new_w, new_h));
+            }
+
+            #[test]
+            fn double_buffer_current_previous_disjoint(
+                width in 1u16..50,
+                height in 1u16..50,
+            ) {
+                let mut db = DoubleBuffer::new(width, height);
+
+                // Write to current
+                db.current_mut().set(0, 0, Cell::from_char('C'));
+
+                // Previous should be unaffected
+                prop_assert!(db.previous().get(0, 0).unwrap().is_empty(),
+                    "Previous buffer should not reflect changes to current");
+
+                // After swap, roles reverse
+                db.swap();
+                prop_assert_eq!(db.previous().get(0, 0).unwrap().content.as_char(), Some('C'),
+                    "After swap, previous should have the 'C' we wrote");
+            }
+
+            #[test]
+            fn double_buffer_swap_content_semantics(
+                width in 5u16..30,
+                height in 5u16..30,
+            ) {
+                let mut db = DoubleBuffer::new(width, height);
+
+                // Write 'X' to current
+                db.current_mut().set(0, 0, Cell::from_char('X'));
+                db.swap();
+
+                // Write 'Y' to current (now the other buffer)
+                db.current_mut().set(0, 0, Cell::from_char('Y'));
+                db.swap();
+
+                // After two swaps, we're back to the buffer with 'X'
+                prop_assert_eq!(db.current().get(0, 0).unwrap().content.as_char(), Some('X'));
+                prop_assert_eq!(db.previous().get(0, 0).unwrap().content.as_char(), Some('Y'));
+            }
+
+            #[test]
+            fn double_buffer_resize_clears_both(
+                w1 in 5u16..30,
+                h1 in 5u16..30,
+                w2 in 5u16..30,
+                h2 in 5u16..30,
+            ) {
+                // Skip if dimensions are the same (resize returns early)
+                prop_assume!(w1 != w2 || h1 != h2);
+
+                let mut db = DoubleBuffer::new(w1, h1);
+
+                // Populate both buffers
+                db.current_mut().set(0, 0, Cell::from_char('A'));
+                db.swap();
+                db.current_mut().set(0, 0, Cell::from_char('B'));
+
+                // Resize
+                db.resize(w2, h2);
+
+                // Both should be empty
+                prop_assert!(db.current().get(0, 0).unwrap().is_empty(),
+                    "Current buffer should be empty after resize");
+                prop_assert!(db.previous().get(0, 0).unwrap().is_empty(),
+                    "Previous buffer should be empty after resize");
+            }
         }
     }
 

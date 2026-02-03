@@ -46,3 +46,7 @@ harness = false
 [[bench]]
 name = "presenter_bench"
 harness = false
+
+[[bench]]
+name = "double_buffer_bench"
+harness = false

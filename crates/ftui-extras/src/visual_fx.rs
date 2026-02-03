@@ -1739,8 +1739,8 @@ mod tests {
 
         #[test]
         fn threshold_constants_are_reasonable() {
-            // Verify thresholds are in expected order
-            assert!(FX_AREA_THRESHOLD_FULL_TO_REDUCED < FX_AREA_THRESHOLD_REDUCED_TO_MINIMAL);
+            // Verify thresholds are in expected order (const assertion)
+            const { assert!(FX_AREA_THRESHOLD_FULL_TO_REDUCED < FX_AREA_THRESHOLD_REDUCED_TO_MINIMAL) };
             // 16k cells = ~200x80 terminal
             assert_eq!(FX_AREA_THRESHOLD_FULL_TO_REDUCED, 16_000);
             // 64k cells = ~320x200 or 4K equivalent
@@ -1780,9 +1780,9 @@ mod tests {
             }
 
             fn render(&mut self, ctx: FxContext<'_>, out: &mut [PackedRgba]) {
-                for i in 0..ctx.len() {
+                for (i, pixel) in out.iter_mut().enumerate().take(ctx.len()) {
                     let gray = (i % 256) as u8;
-                    out[i] = PackedRgba::rgb(gray, gray, gray);
+                    *pixel = PackedRgba::rgb(gray, gray, gray);
                 }
             }
         }
@@ -1861,7 +1861,7 @@ mod tests {
             for color in &out {
                 // Red should be reduced, blue should be visible
                 assert!(color.r() > 0 && color.r() < 255);
-                assert!(color.b() > 0 && color.b() <= 255);
+                assert!(color.b() > 0);
                 assert_eq!(color.g(), 0);
             }
         }

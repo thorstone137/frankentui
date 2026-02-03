@@ -4,10 +4,24 @@
 //!
 //! Shows a live event timeline with filters and a detail panel. The timeline
 //! is deterministic and uses a bounded ring buffer to keep allocations stable.
+//!
+//! # Diagnostic Logging (bd-11ck.5)
+//!
+//! This module uses `tracing` for diagnostic logging. Key spans and events:
+//!
+//! - `action_timeline::new` - Initialization with event_count
+//! - `action_timeline::update` - Input event processing
+//! - `action_timeline::tick` - Tick processing with event generation
+//! - `action_timeline::filter_change` - Filter state changes
+//! - `action_timeline::follow_change` - Follow mode toggling
+//! - `action_timeline::buffer_eviction` - Buffer overflow handling
+//!
+//! Enable with: `RUST_LOG=ftui_demo_showcase::screens::action_timeline=debug`
 
 use std::collections::VecDeque;
 
 use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers};
+use tracing::{debug, instrument, trace, warn};
 use ftui_core::geometry::Rect;
 use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
@@ -157,6 +171,7 @@ impl Default for ActionTimeline {
 }
 
 impl ActionTimeline {
+    #[instrument(name = "action_timeline::new", skip_all)]
     pub fn new() -> Self {
         let mut timeline = Self {
             events: VecDeque::with_capacity(MAX_EVENTS),
@@ -177,6 +192,11 @@ impl ActionTimeline {
             timeline.push_event(event);
         }
         timeline.sync_selection();
+        debug!(
+            event_count = timeline.events.len(),
+            max_events = MAX_EVENTS,
+            "ActionTimeline initialized"
+        );
         timeline
     }
 
@@ -308,11 +328,23 @@ impl ActionTimeline {
 
     fn push_event(&mut self, event: TimelineEvent) {
         if self.events.len() == MAX_EVENTS {
+            trace!(
+                max_events = MAX_EVENTS,
+                selected_before = self.selected,
+                "Buffer full, evicting oldest event"
+            );
             self.events.pop_front();
             if self.selected > 0 {
                 self.selected = self.selected.saturating_sub(1);
             }
         }
+        trace!(
+            event_id = event.id,
+            event_kind = ?event.kind,
+            event_severity = ?event.severity,
+            buffer_len = self.events.len() + 1,
+            "Pushing event to timeline"
+        );
         self.events.push_back(event);
     }
 

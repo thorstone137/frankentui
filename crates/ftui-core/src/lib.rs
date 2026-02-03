@@ -8,6 +8,7 @@ pub mod event;
 pub mod event_coalescer;
 pub mod geometry;
 pub mod gesture;
+pub mod hover_stabilizer;
 pub mod inline_mode;
 pub mod input_parser;
 pub mod key_sequence;

@@ -25,6 +25,7 @@ pub mod program;
 pub mod render_thread;
 pub mod resize_coalescer;
 pub mod simulator;
+pub mod state_persistence;
 #[cfg(feature = "stdio-capture")]
 pub mod stdio_capture;
 pub mod string_model;
@@ -34,6 +35,8 @@ pub mod undo;
 pub mod validation_pipeline;
 
 pub mod reactive;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
 
 pub use asciicast::{AsciicastRecorder, AsciicastWriter};
 pub use input_macro::{
@@ -73,4 +76,18 @@ pub use undo::{
 pub use validation_pipeline::{
     LedgerEntry, PipelineConfig, PipelineResult, PipelineSummary, ValidationOutcome,
     ValidationPipeline, ValidatorStats,
+};
+
+// State persistence
+#[cfg(feature = "state-persistence")]
+pub use state_persistence::FileStorage;
+pub use state_persistence::{
+    MemoryStorage, RegistryStats, StateRegistry, StorageBackend, StorageError, StorageResult,
+    StoredEntry,
+};
+
+#[cfg(feature = "telemetry")]
+pub use telemetry::{
+    redact, DecisionEvidence, EnabledReason, EndpointSource, EvidenceLedger, Protocol, SpanId,
+    TelemetryConfig, TelemetryError, TelemetryGuard, TraceContextSource, TraceId, SCHEMA_VERSION,
 };

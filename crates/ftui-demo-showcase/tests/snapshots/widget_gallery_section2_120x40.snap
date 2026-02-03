@@ -1,40 +1,40 @@
-  A: Borders │ ▸ B: Text Styles │   C: Colors │   D: Interactive │   E: Data │   F: Layout │   G: Utility               
-╭Text Style Flags──────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│Bold            Dim             Italic          Underline       DblUnder        CurlyUL         Blink                 │
-│Reverse         Hidden          Strike          Bold+Italic     Bold+Under      Dim+Italic      All Flags             │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  A: Inputs │ ▸ B: Display │   C: Status │   D: Data Viz │   E: Navigation │   F: Layout │   G: Utility                 
++ASCII-------------+┌──────Square──────┐╭───────────Rounded╮╭Text Style Flags──────────────────────────────────────────╮
+|Border: ASCII     |│Border: Square    ││Border: Rounded   ││Bold            Dim             Italic                    │
+|Align: Left       |│Align: Center     ││Align: Right      ││Underline       DblUnder        CurlyUL                   │
+|                  |│                  ││                  ││Blink           Reverse         Hidden                    │
+|                  |│                  ││                  ││Strike          Bold+Italic     Bold+Under                │
+|                  |│                  ││                  ││Dim+Italic      All Flags                                 │
+|                  |│                  ││                  ││                                                          │
+|                  |│                  ││                  ││                                                          │
++------------------+└──────────────────┘╰──────────────────╯│                                                          │
+╔Double════════════╗┏━━━━━━Heavy━━━━━━━┓╭────────────Custom╮│                                                          │
+║Border: Double    ║┃Border: Heavy     ┃│Border: Custom    ││                                                          │
+║Align: Left       ║┃Align: Center     ┃│Align: Right      ││                                                          │
+║                  ║┃                  ┃│                  ││                                                          │
+║                  ║┃                  ┃│                  ││                                                          │
+║                  ║┃                  ┃│                  ││                                                          │
+║                  ║┃                  ┃│                  ││                                                          │
+╚══════════════════╝┗━━━━━━━━━━━━━━━━━━┛╰──────────────────╯╰──────────────────────────────────────────────────────────╯
+╭Paragraph Wrap─────────────────────────╮╭Lists─────────────────────────────────╮╭Code Block───────────────────────────╮
+│Word: The quick brown fox jumps over   ││• Bullet item                         ││fn main() {                          │
+│the lazy dog.                          ││• Second item                         ││    println!("hello");               │
+│                                       ││  ◦ Nested item                       ││}                                    │
+│                                       ││1. Numbered item                      ││                                     │
+│                                       ││2. Another item                       ││                                     │
+│                                       ││                                      ││                                     │
+│Char: The quick brown fox jumps over th││                                      ││                                     │
+│e lazy dog.                            │╰──────────────────────────────────────╯│                                     │
+│                                       │╭Table─────────────────────────────────╮│                                     │
+│                                       ││Name                     Type  Size   ││                                     │
+│                                       ││main.rs                  Rust  4.2 KB │╰─────────────────────────────────────╯
+│                                       ││README.md                MD    3.4 KB │╭Blockquote + Rule────────────────────╮
+│None: The quick brown fox jumps over th││config.toml              TOML  1.1 KB ││> Deterministic output beats clever o│
+│                                       ││                                      ││                                     │
+│                                       ││                                      ││                                     │
+│                                       ││                                      ││                                     │
+│                                       ││                                      ││                                     │
+│                                       ││                                      ││                                     │
+│                                       ││                                      ││─────────────────────────────────────│
+╰───────────────────────────────────────╯╰──────────────────────────────────────╯╰─────────────────────────────────────╯
 .*.....                                                                                                                 
