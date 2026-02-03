@@ -204,26 +204,24 @@ impl KeySequenceInterpreter {
     ///
     /// Only key press events are processed. Release and repeat events are
     /// passed through immediately.
+    ///
+    /// # Timeout Handling
+    ///
+    /// This method does NOT automatically handle timeouts. Callers should
+    /// periodically call [`check_timeout`](Self::check_timeout) (e.g., on tick)
+    /// to flush expired sequences. If a timeout has expired and you call `feed()`
+    /// without calling `check_timeout()` first, buffered keys may be lost.
     pub fn feed(&mut self, event: &KeyEvent, now: Instant) -> KeySequenceAction {
         // Only process key press events
         if event.kind != KeyEventKind::Press {
             return KeySequenceAction::Emit(*event);
         }
 
-        // Check for timeout before processing new key
-        if let Some(action) = self.check_timeout_internal(now) {
-            // Timeout expired - need to flush buffer first, then handle new key
-            // We'll buffer the new key and let caller handle the flush action
-            // Actually, we should flush and then process the new key
-            self.buffer.clear();
-            self.buffer_start = None;
-            // Fall through to process the new key
-            let _ = action; // The flush action would have been handled by check_timeout
-        }
-
         // Check if this key could start or continue a sequence
         match self.try_sequence(event, now) {
             SequenceResult::Complete(kind) => {
+                // Add the completing key to the sequence
+                self.buffer.push(*event);
                 let keys = std::mem::take(&mut self.buffer);
                 self.buffer_start = None;
                 KeySequenceAction::EmitSequence { kind, keys }
@@ -339,21 +337,6 @@ enum SequenceResult {
 }
 
 impl KeySequenceInterpreter {
-    /// Internal timeout check that returns a single action.
-    fn check_timeout_internal(&mut self, now: Instant) -> Option<KeySequenceAction> {
-        if let Some(start) = self.buffer_start
-            && now.duration_since(start) >= self.config.sequence_timeout
-            && let Some(key) = self.buffer.first().copied()
-        {
-            self.buffer.remove(0);
-            if self.buffer.is_empty() {
-                self.buffer_start = None;
-            }
-            return Some(KeySequenceAction::Emit(key));
-        }
-        None
-    }
-
     /// Try to match the current key against known sequence patterns.
     fn try_sequence(&self, event: &KeyEvent, _now: Instant) -> SequenceResult {
         // Double Escape detection
