@@ -147,7 +147,7 @@ const THEMES: [ThemePalette; 4] = [
         accent_secondary: PackedRgba::rgb(152, 118, 170),
         accent_success: PackedRgba::rgb(106, 135, 89),
         accent_warning: PackedRgba::rgb(255, 198, 109),
-        accent_error: PackedRgba::rgb(255, 85, 85),
+        accent_error: PackedRgba::rgb(255, 102, 102),
         accent_info: PackedRgba::rgb(179, 212, 252),
         accent_link: PackedRgba::rgb(74, 136, 199),
         accent_slots: [
