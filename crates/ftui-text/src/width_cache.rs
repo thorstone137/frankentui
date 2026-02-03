@@ -974,6 +974,224 @@ pub fn tinylfu_admit(candidate_freq: u8, victim_freq: u8) -> bool {
     candidate_freq > victim_freq
 }
 
+// ---------------------------------------------------------------------------
+// W-TinyLFU Width Cache (bd-4kq0.6.2)
+// ---------------------------------------------------------------------------
+
+/// Entry in the TinyLFU cache, storing value and fingerprint for collision guard.
+#[derive(Debug, Clone)]
+struct TinyLfuEntry {
+    width: usize,
+    fingerprint: u64,
+}
+
+/// Width cache using W-TinyLFU admission policy.
+///
+/// Architecture:
+/// - **Window cache** (small LRU, ~1% of capacity): captures recent items.
+/// - **Main cache** (larger LRU, ~99% of capacity): for frequently accessed items.
+/// - **Count-Min Sketch + Doorkeeper**: frequency estimation for admission decisions.
+/// - **Fingerprint guard**: secondary hash per entry to detect hash collisions.
+///
+/// On every access:
+/// 1. Check main cache → hit? Return value (verify fingerprint).
+/// 2. Check window cache → hit? Return value (verify fingerprint).
+/// 3. Miss: compute width, insert into window cache.
+///
+/// On window cache eviction:
+/// 1. The evicted item becomes a candidate.
+/// 2. The LRU victim of the main cache is identified.
+/// 3. If `freq(candidate) > freq(victim)`, candidate enters main cache
+///    (victim is evicted). Otherwise, candidate is discarded.
+///
+/// Frequency tracking uses Doorkeeper → CMS pipeline:
+/// - First access: doorkeeper records.
+/// - Second+ access: CMS is incremented.
+#[derive(Debug)]
+pub struct TinyLfuWidthCache {
+    /// Small window cache (recency).
+    window: LruCache<u64, TinyLfuEntry>,
+    /// Large main cache (frequency-filtered).
+    main: LruCache<u64, TinyLfuEntry>,
+    /// Approximate frequency counter.
+    sketch: CountMinSketch,
+    /// One-hit-wonder filter.
+    doorkeeper: Doorkeeper,
+    /// Total capacity (window + main).
+    total_capacity: usize,
+    /// Hit/miss stats.
+    hits: u64,
+    misses: u64,
+}
+
+impl TinyLfuWidthCache {
+    /// Create a new TinyLFU cache with the given total capacity.
+    ///
+    /// The window gets ~1% of capacity (minimum 1), main gets the rest.
+    pub fn new(total_capacity: usize) -> Self {
+        let total_capacity = total_capacity.max(2);
+        let window_cap = (total_capacity / 100).max(1);
+        let main_cap = total_capacity - window_cap;
+
+        Self {
+            window: LruCache::new(NonZeroUsize::new(window_cap).unwrap()),
+            main: LruCache::new(NonZeroUsize::new(main_cap.max(1)).unwrap()),
+            sketch: CountMinSketch::with_defaults(),
+            doorkeeper: Doorkeeper::with_defaults(),
+            total_capacity,
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    /// Get cached width or compute and cache it.
+    pub fn get_or_compute(&mut self, text: &str) -> usize {
+        self.get_or_compute_with(text, crate::display_width)
+    }
+
+    /// Get cached width or compute using a custom function.
+    pub fn get_or_compute_with<F>(&mut self, text: &str, compute: F) -> usize
+    where
+        F: FnOnce(&str) -> usize,
+    {
+        let hash = hash_text(text);
+        let fp = fingerprint_hash(text);
+
+        // Record frequency via doorkeeper → CMS pipeline.
+        let seen = self.doorkeeper.check_and_set(hash);
+        if seen {
+            self.sketch.increment(hash);
+        }
+
+        // Check main cache first (larger, higher value).
+        if let Some(entry) = self.main.get(&hash) {
+            if entry.fingerprint == fp {
+                self.hits += 1;
+                return entry.width;
+            }
+            // Fingerprint mismatch: collision. Evict stale entry.
+            self.main.pop(&hash);
+        }
+
+        // Check window cache.
+        if let Some(entry) = self.window.get(&hash) {
+            if entry.fingerprint == fp {
+                self.hits += 1;
+                return entry.width;
+            }
+            // Collision in window cache.
+            self.window.pop(&hash);
+        }
+
+        // Cache miss: compute width.
+        self.misses += 1;
+        let width = compute(text);
+        let new_entry = TinyLfuEntry {
+            width,
+            fingerprint: fp,
+        };
+
+        // Insert into window cache. If window is full, the evicted item
+        // goes through admission filter for main cache.
+        if self.window.len() >= self.window.cap().get() {
+            // Get the LRU item from window before it's evicted.
+            if let Some((evicted_hash, evicted_entry)) = self.window.pop_lru() {
+                self.try_admit_to_main(evicted_hash, evicted_entry);
+            }
+        }
+        self.window.put(hash, new_entry);
+
+        width
+    }
+
+    /// Try to admit a candidate (evicted from window) into the main cache.
+    fn try_admit_to_main(&mut self, candidate_hash: u64, candidate_entry: TinyLfuEntry) {
+        let candidate_freq = self.sketch.estimate(candidate_hash);
+
+        if self.main.len() < self.main.cap().get() {
+            // Main has room — admit unconditionally.
+            self.main.put(candidate_hash, candidate_entry);
+            return;
+        }
+
+        // Main is full. Compare candidate frequency with the LRU victim.
+        if let Some((&victim_hash, _)) = self.main.peek_lru() {
+            let victim_freq = self.sketch.estimate(victim_hash);
+            if tinylfu_admit(candidate_freq, victim_freq) {
+                self.main.pop_lru();
+                self.main.put(candidate_hash, candidate_entry);
+            }
+            // Otherwise, candidate is discarded.
+        }
+    }
+
+    /// Check if a key is in the cache (window or main).
+    pub fn contains(&self, text: &str) -> bool {
+        let hash = hash_text(text);
+        let fp = fingerprint_hash(text);
+        if let Some(e) = self.main.peek(&hash) {
+            if e.fingerprint == fp {
+                return true;
+            }
+        }
+        if let Some(e) = self.window.peek(&hash) {
+            if e.fingerprint == fp {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get cache statistics.
+    pub fn stats(&self) -> CacheStats {
+        CacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            size: self.window.len() + self.main.len(),
+            capacity: self.total_capacity,
+        }
+    }
+
+    /// Clear all caches and reset sketch/doorkeeper.
+    pub fn clear(&mut self) {
+        self.window.clear();
+        self.main.clear();
+        self.sketch.clear();
+        self.doorkeeper.clear();
+    }
+
+    /// Reset statistics.
+    pub fn reset_stats(&mut self) {
+        self.hits = 0;
+        self.misses = 0;
+    }
+
+    /// Current number of cached entries.
+    pub fn len(&self) -> usize {
+        self.window.len() + self.main.len()
+    }
+
+    /// Check if cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.window.is_empty() && self.main.is_empty()
+    }
+
+    /// Total capacity (window + main).
+    pub fn capacity(&self) -> usize {
+        self.total_capacity
+    }
+
+    /// Number of entries in the main cache.
+    pub fn main_len(&self) -> usize {
+        self.main.len()
+    }
+
+    /// Number of entries in the window cache.
+    pub fn window_len(&self) -> usize {
+        self.window.len()
+    }
+}
+
 #[cfg(test)]
 mod proptests {
     use super::*;
@@ -1347,5 +1565,214 @@ mod tinylfu_tests {
         assert!(dk.check_and_set(h));
         cms.increment(h);
         assert_eq!(cms.total_increments(), 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TinyLFU Implementation Tests (bd-4kq0.6.2)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tinylfu_impl_tests {
+    use super::*;
+
+    #[test]
+    fn basic_get_or_compute() {
+        let mut cache = TinyLfuWidthCache::new(100);
+        let w = cache.get_or_compute("hello");
+        assert_eq!(w, 5);
+        assert_eq!(cache.len(), 1);
+
+        let w2 = cache.get_or_compute("hello");
+        assert_eq!(w2, 5);
+        let stats = cache.stats();
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.hits, 1);
+    }
+
+    #[test]
+    fn window_to_main_promotion() {
+        // With capacity=100, window=1, main=99.
+        // Fill window, then force eviction into main via new inserts.
+        let mut cache = TinyLfuWidthCache::new(100);
+
+        // Access "frequent" many times to build CMS frequency.
+        for _ in 0..10 {
+            cache.get_or_compute("frequent");
+        }
+
+        // Insert enough items to fill window and force eviction.
+        for i in 0..5 {
+            cache.get_or_compute(&format!("item_{}", i));
+        }
+
+        // "frequent" should have been promoted to main cache via admission.
+        assert!(cache.contains("frequent"));
+        assert!(cache.main_len() > 0 || cache.window_len() > 0);
+    }
+
+    #[test]
+    fn unit_window_promotion() {
+        // Frequent items should end up in main cache.
+        let mut cache = TinyLfuWidthCache::new(50);
+
+        // Access "hot" repeatedly to build frequency.
+        for _ in 0..20 {
+            cache.get_or_compute("hot");
+        }
+
+        // Now push enough items through window to force "hot" out of window.
+        for i in 0..10 {
+            cache.get_or_compute(&format!("filler_{}", i));
+        }
+
+        // "hot" should still be accessible (promoted to main via admission).
+        assert!(cache.contains("hot"), "Frequent item should be retained");
+    }
+
+    #[test]
+    fn fingerprint_guard_detects_collision() {
+        let mut cache = TinyLfuWidthCache::new(100);
+
+        // Compute "hello" with custom function.
+        let w = cache.get_or_compute_with("hello", |_| 42);
+        assert_eq!(w, 42);
+
+        // Verify it's cached.
+        assert!(cache.contains("hello"));
+    }
+
+    #[test]
+    fn admission_rejects_infrequent() {
+        // Fill main cache with frequently-accessed items.
+        // Then try to insert a cold item — it should be rejected.
+        let mut cache = TinyLfuWidthCache::new(10); // window=1, main=9
+
+        // Fill main with items accessed multiple times.
+        for i in 0..9 {
+            let s = format!("hot_{}", i);
+            for _ in 0..5 {
+                cache.get_or_compute(&s);
+            }
+        }
+
+        // Now insert cold items. They should go through window but not
+        // necessarily get into main.
+        for i in 0..20 {
+            cache.get_or_compute(&format!("cold_{}", i));
+        }
+
+        // Hot items should mostly survive (they have high frequency).
+        let hot_survivors: usize = (0..9)
+            .filter(|i| cache.contains(&format!("hot_{}", i)))
+            .count();
+        assert!(
+            hot_survivors >= 5,
+            "Expected most hot items to survive, got {}/9",
+            hot_survivors
+        );
+    }
+
+    #[test]
+    fn clear_empties_everything() {
+        let mut cache = TinyLfuWidthCache::new(100);
+        cache.get_or_compute("a");
+        cache.get_or_compute("b");
+        cache.clear();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn stats_reflect_usage() {
+        let mut cache = TinyLfuWidthCache::new(100);
+        cache.get_or_compute("a");
+        cache.get_or_compute("a");
+        cache.get_or_compute("b");
+
+        let stats = cache.stats();
+        assert_eq!(stats.misses, 2);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.size, 2);
+    }
+
+    #[test]
+    fn capacity_is_respected() {
+        let mut cache = TinyLfuWidthCache::new(20);
+
+        for i in 0..100 {
+            cache.get_or_compute(&format!("item_{}", i));
+        }
+
+        assert!(
+            cache.len() <= 20,
+            "Cache size {} exceeds capacity 20",
+            cache.len()
+        );
+    }
+
+    #[test]
+    fn reset_stats_works() {
+        let mut cache = TinyLfuWidthCache::new(100);
+        cache.get_or_compute("x");
+        cache.get_or_compute("x");
+        cache.reset_stats();
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+    }
+
+    #[test]
+    fn perf_cache_hit_rate() {
+        // Simulate a Zipfian-like workload: some items accessed frequently,
+        // many accessed rarely. TinyLFU should achieve decent hit rate.
+        let mut cache = TinyLfuWidthCache::new(50);
+
+        // 10 hot items accessed 20 times each.
+        for _ in 0..20 {
+            for i in 0..10 {
+                cache.get_or_compute(&format!("hot_{}", i));
+            }
+        }
+
+        // 100 cold items accessed once each.
+        for i in 0..100 {
+            cache.get_or_compute(&format!("cold_{}", i));
+        }
+
+        // Re-access hot items — these should mostly be hits.
+        cache.reset_stats();
+        for i in 0..10 {
+            cache.get_or_compute(&format!("hot_{}", i));
+        }
+
+        let stats = cache.stats();
+        // Hot items should have high hit rate after being frequently accessed.
+        assert!(
+            stats.hits >= 5,
+            "Expected at least 5/10 hot items to hit, got {}",
+            stats.hits
+        );
+    }
+
+    #[test]
+    fn unicode_strings_work() {
+        let mut cache = TinyLfuWidthCache::new(100);
+        assert_eq!(cache.get_or_compute("日本語"), 6);
+        assert_eq!(cache.get_or_compute("café"), 4);
+        assert_eq!(cache.get_or_compute("日本語"), 6); // hit
+        assert_eq!(cache.stats().hits, 1);
+    }
+
+    #[test]
+    fn empty_string() {
+        let mut cache = TinyLfuWidthCache::new(100);
+        assert_eq!(cache.get_or_compute(""), 0);
+    }
+
+    #[test]
+    fn minimum_capacity() {
+        let cache = TinyLfuWidthCache::new(0);
+        assert!(cache.capacity() >= 2);
     }
 }

@@ -116,7 +116,9 @@ pub use rope::Rope;
 pub use segment::{ControlCode, Segment, SegmentLine, SegmentLines, join_lines, split_into_lines};
 pub use text::{Line, Span, Text};
 pub use view::{TextView, ViewLine, Viewport};
-pub use width_cache::{CacheStats, DEFAULT_CACHE_CAPACITY, WidthCache};
+pub use width_cache::{
+    CacheStats, CountMinSketch, DEFAULT_CACHE_CAPACITY, Doorkeeper, TinyLfuWidthCache, WidthCache,
+};
 pub use wrap::{
     KpBreakResult, WrapMode, WrapOptions, ascii_width, display_width, grapheme_count, graphemes,
     has_wide_chars, is_ascii_only, truncate_to_width, truncate_to_width_with_info,

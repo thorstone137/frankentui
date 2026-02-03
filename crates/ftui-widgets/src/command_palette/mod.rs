@@ -361,11 +361,9 @@ impl CommandPalette {
                 modifiers,
                 kind: KeyEventKind::Press,
             }) = event
+                && modifiers.contains(Modifiers::CTRL)
             {
-                if modifiers.contains(Modifiers::CTRL) {
-                    self.open();
-                    return None;
-                }
+                self.open();
             }
             return None;
         }
@@ -603,12 +601,12 @@ impl CommandPalette {
                 cell.bg = bg;
             }
         }
-        if area.width > 1 {
-            if let Some(cell) = frame.buffer.get_mut(area.right() - 1, area.y) {
-                cell.content = CellContent::from_char('┐');
-                cell.fg = border_fg;
-                cell.bg = bg;
-            }
+        if area.width > 1
+            && let Some(cell) = frame.buffer.get_mut(area.right() - 1, area.y)
+        {
+            cell.content = CellContent::from_char('┐');
+            cell.fg = border_fg;
+            cell.bg = bg;
         }
 
         // Title "Command Palette" in top border.
@@ -616,12 +614,12 @@ impl CommandPalette {
         let title_x = area.x + (area.width.saturating_sub(title.len() as u16)) / 2;
         for (i, ch) in title.chars().enumerate() {
             let x = title_x + i as u16;
-            if x < area.right() {
-                if let Some(cell) = frame.buffer.get_mut(x, area.y) {
-                    cell.content = CellContent::from_char(ch);
-                    cell.fg = PackedRgba::rgb(200, 200, 220);
-                    cell.bg = bg;
-                }
+            if x < area.right()
+                && let Some(cell) = frame.buffer.get_mut(x, area.y)
+            {
+                cell.content = CellContent::from_char(ch);
+                cell.fg = PackedRgba::rgb(200, 200, 220);
+                cell.bg = bg;
             }
         }
 
@@ -632,12 +630,12 @@ impl CommandPalette {
                 cell.fg = border_fg;
                 cell.bg = bg;
             }
-            if area.width > 1 {
-                if let Some(cell) = frame.buffer.get_mut(area.right() - 1, y) {
-                    cell.content = CellContent::from_char('│');
-                    cell.fg = border_fg;
-                    cell.bg = bg;
-                }
+            if area.width > 1
+                && let Some(cell) = frame.buffer.get_mut(area.right() - 1, y)
+            {
+                cell.content = CellContent::from_char('│');
+                cell.fg = border_fg;
+                cell.bg = bg;
             }
         }
 
@@ -656,12 +654,12 @@ impl CommandPalette {
                     cell.bg = bg;
                 }
             }
-            if area.width > 1 {
-                if let Some(cell) = frame.buffer.get_mut(area.right() - 1, by) {
-                    cell.content = CellContent::from_char('┘');
-                    cell.fg = border_fg;
-                    cell.bg = bg;
-                }
+            if area.width > 1
+                && let Some(cell) = frame.buffer.get_mut(area.right() - 1, by)
+            {
+                cell.content = CellContent::from_char('┘');
+                cell.fg = border_fg;
+                cell.bg = bg;
             }
         }
     }
@@ -705,12 +703,12 @@ impl CommandPalette {
                 if x >= area.right() {
                     break;
                 }
-                if ch.is_ascii() {
-                    if let Some(cell) = frame.buffer.get_mut(x, area.y) {
-                        cell.content = CellContent::from_char(ch);
-                        cell.fg = input_fg;
-                        cell.bg = bg;
-                    }
+                if ch.is_ascii()
+                    && let Some(cell) = frame.buffer.get_mut(x, area.y)
+                {
+                    cell.content = CellContent::from_char(ch);
+                    cell.fg = input_fg;
+                    cell.bg = bg;
                 }
             }
         }
@@ -805,13 +803,11 @@ impl CommandPalette {
 
             // Selection marker (visible without color — structural indicator).
             let mut col = area.x;
-            if is_selected {
-                if let Some(cell) = frame.buffer.get_mut(col, y) {
-                    cell.content = CellContent::from_char('>');
-                    cell.fg = highlight_fg;
-                    cell.bg = row_bg;
-                    cell.attrs = CellAttrs::new(CellStyleFlags::BOLD, 0);
-                }
+            if is_selected && let Some(cell) = frame.buffer.get_mut(col, y) {
+                cell.content = CellContent::from_char('>');
+                cell.fg = highlight_fg;
+                cell.bg = row_bg;
+                cell.attrs = CellAttrs::new(CellStyleFlags::BOLD, 0);
             }
             col += 2;
 
@@ -892,12 +888,13 @@ impl CommandPalette {
                         col += 1;
                     }
 
-                    if desc_needs_ellipsis && col < area.right() {
-                        if let Some(cell) = frame.buffer.get_mut(col, y) {
-                            cell.content = CellContent::from_char('\u{2026}');
-                            cell.fg = desc_fg;
-                            cell.bg = row_bg;
-                        }
+                    if desc_needs_ellipsis
+                        && col < area.right()
+                        && let Some(cell) = frame.buffer.get_mut(col, y)
+                    {
+                        cell.content = CellContent::from_char('\u{2026}');
+                        cell.fg = desc_fg;
+                        cell.bg = row_bg;
                     }
                 }
             }

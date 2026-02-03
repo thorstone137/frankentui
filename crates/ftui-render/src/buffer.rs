@@ -1994,10 +1994,7 @@ mod tests {
 
         // Write to current buffer
         db.current_mut().set(0, 0, Cell::from_char('A'));
-        assert_eq!(
-            db.current().get(0, 0).unwrap().content.as_char(),
-            Some('A')
-        );
+        assert_eq!(db.current().get(0, 0).unwrap().content.as_char(), Some('A'));
 
         // Swap — previous should now have 'A', current should be clean
         db.swap();
@@ -2019,10 +2016,7 @@ mod tests {
         db.swap();
 
         // After two swaps, we're back to the buffer that had 'X'
-        assert_eq!(
-            db.current().get(0, 0).unwrap().content.as_char(),
-            Some('X')
-        );
+        assert_eq!(db.current().get(0, 0).unwrap().content.as_char(), Some('X'));
         assert_eq!(
             db.previous().get(0, 0).unwrap().content.as_char(),
             Some('Y')
@@ -2060,9 +2054,6 @@ mod tests {
 
         // Previous should not reflect changes to current
         assert!(db.previous().get(0, 0).unwrap().is_empty());
-        assert_eq!(
-            db.current().get(0, 0).unwrap().content.as_char(),
-            Some('C')
-        );
+        assert_eq!(db.current().get(0, 0).unwrap().content.as_char(), Some('C'));
     }
 }
