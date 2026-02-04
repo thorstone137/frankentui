@@ -393,12 +393,15 @@ impl MacroRecorderScreen {
         let Event::Key(KeyEvent {
             code,
             modifiers,
-            kind: KeyEventKind::Press,
+            kind,
             ..
         }) = event
         else {
             return;
         };
+        if !matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return;
+        }
 
         let (code, modifiers) = (*code, *modifiers);
 
@@ -730,6 +733,15 @@ impl MacroRecorderScreen {
                 Span::raw("   "),
                 Span::styled("Ctrl+Arrows", Style::new().fg(theme::accent::PRIMARY)),
                 Span::raw(" switch panel"),
+            ]),
+            Line::from_spans([
+                Span::styled("Quick Start: ", Style::new().fg(theme::fg::SECONDARY)),
+                Span::styled("Enter", Style::new().fg(theme::accent::PRIMARY)),
+                Span::raw(" load scenario  "),
+                Span::styled("Space", Style::new().fg(theme::accent::PRIMARY)),
+                Span::raw(" record  "),
+                Span::styled("\u{2191}/\u{2193}", Style::new().fg(theme::accent::PRIMARY)),
+                Span::raw(" scrub timeline"),
             ]),
             Line::from_spans([
                 Span::styled("Space/r", Style::new().fg(theme::accent::PRIMARY)),
@@ -1117,7 +1129,7 @@ impl Screen for MacroRecorderScreen {
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {
-        let mut controls_height: u16 = 5;
+        let mut controls_height: u16 = 6;
         if self.status_note.is_some() {
             controls_height += 1;
         }
@@ -1205,12 +1217,15 @@ fn is_control_key(event: &Event) -> bool {
     let Event::Key(KeyEvent {
         code,
         modifiers,
-        kind: KeyEventKind::Press,
+        kind,
         ..
     }) = event
     else {
         return false;
     };
+    if !matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return false;
+    }
 
     let (code, modifiers) = (*code, *modifiers);
 

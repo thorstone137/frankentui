@@ -2567,9 +2567,16 @@ impl SpiralState {
             return;
         }
 
-        let step = fx_stride(quality);
+        let mut step = fx_stride(quality);
         if step == 0 {
             return;
+        }
+        let area_cells = width as usize * height as usize;
+        if area_cells > 12_000 {
+            step = step.max(2);
+        }
+        if area_cells > 20_000 {
+            step = step.max(3);
         }
 
         let w = width as f64;
@@ -2578,7 +2585,13 @@ impl SpiralState {
         let cy = h / 2.0;
         let scale = w.min(h) * 0.4;
 
-        for (idx, star) in self.stars.iter().enumerate() {
+        let max_stars = match quality {
+            FxQuality::Full => 3000,
+            FxQuality::Reduced => 2000,
+            FxQuality::Minimal => 1200,
+            FxQuality::Off => 0,
+        };
+        for (idx, star) in self.stars.iter().take(max_stars).enumerate() {
             if idx % step != 0 {
                 continue;
             }
@@ -4970,6 +4983,13 @@ impl Screen for VisualEffectsScreen {
         let update_stride = fx_stride(quality) as u64;
         let update_this_frame =
             update_stride != 0 && (self.frame == 1 || self.frame.is_multiple_of(update_stride));
+        let spin_update_stride = if update_stride == 0 {
+            0
+        } else {
+            update_stride.saturating_mul(2).max(1)
+        };
+        let spin_update_this_frame = spin_update_stride != 0
+            && (self.frame == 1 || self.frame.is_multiple_of(spin_update_stride));
 
         let (matrix_width, matrix_height) = match quality {
             FxQuality::Full => (80, 60),
@@ -5116,7 +5136,7 @@ impl Screen for VisualEffectsScreen {
                 {
                     self.spin_lattice.init(spin_width, spin_height);
                 }
-                if update_this_frame && spin_width > 0 && spin_height > 0 {
+                if spin_update_this_frame && spin_width > 0 && spin_height > 0 {
                     self.spin_lattice.update();
                 }
             }

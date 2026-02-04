@@ -210,7 +210,7 @@ const ALIGNMENTS: &[Alignment] = &[Alignment::Left, Alignment::Center, Alignment
 /// Base characters to advance per tick during streaming simulation.
 const STREAM_CHARS_PER_TICK: usize = 3;
 /// Global speed multiplier for the streaming demo.
-const STREAM_SPEED_MULTIPLIER: usize = 9;
+const STREAM_SPEED_MULTIPLIER: usize = 27;
 /// Horizontal rule width for markdown rendering.
 const RULE_WIDTH: u16 = 36;
 
@@ -237,7 +237,10 @@ fn wrap_markdown_for_panel(text: &Text, width: u16) -> Text {
         lines.extend(line.wrap(width, WrapMode::Word));
     }
 
-    Text::from_lines(lines)
+    let mut wrapped = Text::from_lines(lines);
+    // Clamp to panel width to avoid border overdraw on long table/rule lines.
+    wrapped.truncate(width, None);
+    wrapped
 }
 
 fn is_table_line(plain: &str) -> bool {
@@ -266,7 +269,7 @@ impl Widget for MarkdownPanel<'_> {
         }
 
         let renderer = MarkdownRenderer::new(self.theme.clone())
-            .rule_width(RULE_WIDTH)
+            .rule_width(RULE_WIDTH.min(inner.width))
             .table_max_width(inner.width);
         let rendered = renderer.render(self.markdown);
         let wrapped = wrap_markdown_for_panel(&rendered, inner.width);
@@ -455,7 +458,7 @@ impl MarkdownRichText {
     fn render_stream_fragment(&self, width: u16) -> Text {
         let fragment = self.current_stream_fragment();
         let renderer = MarkdownRenderer::new(self.md_theme.clone())
-            .rule_width(RULE_WIDTH)
+            .rule_width(RULE_WIDTH.min(width))
             .table_max_width(width);
         let mut text = renderer.render_streaming(fragment);
 

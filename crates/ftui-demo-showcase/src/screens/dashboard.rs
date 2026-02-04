@@ -33,7 +33,7 @@ use ftui_layout::{Constraint, Flex};
 use ftui_render::cell::{Cell as RenderCell, PackedRgba};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
-use ftui_style::Style;
+use ftui_style::{Style, StyleFlags};
 use ftui_text::{Line, Span, Text, WrapMode};
 use ftui_text::{display_width, grapheme_width, graphemes};
 use ftui_widgets::Badge;
@@ -4941,7 +4941,7 @@ impl Dashboard {
                     "CRIT",
                     "✖",
                     theme::intent::error_text(),
-                    theme::with_alpha(theme::intent::error_text(), 180),
+                    theme::with_alpha(theme::intent::ERROR, 180),
                     TextEffect::PulsingGlow {
                         color: PackedRgba::rgb(255, 80, 100),
                         speed: 1.6,
@@ -4951,7 +4951,7 @@ impl Dashboard {
                     "WARN",
                     "▲",
                     theme::intent::warning_text(),
-                    theme::with_alpha(theme::intent::warning_text(), 160),
+                    theme::with_alpha(theme::intent::WARNING, 160),
                     TextEffect::Pulse {
                         speed: 1.4,
                         min_alpha: 0.35,
@@ -4961,7 +4961,7 @@ impl Dashboard {
                     "INFO",
                     "●",
                     theme::intent::info_text(),
-                    theme::with_alpha(theme::intent::info_text(), 150),
+                    theme::with_alpha(theme::intent::INFO, 150),
                     TextEffect::ColorWave {
                         color1: theme::accent::PRIMARY.into(),
                         color2: theme::accent::ACCENT_8.into(),
@@ -5016,7 +5016,11 @@ impl Dashboard {
             let comp_area = Rect::new(
                 time_area.right().saturating_add(1),
                 y,
-                6.min(inner.width.saturating_sub(time_area.right().saturating_add(1))),
+                6.min(
+                    inner
+                        .width
+                        .saturating_sub(time_area.right().saturating_add(1)),
+                ),
                 1,
             );
             Paragraph::new(format!("{indicator} {component}"))
@@ -5026,7 +5030,9 @@ impl Dashboard {
             let msg_area = Rect::new(
                 comp_area.right().saturating_add(1),
                 y,
-                inner.width.saturating_sub(comp_area.right().saturating_add(1) - inner.x),
+                inner
+                    .width
+                    .saturating_sub(comp_area.right().saturating_add(1) - inner.x),
                 1,
             );
             let msg = truncate_to_width(&alert.message, msg_area.width);

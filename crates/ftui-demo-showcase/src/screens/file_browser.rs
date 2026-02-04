@@ -8,7 +8,11 @@
 //! - `SyntaxHighlighter` for file preview
 //! - `filesize::decimal()` for human-readable sizes
 
-use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers};
+use std::cell::Cell;
+
+use ftui_core::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEventKind,
+};
 use ftui_core::geometry::Rect;
 use ftui_extras::filepicker::{FileEntry, FileKind, FilePicker, FilePickerFilter, FilePickerStyle};
 use ftui_extras::filesize;
@@ -101,6 +105,9 @@ pub struct FileBrowser {
     preview_scroll: usize,
     show_hidden: bool,
     entries: Vec<FileEntry>,
+    layout_tree: Cell<Rect>,
+    layout_picker: Cell<Rect>,
+    layout_preview: Cell<Rect>,
 }
 
 impl Default for FileBrowser {
@@ -130,6 +137,9 @@ impl FileBrowser {
             preview_scroll: 0,
             show_hidden: false,
             entries,
+            layout_tree: Cell::new(Rect::default()),
+            layout_picker: Cell::new(Rect::default()),
+            layout_preview: Cell::new(Rect::default()),
         }
     }
 
@@ -289,6 +299,7 @@ impl FileBrowser {
         if inner.is_empty() {
             return;
         }
+        let content_width = inner.width.saturating_sub(1).max(1);
 
         // FilePicker::render needs &mut self, but view() has &self.
         // We work around by re-rendering manually with Paragraph lines.
@@ -308,7 +319,7 @@ impl FileBrowser {
         let path_area = Rect::new(inner.x, inner.y, inner.width, 1);
         Paragraph::new(fit_to_width(
             &format_breadcrumbs(self.current_path()),
-            inner.width,
+            content_width,
         ))
         .style(
             Style::new()
@@ -319,7 +330,7 @@ impl FileBrowser {
 
         // Column header
         let header_area = Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1);
-        Paragraph::new(format_entry_header(inner.width))
+        Paragraph::new(format_entry_header(content_width))
             .style(Style::new().fg(theme::fg::MUTED))
             .render(header_area, frame);
 
@@ -340,7 +351,7 @@ impl FileBrowser {
                 break;
             }
 
-            let line = format_entry_line(entry, list_area.width);
+            let line = format_entry_line(entry, content_width);
 
             let style = if i == selected_idx {
                 Style::new()
@@ -704,6 +715,22 @@ impl Screen for FileBrowser {
     type Message = Event;
 
     fn update(&mut self, event: &Event) -> Cmd<Self::Message> {
+        if let Event::Mouse(mouse) = event {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                let tree = self.layout_tree.get();
+                let picker = self.layout_picker.get();
+                let preview = self.layout_preview.get();
+                if tree.contains(mouse.x, mouse.y) {
+                    self.focus = Panel::FileTree;
+                } else if picker.contains(mouse.x, mouse.y) {
+                    self.focus = Panel::FilePicker;
+                } else if preview.contains(mouse.x, mouse.y) {
+                    self.focus = Panel::Preview;
+                }
+            }
+            return Cmd::None;
+        }
+
         // Panel switching (Ctrl+Left/Right or h/l)
         if let Event::Key(KeyEvent {
             code,
@@ -712,9 +739,11 @@ impl Screen for FileBrowser {
             ..
         }) = event
         {
-            let next_panel = (*code == KeyCode::Right && modifiers.contains(Modifiers::CTRL))
+            let next_panel = ((modifiers.contains(Modifiers::CTRL) || modifiers.is_empty())
+                && *code == KeyCode::Right)
                 || (*code == KeyCode::Char('l') && *modifiers == Modifiers::NONE);
-            let prev_panel = (*code == KeyCode::Left && modifiers.contains(Modifiers::CTRL))
+            let prev_panel = ((modifiers.contains(Modifiers::CTRL) || modifiers.is_empty())
+                && *code == KeyCode::Left)
                 || (*code == KeyCode::Char('h') && *modifiers == Modifiers::NONE);
 
             if next_panel {
@@ -817,6 +846,10 @@ impl Screen for FileBrowser {
             ])
             .split(main[0]);
 
+        self.layout_tree.set(cols[0]);
+        self.layout_picker.set(cols[1]);
+        self.layout_preview.set(cols[2]);
+
         self.render_tree_panel(frame, cols[0]);
         self.render_picker_panel(frame, cols[1]);
         self.render_preview_panel(frame, cols[2]);
@@ -842,7 +875,7 @@ impl Screen for FileBrowser {
     fn keybindings(&self) -> Vec<HelpEntry> {
         vec![
             HelpEntry {
-                key: "h/l",
+                key: "←/→ or h/l",
                 action: "Switch panel",
             },
             HelpEntry {
