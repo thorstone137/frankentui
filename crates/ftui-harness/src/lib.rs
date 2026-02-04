@@ -366,6 +366,7 @@ pub fn assert_buffer_snapshot(name: &str, buf: &Buffer, base_dir: &str, mode: Ma
 
             if norm_expected != norm_actual {
                 let diff = diff_text(&norm_expected, &norm_actual);
+                // ubs:ignore — snapshot assertion helper intentionally panics on mismatch
                 panic!(
                     "\n\
                      === Snapshot mismatch: '{name}' ===\n\
@@ -378,6 +379,7 @@ pub fn assert_buffer_snapshot(name: &str, buf: &Buffer, base_dir: &str, mode: Ma
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // ubs:ignore — snapshot assertion helper intentionally panics when missing
             panic!(
                 "\n\
                  === No snapshot found: '{name}' ===\n\
@@ -390,6 +392,7 @@ pub fn assert_buffer_snapshot(name: &str, buf: &Buffer, base_dir: &str, mode: Ma
             );
         }
         Err(e) => {
+            // ubs:ignore — snapshot assertion helper intentionally panics on IO failure
             panic!("Failed to read snapshot '{}': {e}", path.display());
         }
     }
@@ -420,6 +423,7 @@ pub fn assert_buffer_snapshot_ansi(name: &str, buf: &Buffer, base_dir: &str) {
         Ok(expected) => {
             if expected != actual {
                 let diff = diff_text(&expected, &actual);
+                // ubs:ignore — snapshot assertion helper intentionally panics on mismatch
                 panic!(
                     "\n\
                      === ANSI snapshot mismatch: '{name}' ===\n\
@@ -431,6 +435,7 @@ pub fn assert_buffer_snapshot_ansi(name: &str, buf: &Buffer, base_dir: &str) {
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // ubs:ignore — snapshot assertion helper intentionally panics when missing
             panic!(
                 "\n\
                  === No ANSI snapshot found: '{resolved_name}' ===\n\
@@ -441,6 +446,7 @@ pub fn assert_buffer_snapshot_ansi(name: &str, buf: &Buffer, base_dir: &str) {
             );
         }
         Err(e) => {
+            // ubs:ignore — snapshot assertion helper intentionally panics on IO failure
             panic!("Failed to read snapshot '{}': {e}", path.display());
         }
     }
@@ -583,6 +589,7 @@ where
                         );
                     }
                     ProfileCompareMode::Strict => {
+                        // ubs:ignore — snapshot assertion helper intentionally panics on mismatch
                         panic!(
                             "Profile comparison drift: {} vs {}\n{diff}",
                             baseline_profile.as_str(),

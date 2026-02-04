@@ -53,8 +53,8 @@ use ftui_render::frame::{Frame, HitId, HitRegion, WidgetSignal};
 use ftui_runtime::TelemetryConfig;
 use ftui_runtime::locale::{Locale, LocaleContext, detect_system_locale, set_locale};
 use ftui_runtime::{
-    Cmd, ConformalConfig, Every, EvidenceSinkConfig, Model, Program, ProgramConfig, ScreenMode,
-    Subscription, TaskSpec,
+    Cmd, ConformalConfig, Every, EvidenceSinkConfig, Model, Program, ProgramConfig,
+    RenderTraceConfig, ScreenMode, Subscription, TaskSpec,
 };
 use ftui_style::Style;
 use ftui_text::WrapMode;
@@ -1572,6 +1572,17 @@ fn env_u64(name: &str) -> Option<u64> {
         .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
+fn env_string(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 fn main() -> std::io::Result<()> {
     if std::env::var("FTUI_HARNESS_FLICKER_ANALYZE").is_ok() {
         let input_path = std::env::var("FTUI_HARNESS_FLICKER_INPUT").map_err(|_| {
@@ -1757,6 +1768,25 @@ fn main() -> std::io::Result<()> {
         if !trimmed.is_empty() {
             config = config.with_evidence_sink(EvidenceSinkConfig::enabled_file(trimmed));
         }
+    }
+    if let Some(path) = env_string("FTUI_HARNESS_RENDER_TRACE_JSONL") {
+        let mut trace_config = RenderTraceConfig::enabled_file(path);
+        if let Some(run_id) = env_string("FTUI_HARNESS_RENDER_TRACE_RUN_ID") {
+            trace_config = trace_config.with_run_id(run_id);
+        }
+        if let Some(seed) = env_u64("FTUI_HARNESS_RENDER_TRACE_SEED") {
+            trace_config = trace_config.with_seed(seed);
+        }
+        if let Some(module) = env_string("FTUI_HARNESS_RENDER_TRACE_MODULE") {
+            trace_config = trace_config.with_test_module(module);
+        }
+        if let Some(enabled) = env_flag("FTUI_HARNESS_RENDER_TRACE_FLUSH") {
+            trace_config = trace_config.with_flush_on_write(enabled);
+        }
+        if let Some(enabled) = env_flag("FTUI_HARNESS_RENDER_TRACE_START_TS_MS") {
+            trace_config = trace_config.with_start_ts_ms(enabled);
+        }
+        config.render_trace = trace_config;
     }
 
     // Run the agent harness in inline mode
