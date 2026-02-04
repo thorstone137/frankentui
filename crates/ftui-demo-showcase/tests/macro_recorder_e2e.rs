@@ -44,11 +44,9 @@ fn char_press(ch: char) -> Event {
     press(KeyCode::Char(ch))
 }
 
-/// Navigate to the MacroRecorder screen (press '0' for screen index 10,
-/// which maps to MacroRecorder).
+/// Navigate to the MacroRecorder screen.
 fn go_to_macro_recorder(app: &mut AppModel) {
-    // MacroRecorder is at index 10 in ScreenId::ALL, mapped to key '0'
-    // But let's just set it directly since number key mapping depends on order.
+    // Set directly; number key mapping depends on registry order.
     app.current_screen = ScreenId::MacroRecorder;
 }
 

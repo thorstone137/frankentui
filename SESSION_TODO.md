@@ -1,5 +1,68 @@
 # Session TODO List
 
+## Current Session (MistyDune) — bd-1e3w Showcase Demo Overhaul (2026-02-04)
+- [x] Re-read `AGENTS.md` + `README.md`
+- [x] Run `bv --robot-triage` + `br ready --json` to pick top actionable bead
+- [x] Register Agent Mail session (MistyDune)
+- [x] Claim/confirm bead: `br update bd-1e3w --status in_progress`
+- [x] Reserve `crates/ftui-demo-showcase/src/**` + `crates/ftui-widgets/src/**` (exclusive)
+- [ ] Resolve `crates/ftui-runtime/src/**` reservation conflicts before touching runtime
+- [x] Send coordination note to agents holding runtime reservations
+- [ ] Code review sweep of demo showcase screens changed by other agents (focus: determinism, crashes, layout/border alignment, input handling)
+- [ ] Build dashboard improvement plan for first screen (panes + interactions + data sources)
+- [ ] Dashboard: code pane
+- [ ] Add long, realistic code samples across multiple languages + JSON/YAML/etc
+- [ ] Ensure per-language syntax highlighting theme is correct
+- [ ] Add single-key cycle through languages (no removal of existing samples)
+- [ ] Add missing language support in highlighter as needed
+- [ ] Dashboard: markdown pane
+- [ ] Replace with complex, rich GFM sample (tables, task lists, footnotes, callouts, code fences, blockquotes, links)
+- [ ] Implement streaming markdown (triple speed vs current)
+- [ ] Fix markdown screen border alignment
+- [ ] Dashboard: activity panel
+- [ ] Replace with richly formatted activity feed (color, emphasis, icons, timestamps, tags)
+- [ ] Add subtle animated text effects to emphasize activity states
+- [ ] Dashboard: info panel
+- [ ] Replace with visually rich, useful system/info summary (metrics, badges, keybindings, status)
+- [ ] Dashboard: text effects panel
+- [ ] Show 2–3 effects simultaneously
+- [ ] Add single-key cycle through effect sets
+- [ ] Dashboard: charts pane
+- [ ] Add multiple chart types and richer visuals
+- [ ] Add single-key cycle through chart types
+- [ ] Ensure charts are visually dense (no large empty regions)
+- [ ] Widgets screen
+- [ ] Enable arrow-key navigation across widgets
+- [ ] Replace default nearly-empty view with jam-packed, realistic widget configurations
+- [ ] Forms screen
+- [ ] Enable arrow-key navigation between form fields and widgets
+- [ ] Data viz screen
+- [ ] Fill blank space with additional panes and richer visualizations
+- [ ] Files screen
+- [ ] Fix border alignment issues for specific rows
+- [ ] Macro recorder screen
+- [ ] Make UI clearer and more intuitive (labels, hints, layout)
+- [ ] Implement ctrl+arrow key behavior
+- [ ] Visual effects screen
+- [ ] Identify and fix crash in effect #14/#15 (no hang)
+- [ ] Shakespeare demo
+- [ ] Add instant search-as-you-type with jump navigation
+- [ ] Highlight matches with dynamic effects/animations
+- [ ] Add stylish, impressive visual treatment (color/effects)
+- [ ] SQLite/code screen
+- [ ] Add more panels + dynamic features to showcase unique capabilities
+- [ ] Mouse interaction
+- [ ] Click to focus any pane within a view (control focus + input routing)
+- [ ] Global navigation
+- [ ] Arrow-key navigation in every screen (consistent behavior)
+- [ ] Performance
+- [ ] Triple streaming speed (baseline -> profile -> implement per extreme optimization)
+- [ ] Validate determinism (no random drift) for new animations/streams
+- [ ] Update snapshots/tests if required (no deletions)
+- [ ] Run quality gates (`cargo fmt --check`, `cargo check --all-targets`, `cargo clippy --all-targets -- -D warnings`)
+- [ ] Post Agent Mail progress update in thread `bd-1e3w`
+- [ ] Release file reservations after completion
+
 ## Current Session (LilacOwl) — bd-iuvb.16 Navigation IA (2026-02-04)
 - [x] Re-read `AGENTS.md` + `README.md`
 - [x] Run `bv --robot-triage` to identify top-impact beads
@@ -15,9 +78,11 @@
 - [x] Design Screen Registry schema (category, order, tags, blurb, hotkey)
 - [x] Implement `ScreenCategory` enum + ordering
 - [x] Implement `ScreenMeta` struct + registry list for all screens
-- [ ] Replace `ScreenId::ALL` usage with registry-driven ordering
+- [x] Add registry navigation helpers (next/prev screen/category) + tests
+- [x] Replace `ScreenId::ALL` usage with registry-driven ordering
 - [ ] Update `ScreenId` helpers to use registry (title/tab_label/index/category)
 - [x] Switch `chrome` tab bar + hit mapping to registry ordering
+- [x] Implement category tab render helpers in `chrome.rs`
 - [ ] Update `chrome` tab bar to render category tabs + per-category screens
 - [ ] Add category navigation: Shift+Left/Right jumps categories
 - [ ] Update command palette to use registry metadata (category, tags, blurb)

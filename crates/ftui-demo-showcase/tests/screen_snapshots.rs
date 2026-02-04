@@ -947,7 +947,7 @@ fn app_debug_overlay_120x40() {
 #[test]
 fn app_all_screens_80x24() {
     let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
-    for &id in ScreenId::ALL {
+    for &id in ftui_demo_showcase::screens::screen_ids() {
         let mut app = AppModel::new();
         app.current_screen = id;
         let mut pool = GraphemePool::new();

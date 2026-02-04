@@ -342,145 +342,29 @@ pub enum ScreenId {
 }
 
 impl ScreenId {
-    /// All screens in display order.
-    pub const ALL: &[ScreenId] = &[
-        Self::Dashboard,
-        Self::Shakespeare,
-        Self::CodeExplorer,
-        Self::WidgetGallery,
-        Self::LayoutLab,
-        Self::FormsInput,
-        Self::DataViz,
-        Self::FileBrowser,
-        Self::AdvancedFeatures,
-        Self::Performance,
-        Self::TerminalCapabilities,
-        Self::MacroRecorder,
-        Self::MarkdownRichText,
-        Self::VisualEffects,
-        Self::ResponsiveDemo,
-        Self::LogSearch,
-        Self::Notifications,
-        Self::ActionTimeline,
-        Self::IntrinsicSizing,
-        Self::LayoutInspector,
-        Self::AdvancedTextEditor,
-        Self::MousePlayground,
-        Self::FormValidation,
-        Self::VirtualizedSearch,
-        Self::AsyncTasks,
-        Self::ThemeStudio,
-        Self::SnapshotPlayer,
-        Self::PerformanceHud,
-        Self::I18nDemo,
-        Self::VoiOverlay,
-        Self::InlineModeStory,
-        Self::AccessibilityPanel,
-        Self::WidgetBuilder,
-        Self::CommandPaletteLab,
-        Self::DeterminismLab,
-        Self::HyperlinkPlayground,
-    ];
-
     /// 0-based index in the ALL array.
     pub fn index(self) -> usize {
-        Self::ALL.iter().position(|&s| s == self).unwrap_or(0)
+        screens::screen_index(self)
     }
 
     /// Next screen (wraps around).
     pub fn next(self) -> Self {
-        let i = (self.index() + 1) % Self::ALL.len();
-        Self::ALL[i]
+        screens::next_screen(self)
     }
 
     /// Previous screen (wraps around).
     pub fn prev(self) -> Self {
-        let i = (self.index() + Self::ALL.len() - 1) % Self::ALL.len();
-        Self::ALL[i]
+        screens::prev_screen(self)
     }
 
     /// Title for the tab bar.
     pub fn title(self) -> &'static str {
-        match self {
-            Self::Dashboard => "Dashboard",
-            Self::Shakespeare => "Shakespeare",
-            Self::CodeExplorer => "Code Explorer",
-            Self::WidgetGallery => "Widget Gallery",
-            Self::LayoutLab => "Layout Lab",
-            Self::FormsInput => "Forms & Input",
-            Self::DataViz => "Data Viz",
-            Self::FileBrowser => "File Browser",
-            Self::AdvancedFeatures => "Advanced",
-            Self::TerminalCapabilities => "Terminal Capabilities",
-            Self::MacroRecorder => "Macro Recorder",
-            Self::Performance => "Performance",
-            Self::MarkdownRichText => "Markdown",
-            Self::VisualEffects => "Visual Effects",
-            Self::ResponsiveDemo => "Responsive Layout",
-            Self::LogSearch => "Log Search",
-            Self::Notifications => "Notifications",
-            Self::ActionTimeline => "Action Timeline",
-            Self::IntrinsicSizing => "Intrinsic Sizing",
-            Self::LayoutInspector => "Layout Inspector",
-            Self::AdvancedTextEditor => "Advanced Text Editor",
-            Self::MousePlayground => "Mouse Playground",
-            Self::FormValidation => "Form Validation",
-            Self::VirtualizedSearch => "Virtualized Search",
-            Self::AsyncTasks => "Async Tasks",
-            Self::ThemeStudio => "Theme Studio",
-            Self::SnapshotPlayer => "Time-Travel Studio",
-            Self::PerformanceHud => "Performance HUD",
-            Self::I18nDemo => "i18n Stress Lab",
-            Self::VoiOverlay => "VOI Overlay",
-            Self::InlineModeStory => "Inline Mode",
-            Self::AccessibilityPanel => "Accessibility",
-            Self::WidgetBuilder => "Widget Builder",
-            Self::CommandPaletteLab => "Command Palette Evidence Lab",
-            Self::DeterminismLab => "Determinism Lab",
-            Self::HyperlinkPlayground => "Hyperlink Playground",
-        }
+        screens::screen_title(self)
     }
 
     /// Short label for the tab (max ~12 chars).
     pub fn tab_label(self) -> &'static str {
-        match self {
-            Self::Dashboard => "Dash",
-            Self::Shakespeare => "Shakes",
-            Self::CodeExplorer => "Code",
-            Self::WidgetGallery => "Widgets",
-            Self::LayoutLab => "Layout",
-            Self::FormsInput => "Forms",
-            Self::DataViz => "DataViz",
-            Self::FileBrowser => "Files",
-            Self::AdvancedFeatures => "Adv",
-            Self::TerminalCapabilities => "Caps",
-            Self::MacroRecorder => "Macro",
-            Self::Performance => "Perf",
-            Self::MarkdownRichText => "MD",
-            Self::VisualEffects => "VFX",
-            Self::ResponsiveDemo => "Resp",
-            Self::LogSearch => "Logs",
-            Self::Notifications => "Notify",
-            Self::ActionTimeline => "Timeline",
-            Self::IntrinsicSizing => "Sizing",
-            Self::LayoutInspector => "Inspect",
-            Self::AdvancedTextEditor => "Editor",
-            Self::MousePlayground => "Mouse",
-            Self::FormValidation => "Validate",
-            Self::VirtualizedSearch => "VirtSearch",
-            Self::AsyncTasks => "Tasks",
-            Self::ThemeStudio => "Themes",
-            Self::SnapshotPlayer => "TimeTravel",
-            Self::PerformanceHud => "PerfHUD",
-            Self::I18nDemo => "i18n",
-            Self::VoiOverlay => "VOI",
-            Self::InlineModeStory => "Inline",
-            Self::AccessibilityPanel => "A11y",
-            Self::WidgetBuilder => "Builder",
-            Self::CommandPaletteLab => "Palette",
-            Self::DeterminismLab => "Determinism",
-            Self::HyperlinkPlayground => "Links",
-        }
+        screens::screen_tab_label(self)
     }
 
     /// Widget name used in error boundary fallback messages.
@@ -532,7 +416,7 @@ impl ScreenId {
             '0' => 9,
             _ => return None,
         };
-        Self::ALL.get(idx).copied()
+        screens::screen_ids().get(idx).copied()
     }
 }
 
@@ -1171,13 +1055,17 @@ impl AppModel {
         use ftui_widgets::command_palette::ActionItem;
 
         // Screen navigation actions
-        for &id in ScreenId::ALL {
-            let action_id = format!("screen:{}", id.title().to_lowercase().replace(' ', "_"));
+        for meta in screens::screen_registry() {
+            let action_id = format!("screen:{}", meta.title.to_lowercase().replace(' ', "_"));
+            let mut tags: Vec<&str> = Vec::with_capacity(meta.palette_tags.len() + 2);
+            tags.extend_from_slice(meta.palette_tags);
+            tags.push("screen");
+            tags.push("navigate");
             palette.register_action(
-                ActionItem::new(&action_id, format!("Go to {}", id.title()))
-                    .with_description(format!("Switch to the {} screen", id.title()))
-                    .with_tags(&["screen", "navigate"])
-                    .with_category("Navigate"),
+                ActionItem::new(&action_id, format!("Go to {}", meta.title))
+                    .with_description(meta.blurb)
+                    .with_tags(&tags)
+                    .with_category(meta.category.label()),
             );
         }
 
@@ -1725,7 +1613,7 @@ impl Model for AppModel {
             current_screen: self.current_screen,
             screen_title: self.current_screen.title(),
             screen_index: self.current_screen.index(),
-            screen_count: ScreenId::ALL.len(),
+            screen_count: screens::screen_registry().len(),
             tick_count: self.tick_count,
             frame_count: self.frame_count,
             terminal_width: self.terminal_width,
@@ -1899,9 +1787,10 @@ impl AppModel {
             PaletteAction::Execute(id) => {
                 // Screen navigation: "screen:<name>"
                 if let Some(screen_name) = id.strip_prefix("screen:") {
-                    for &sid in ScreenId::ALL {
-                        let expected = sid.title().to_lowercase().replace(' ', "_");
+                    for meta in screens::screen_registry() {
+                        let expected = meta.title.to_lowercase().replace(' ', "_");
                         if expected == screen_name {
+                            let sid = meta.id;
                             let from = self.current_screen.title();
                             self.current_screen = sid;
                             self.screens.action_timeline.record_command_event(
@@ -2774,7 +2663,7 @@ mod tests {
     #[test]
     fn integration_all_screens_render() {
         let app = AppModel::new();
-        for &id in ScreenId::ALL {
+        for &id in screens::screen_ids() {
             let mut pool = GraphemePool::new();
             let mut frame = Frame::new(120, 40, &mut pool);
             let area = Rect::new(0, 0, 120, 38); // Leave room for tab bar + status
@@ -2787,7 +2676,7 @@ mod tests {
     #[test]
     fn integration_resize_small() {
         let app = AppModel::new();
-        for &id in ScreenId::ALL {
+        for &id in screens::screen_ids() {
             let mut pool = GraphemePool::new();
             let mut frame = Frame::new(40, 10, &mut pool);
             let area = Rect::new(0, 0, 40, 8);
@@ -2799,7 +2688,7 @@ mod tests {
     #[test]
     fn integration_screen_cycle() {
         let mut app = AppModel::new();
-        for &id in ScreenId::ALL {
+        for &id in screens::screen_ids() {
             app.update(AppMsg::SwitchScreen(id));
             assert_eq!(app.current_screen, id);
 
@@ -2844,9 +2733,9 @@ mod tests {
         let mut app = AppModel::new();
         assert_eq!(app.current_screen, ScreenId::Dashboard);
 
-        for i in 1..ScreenId::ALL.len() {
+        for i in 1..screens::screen_ids().len() {
             app.update(AppMsg::NextScreen);
-            assert_eq!(app.current_screen, ScreenId::ALL[i]);
+            assert_eq!(app.current_screen, screens::screen_ids()[i]);
         }
 
         // One more wraps to Dashboard.
@@ -2857,7 +2746,7 @@ mod tests {
     /// Verify all screens have the expected count.
     #[test]
     fn all_screens_count() {
-        assert_eq!(ScreenId::ALL.len(), 36);
+        assert_eq!(screens::screen_registry().len(), 36);
     }
 
     // -----------------------------------------------------------------------
@@ -2897,7 +2786,7 @@ mod tests {
     fn palette_has_actions_for_all_screens() {
         let app = AppModel::new();
         // One action per screen + 6 global commands (quit, help, theme, debug, perf_hud, evidence_ledger)
-        let expected = ScreenId::ALL.len() + 6;
+        let expected = screens::screen_registry().len() + 6;
         assert_eq!(app.command_palette.action_count(), expected);
     }
 
@@ -3162,7 +3051,7 @@ mod tests {
         // The palette should have the perf HUD action registered.
         // Previous test counted ALL.len() + 4 global commands.
         // Now we have 6 global commands (quit, help, theme, debug, perf_hud, evidence_ledger).
-        let expected = ScreenId::ALL.len() + 6;
+        let expected = screens::screen_registry().len() + 6;
         assert_eq!(app.command_palette.action_count(), expected);
     }
 

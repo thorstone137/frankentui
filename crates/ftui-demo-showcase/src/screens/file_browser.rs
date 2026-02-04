@@ -587,7 +587,7 @@ fn format_breadcrumbs(path: &str) -> String {
     }
     for part in parts {
         out.push(' ');
-        out.push_str(theme::icons::ARROW_RIGHT);
+        out.push_str(theme::icons::ascii::ARROW_RIGHT);
         out.push(' ');
         out.push_str(icons::directory_icon());
         out.push(' ');
@@ -626,7 +626,7 @@ fn preview_metadata(path: &str, entry: Option<&FileEntry>) -> String {
                 .map(filesize::decimal)
                 .unwrap_or_else(|| "--".into());
             let perms = file_permissions(entry);
-            format!("{kind}  •  Size: {size}  •  Perms: {perms}\nPath: {path}\nPreview:",)
+            format!("{kind}  |  Size: {size}  |  Perms: {perms}\nPath: {path}\nPreview:",)
         }
         None => format!("No selection\nPath: {path}\nPreview:"),
     }

@@ -270,8 +270,8 @@ mod tests {
             .count();
         assert_eq!(
             screen_count,
-            crate::app::ScreenId::ALL.len(),
-            "HELP_TEXT screen list count must match ScreenId::ALL"
+            crate::screens::screen_registry().len(),
+            "HELP_TEXT screen list count must match screen registry"
         );
     }
 

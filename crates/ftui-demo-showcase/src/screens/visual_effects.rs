@@ -4133,6 +4133,23 @@ impl VisualEffectsScreen {
         base
     }
 
+    fn downshift_quality_for_effect(&self, quality: FxQuality, area_cells: usize) -> FxQuality {
+        if !matches!(self.effect, EffectType::Metaballs | EffectType::Plasma) {
+            return quality;
+        }
+
+        const DOWNSHIFT_AREA_CELLS: usize = 1800;
+        if area_cells < DOWNSHIFT_AREA_CELLS {
+            return quality;
+        }
+
+        match quality {
+            FxQuality::Full => FxQuality::Reduced,
+            FxQuality::Reduced => FxQuality::Minimal,
+            FxQuality::Minimal | FxQuality::Off => quality,
+        }
+    }
+
     fn switch_effect(&mut self, effect: EffectType) {
         self.effect = effect;
         self.fps_last_mouse = None;
@@ -4832,6 +4849,7 @@ impl Screen for VisualEffectsScreen {
                 // FPS effects are the main attraction here; never drop to Off.
                 quality = FxQuality::Minimal;
             }
+            quality = self.downshift_quality_for_effect(quality, area_cells);
             self.last_quality.set(quality);
             let theme_inputs = current_fx_theme();
 

@@ -295,7 +295,7 @@ pub struct TileDiffConfig {
     pub dense_cell_ratio: f64,
     /// Dense tile ratio threshold for falling back to non-tile diff.
     pub dense_tile_ratio: f64,
-    /// Maximum number of tiles allowed (fallback if exceeded).
+    /// Maximum number of tiles allowed (SAT build budget; fallback if exceeded).
     pub max_tiles: usize,
 }
 
@@ -310,6 +310,45 @@ impl Default for TileDiffConfig {
             dense_tile_ratio: 0.60,
             max_tiles: 4096,
         }
+    }
+}
+
+impl TileDiffConfig {
+    /// Toggle tile-based skipping.
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Set tile size in cells (clamped during build).
+    pub fn with_tile_size(mut self, tile_w: u16, tile_h: u16) -> Self {
+        self.tile_w = tile_w;
+        self.tile_h = tile_h;
+        self
+    }
+
+    /// Set minimum cell count required before tiles are considered.
+    pub fn with_min_cells_for_tiles(mut self, min_cells: usize) -> Self {
+        self.min_cells_for_tiles = min_cells;
+        self
+    }
+
+    /// Set dense cell ratio threshold for falling back to non-tile diff.
+    pub fn with_dense_cell_ratio(mut self, ratio: f64) -> Self {
+        self.dense_cell_ratio = ratio;
+        self
+    }
+
+    /// Set dense tile ratio threshold for falling back to non-tile diff.
+    pub fn with_dense_tile_ratio(mut self, ratio: f64) -> Self {
+        self.dense_tile_ratio = ratio;
+        self
+    }
+
+    /// Set SAT build budget via maximum tiles allowed.
+    pub fn with_max_tiles(mut self, max_tiles: usize) -> Self {
+        self.max_tiles = max_tiles;
+        self
     }
 }
 

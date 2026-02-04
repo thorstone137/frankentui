@@ -178,6 +178,7 @@ enum HarnessView {
     WidgetInput,
     WidgetInspector,
     WidgetBudget,
+    TileSkip,
     SpanDiff,
     #[allow(dead_code)]
     EffectQueue,
@@ -796,6 +797,7 @@ impl Model for AgentHarness {
             HarnessView::WidgetInput => self.view_widget_input(frame),
             HarnessView::WidgetInspector => self.view_widget_inspector(frame),
             HarnessView::WidgetBudget => self.view_widget_budget(frame),
+            HarnessView::TileSkip => self.view_tile_skip(frame),
             HarnessView::SpanDiff => self.view_span_diff(frame),
             HarnessView::EffectQueue => self.view_effect_queue(frame),
             HarnessView::LocaleContext => self.view_locale_context(frame),
@@ -908,6 +910,61 @@ impl AgentHarness {
         let row_a = (h / 3).min(h.saturating_sub(1));
         let row_b = (h.saturating_mul(2) / 3).min(h.saturating_sub(1));
         [(x0, row_a), (x1, row_a), (x0, row_b), (x2, row_b)]
+    }
+
+    fn tile_skip_spans(frame_idx: u16, width: u16, height: u16) -> Vec<(u16, u16, u16)> {
+        let w = width.max(1) as usize;
+        let h = height.max(1) as usize;
+        let total_cells = w.saturating_mul(h);
+        let target_cells = (total_cells.saturating_mul(2) / 100).max(1); // ~2% changes
+        let span_len = (w / 10).max(1);
+        let mut rows = (target_cells / span_len).max(1);
+        rows = rows.min(h);
+        let row_stride = (h / rows).max(1);
+        let base_row = (frame_idx as usize).wrapping_mul(3) % h;
+        let base_col = (frame_idx as usize).wrapping_mul(7) % w;
+
+        let mut spans = Vec::with_capacity(rows);
+        for i in 0..rows {
+            let y = (base_row + i * row_stride) % h;
+            let x0 = (base_col + i * 11) % w;
+            let x1 = (x0 + span_len).min(w);
+            let len = (x1.saturating_sub(x0)).max(1);
+            spans.push((x0 as u16, y as u16, len as u16));
+        }
+        spans
+    }
+
+    fn view_tile_skip(&self, frame: &mut Frame) {
+        self.apply_theme_base(frame);
+        frame.buffer.clear_dirty();
+
+        let width = frame.buffer.width();
+        let height = frame.buffer.height();
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        let frame_idx = self.spinner_state.current_frame as u16;
+        let prev_idx = frame_idx.wrapping_sub(1);
+        let prev_spans = Self::tile_skip_spans(prev_idx, width, height);
+        let curr_spans = Self::tile_skip_spans(frame_idx, width, height);
+
+        for (x, y, len) in prev_spans {
+            for dx in 0..len {
+                frame
+                    .buffer
+                    .set_raw(x.saturating_add(dx), y, Cell::default());
+            }
+        }
+
+        for (x, y, len) in curr_spans {
+            for dx in 0..len {
+                frame
+                    .buffer
+                    .set_raw(x.saturating_add(dx), y, Cell::from_char('X'));
+            }
+        }
     }
 
     fn view_span_diff(&self, frame: &mut Frame) {
@@ -1697,6 +1754,7 @@ fn main() -> std::io::Result<()> {
         "widget-input" | "widget_input" | "input" => HarnessView::WidgetInput,
         "widget-inspector" | "widget_inspector" | "inspector" => HarnessView::WidgetInspector,
         "widget-budget" | "widget_budget" | "budget" => HarnessView::WidgetBudget,
+        "tile-skip" | "tile_skip" | "tile" => HarnessView::TileSkip,
         "span-diff" | "span_diff" | "span" => HarnessView::SpanDiff,
         "locale-context" | "locale_context" | "locale" => HarnessView::LocaleContext,
         _ => HarnessView::Default,

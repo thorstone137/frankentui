@@ -56,7 +56,7 @@ use crate::render_trace::{
 use ftui_core::inline_mode::InlineStrategy;
 use ftui_core::terminal_capabilities::TerminalCapabilities;
 use ftui_render::buffer::{Buffer, DirtySpanConfig, DirtySpanStats};
-use ftui_render::diff::{BufferDiff, TileDiffFallback, TileDiffStats};
+use ftui_render::diff::{BufferDiff, TileDiffConfig, TileDiffFallback, TileDiffStats};
 use ftui_render::diff_strategy::{DiffStrategy, DiffStrategyConfig, DiffStrategySelector};
 use ftui_render::grapheme_pool::GraphemePool;
 use ftui_render::link_registry::LinkRegistry;
@@ -323,6 +323,11 @@ pub struct RuntimeDiffConfig {
     /// Controls span merging, guard bands, and enable/disable behavior.
     pub dirty_span_config: DirtySpanConfig,
 
+    /// Tile-based diff skipping configuration (thresholds + feature flags).
+    ///
+    /// Controls SAT tile size, thresholds, and enable/disable behavior.
+    pub tile_diff_config: TileDiffConfig,
+
     /// Reset posterior on dimension change.
     ///
     /// When true, the Bayesian posterior resets to priors when the buffer
@@ -351,6 +356,7 @@ impl Default for RuntimeDiffConfig {
             bayesian_enabled: true,
             dirty_rows_enabled: true,
             dirty_span_config: DirtySpanConfig::default(),
+            tile_diff_config: TileDiffConfig::default(),
             reset_on_resize: true,
             reset_on_invalidation: true,
             strategy_config: DiffStrategyConfig::default(),
@@ -385,6 +391,18 @@ impl RuntimeDiffConfig {
     /// Set the dirty-span tracking configuration.
     pub fn with_dirty_span_config(mut self, config: DirtySpanConfig) -> Self {
         self.dirty_span_config = config;
+        self
+    }
+
+    /// Toggle tile-based skipping.
+    pub fn with_tile_skip_enabled(mut self, enabled: bool) -> Self {
+        self.tile_diff_config = self.tile_diff_config.with_enabled(enabled);
+        self
+    }
+
+    /// Set the tile-based diff configuration.
+    pub fn with_tile_diff_config(mut self, config: TileDiffConfig) -> Self {
+        self.tile_diff_config = config;
         self
     }
 
@@ -531,6 +549,10 @@ impl<W: Write> TerminalWriter<W> {
         let inline_strategy = InlineStrategy::select(&capabilities);
         let auto_ui_height = None;
         let diff_strategy = DiffStrategySelector::new(diff_config.strategy_config.clone());
+        let mut diff_scratch = BufferDiff::new();
+        diff_scratch
+            .tile_config_mut()
+            .clone_from(&diff_config.tile_diff_config);
         Self {
             writer: Some(CountingWriter::new(BufWriter::with_capacity(
                 BUFFER_CAPACITY,
@@ -553,7 +575,7 @@ impl<W: Write> TerminalWriter<W> {
             scroll_region_active: false,
             last_inline_region: None,
             diff_strategy,
-            diff_scratch: BufferDiff::new(),
+            diff_scratch,
             full_redraw_probe: 0,
             diff_config,
             evidence_sink: None,
@@ -3483,6 +3505,7 @@ mod tests {
         assert!(config.bayesian_enabled);
         assert!(config.dirty_rows_enabled);
         assert!(config.dirty_span_config.enabled);
+        assert!(config.tile_diff_config.enabled);
         assert!(config.reset_on_resize);
         assert!(config.reset_on_invalidation);
     }
@@ -3490,11 +3513,17 @@ mod tests {
     #[test]
     fn runtime_diff_config_builder() {
         let custom_span = DirtySpanConfig::default().with_max_spans_per_row(8);
+        let tile_config = TileDiffConfig::default()
+            .with_enabled(false)
+            .with_tile_size(24, 12)
+            .with_dense_tile_ratio(0.75)
+            .with_max_tiles(2048);
         let config = RuntimeDiffConfig::new()
             .with_bayesian_enabled(false)
             .with_dirty_rows_enabled(false)
             .with_dirty_span_config(custom_span)
             .with_dirty_spans_enabled(false)
+            .with_tile_diff_config(tile_config)
             .with_reset_on_resize(false)
             .with_reset_on_invalidation(false);
 
@@ -3502,6 +3531,10 @@ mod tests {
         assert!(!config.dirty_rows_enabled);
         assert!(!config.dirty_span_config.enabled);
         assert_eq!(config.dirty_span_config.max_spans_per_row, 8);
+        assert!(!config.tile_diff_config.enabled);
+        assert_eq!(config.tile_diff_config.tile_w, 24);
+        assert_eq!(config.tile_diff_config.tile_h, 12);
+        assert_eq!(config.tile_diff_config.max_tiles, 2048);
         assert!(!config.reset_on_resize);
         assert!(!config.reset_on_invalidation);
     }
@@ -3531,6 +3564,29 @@ mod tests {
         let (alpha, beta) = writer.diff_strategy().posterior_params();
         assert!((alpha - 5.0).abs() < 0.001);
         assert!((beta - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn with_diff_config_applies_tile_config() {
+        let tile_config = TileDiffConfig::default()
+            .with_enabled(false)
+            .with_tile_size(32, 16)
+            .with_max_tiles(1024);
+        let runtime_config = RuntimeDiffConfig::default().with_tile_diff_config(tile_config);
+
+        let mut writer = TerminalWriter::with_diff_config(
+            Vec::<u8>::new(),
+            ScreenMode::AltScreen,
+            UiAnchor::Bottom,
+            basic_caps(),
+            runtime_config,
+        );
+
+        let applied = writer.diff_scratch.tile_config_mut();
+        assert!(!applied.enabled);
+        assert_eq!(applied.tile_w, 32);
+        assert_eq!(applied.tile_h, 16);
+        assert_eq!(applied.max_tiles, 1024);
     }
 
     #[test]

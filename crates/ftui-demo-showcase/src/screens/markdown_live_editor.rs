@@ -59,6 +59,8 @@ fn render(frame: &mut Frame) {
 | Diff mode | Ctrl+D |
 ";
 
+const RULE_WIDTH: u16 = 36;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Editor,
@@ -80,7 +82,6 @@ pub struct MarkdownLiveEditor {
     focus: Focus,
     search_results: Vec<SearchResult>,
     current_match: Option<usize>,
-    rendered_md: Text,
     md_theme: MarkdownTheme,
     diff_mode: bool,
     preview_scroll: u16,
@@ -95,8 +96,6 @@ impl Default for MarkdownLiveEditor {
 impl MarkdownLiveEditor {
     pub fn new() -> Self {
         let md_theme = Self::build_theme();
-        let renderer = MarkdownRenderer::new(md_theme.clone()).rule_width(36);
-        let rendered_md = renderer.render(SAMPLE_MARKDOWN);
 
         let editor = TextArea::new()
             .with_text(SAMPLE_MARKDOWN)
@@ -115,7 +114,6 @@ impl MarkdownLiveEditor {
             focus: Focus::Editor,
             search_results: Vec::new(),
             current_match: None,
-            rendered_md,
             md_theme,
             diff_mode: false,
             preview_scroll: 0,
@@ -150,7 +148,6 @@ impl MarkdownLiveEditor {
             .with_placeholder_style(placeholder_style);
 
         self.md_theme = Self::build_theme();
-        self.update_rendered_md();
     }
 
     fn build_theme() -> MarkdownTheme {
@@ -197,9 +194,11 @@ impl MarkdownLiveEditor {
         }
     }
 
-    fn update_rendered_md(&mut self) {
-        let renderer = MarkdownRenderer::new(self.md_theme.clone()).rule_width(36);
-        self.rendered_md = renderer.render(&self.editor.text());
+    fn render_preview_text(&self, width: u16) -> Text {
+        MarkdownRenderer::new(self.md_theme.clone())
+            .rule_width(RULE_WIDTH)
+            .table_max_width(width)
+            .render(&self.editor.text())
     }
 
     fn sync_focus(&mut self) {
@@ -372,18 +371,20 @@ impl MarkdownLiveEditor {
             let rows = Flex::vertical()
                 .constraints([Constraint::Min(4), Constraint::Fixed(6)])
                 .split(inner);
-            Paragraph::new(self.rendered_md.clone())
+            let rendered_md = self.render_preview_text(inner.width);
+            Paragraph::new(rendered_md.clone())
                 .scroll((self.preview_scroll, 0))
                 .render(rows[0], frame);
-            self.render_width_diff(frame, rows[1]);
+            self.render_width_diff(frame, rows[1], &rendered_md);
         } else {
-            Paragraph::new(self.rendered_md.clone())
+            let rendered_md = self.render_preview_text(inner.width);
+            Paragraph::new(rendered_md)
                 .scroll((self.preview_scroll, 0))
                 .render(inner, frame);
         }
     }
 
-    fn render_width_diff(&self, frame: &mut Frame, area: Rect) {
+    fn render_width_diff(&self, frame: &mut Frame, area: Rect, rendered_md: &Text) {
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -400,7 +401,7 @@ impl MarkdownLiveEditor {
 
         let text = self.editor.text();
         let raw_lines: Vec<&str> = text.lines().collect();
-        let rendered_lines = self.rendered_md.lines();
+        let rendered_lines = rendered_md.lines();
         let max_lines = inner.height as usize;
         let mut lines = Vec::new();
 
@@ -494,7 +495,6 @@ impl Screen for MarkdownLiveEditor {
             }
             Focus::Editor => {
                 if self.editor.handle_event(event) {
-                    self.update_rendered_md();
                     self.recompute_search();
                 }
             }

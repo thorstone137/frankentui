@@ -114,7 +114,7 @@ impl<T: Send + Sync + 'static> Model for App<T> {
         for (i, ch) in label.chars().enumerate() {
             frame
                 .buffer
-                .set_raw(i as u16, 0, RenderCell::from_char(ch));
+                .set_raw(i as u16, 0, Cell::from_char(ch));
         }
     }
 }
@@ -226,6 +226,35 @@ impl RenderTrace {
         format!(
             "trace frame={} dirty={} violations={:?}",
             self.frame, self.dirty, self.violations
+        )
+    }
+}
+
+fn checksum_cells(cells: &[Cell]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for cell in cells {
+        hash ^= cell.fg.0 as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        hash ^= cell.bg.0 as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        hash ^= cell.attrs.bits() as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+struct EvidenceRecord {
+    frame: u64,
+    checksum: u64,
+    dirty_rows: usize,
+    strategy: &'static str,
+}
+
+impl EvidenceRecord {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"frame\":{},\"checksum\":\"{:x}\",\"dirty_rows\":{},\"strategy\":\"{}\"}}",
+            self.frame, self.checksum, self.dirty_rows, self.strategy
         )
     }
 }
@@ -360,6 +389,32 @@ export class TraceBuffer {
     return out;
   }
 }
+
+export type Evidence = {
+  frame: number;
+  checksum: string;
+  dirtyRows: number;
+  strategy: "full" | "dirty" | "redraw";
+};
+
+export function checksumCells(cells: ReadonlyArray<{ fg: number; bg: number; attrs: number }>): string {
+  let hash = 0xcbf29ce484222325n;
+  for (const cell of cells) {
+    hash ^= BigInt(cell.fg);
+    hash *= 0x100000001b3n;
+    hash ^= BigInt(cell.bg);
+    hash *= 0x100000001b3n;
+    hash ^= BigInt(cell.attrs);
+    hash *= 0x100000001b3n;
+  }
+  return `0x${hash.toString(16)}`;
+}
+
+export async function loadScenario(name: string): Promise<Result<Session>> {
+  const res = await fetch(`/api/scenario/${name}`);
+  if (!res.ok) return { ok: false, error: "scenario not found" };
+  return { ok: true, value: (await res.json()) as Session };
+}
 "###,
     },
     CodeSample {
@@ -441,6 +496,25 @@ class Trace:
     def render(self) -> str:
         joined = ", ".join(self.notes) if self.notes else "OK"
         return f"trace frame={self.frame} dirty={self.dirty} notes={joined}"
+
+@dataclass(slots=True)
+class Evidence:
+    frame: int
+    checksum: int
+    dirty_rows: int
+    strategy: str
+
+def checksum_cells(cells: Iterable[Frame]) -> int:
+    h = 0xcbf29ce484222325
+    for cell in cells:
+        h ^= cell.id
+        h = (h * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+async def load_scenario(name: str) -> Frame:
+    if not name:
+        return Frame(id=0, dirty=False, tags={"error": "missing scenario"})
+    return Frame(id=1, dirty=False, tags={"scenario": name})
 "###,
     },
     CodeSample {
@@ -516,6 +590,33 @@ func Compute(ctx context.Context, a, b []Frame) (int, error) {
     }
     fmt.Println("done in", 5*time.Millisecond)
     return changed, nil
+}
+
+type Evidence struct {
+	Frame    int
+	Checksum string
+	Dirty    int
+	Strategy string
+}
+
+func ChecksumCells(frames []Frame) string {
+	var hash uint64 = 1469598103934665603
+	for _, f := range frames {
+		hash ^= uint64(f.ID)
+		hash *= 1099511628211
+		hash ^= uint64(len(f.Tags))
+		hash *= 1099511628211
+	}
+	return fmt.Sprintf("0x%x", hash)
+}
+
+func BuildEvidence(frame int, dirty int, strat string, frames []Frame) Evidence {
+	return Evidence{
+		Frame:    frame,
+		Checksum: ChecksumCells(frames),
+		Dirty:    dirty,
+		Strategy: strat,
+	}
 }
 
 type Budget struct {
@@ -614,7 +715,35 @@ SELECT p.frame_id,
        ) AS evidence
 FROM policy p
 JOIN perf ON perf.frame_id = p.frame_id
-ORDER BY p.policy, perf.spike DESC;"###,
+ORDER BY p.policy, perf.spike DESC;
+
+-- Schema + materialized rollup
+CREATE TABLE IF NOT EXISTS frame_metrics (
+  frame_id bigint,
+  ts timestamptz,
+  changed_cells int,
+  total_cells int,
+  mode text,
+  theme text
+);
+
+CREATE INDEX IF NOT EXISTS frame_metrics_ts_idx
+  ON frame_metrics (ts DESC);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS frame_metrics_daily AS
+SELECT date_trunc('day', ts) AS day,
+       avg(changed_cells) AS avg_changed,
+       percentile_disc(0.99) WITHIN GROUP (ORDER BY changed_cells) AS p99_changed
+FROM frame_metrics
+GROUP BY 1;
+
+REFRESH MATERIALIZED VIEW CONCURRENTLY frame_metrics_daily;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM frame_metrics_daily
+WHERE day >= now() - interval '7 days'
+ORDER BY p99_changed DESC;
+"###,
     },
     CodeSample {
         label: "JSON",
@@ -677,6 +806,25 @@ ORDER BY p.policy, perf.spike DESC;"###,
     "seed": 42,
     "runId": "demo-001",
     "checksums": ["9f2d", "a120", "b3cc"]
+  },
+  "streaming": {
+    "markdownCharsPerTick": 240,
+    "codeRotationMs": 3200,
+    "fxRotationMs": 1800
+  },
+  "panes": [
+    { "id": "charts", "title": "Charts", "focusable": true },
+    { "id": "code", "title": "Code", "focusable": true },
+    { "id": "info", "title": "Info", "focusable": true },
+    { "id": "text_fx", "title": "Text FX", "focusable": true },
+    { "id": "activity", "title": "Activity", "focusable": true },
+    { "id": "markdown", "title": "Markdown", "focusable": true }
+  ],
+  "chartModes": ["pulse", "lines", "bars", "heatmap", "matrix", "composite"],
+  "cache": {
+    "type": "lru",
+    "maxEntries": 512,
+    "evictPolicy": "lfu-backoff"
   }
 }"###,
     },
@@ -744,12 +892,32 @@ telemetry:
       endpoint: http://localhost:4317
     - type: file
       path: /var/log/ftui.ndjson
+
+streams:
+  markdown:
+    chars_per_tick: 240
+    cursor: block
+  code:
+    rotate_ms: 3200
+  effects:
+    rotate_ms: 1800
+
+panes:
+  - id: charts
+    title: Charts
+    focusable: true
+  - id: code
+    title: Code
+    focusable: true
+  - id: markdown
+    title: Markdown
+    focusable: true
 "###,
     },
     CodeSample {
         label: "Bash",
         lang: "sh",
-        code: r###"#!/usr/bin/env bash
+        code: r####"#!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -817,7 +985,19 @@ if [[ "${1:-}" == "--budget" ]]; then
 elif [[ "${1:-}" == "--help" ]]; then
   usage
 fi
-"###,
+
+if [[ -n "${FTUI_TRACE:-}" ]]; then
+  echo "trace enabled: ${FTUI_TRACE}" >> "$LOG"
+  jq -nc --arg run "$(date +%s)" '{run:$run,mode:"inline",uiHeight:12}' \
+    | tee "${ROOT}/trace.json" >/dev/null
+fi
+
+if [[ "${FTUI_HARNESS_VIEW:-}" == "" ]]; then
+  export FTUI_HARNESS_VIEW="dashboard"
+fi
+
+echo "ready" >> "$LOG"
+"####,
     },
     CodeSample {
         label: "C++",
@@ -898,6 +1078,30 @@ static inline std::string trace_line(std::uint64_t frame, int dirty, const Sched
   return "frame=" + std::to_string(frame) + " dirty=" + std::to_string(dirty)
          + " policy=" + s.explain(dirty);
 }
+
+struct Evidence {
+  std::uint64_t frame;
+  std::uint64_t checksum;
+  int dirty;
+  std::string strategy;
+};
+
+inline std::uint64_t checksum_cells(const std::vector<Frame<std::string>>& frames) {
+  std::uint64_t hash = 1469598103934665603ull;
+  for (const auto& f : frames) {
+    hash ^= f.id;
+    hash *= 1099511628211ull;
+    hash ^= static_cast<std::uint64_t>(f.payload.size());
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+inline Evidence build_evidence(std::uint64_t frame, int dirty,
+                              const std::vector<Frame<std::string>>& frames) {
+  Scheduler scheduler{8};
+  return {frame, checksum_cells(frames), dirty, scheduler.explain(dirty)};
+}
 "###,
     },
     CodeSample {
@@ -942,6 +1146,23 @@ suspend fun analyze(frames: List<Frame>): BudgetSnapshot {
   val dirty = frames.count { it.dirty }
   delay(2)
   return BudgetSnapshot(frameMs = 12.0, dirty = dirty, ok = dirty < 120)
+}
+
+data class Evidence(val frame: Long, val checksum: Long, val dirty: Int, val strategy: String)
+
+fun checksum(frames: List<Frame>): Long {
+  var hash = 0xcbf29ce484222325
+  for (f in frames) {
+    hash = (hash xor f.id) * 0x100000001b3
+    hash = (hash xor f.tags.size.toLong()) * 0x100000001b3
+  }
+  return hash
+}
+
+fun buildEvidence(frame: Long, frames: List<Frame>): Evidence {
+  val dirty = frames.count { it.dirty }
+  val strat = if (dirty > 120) "degrade" else "full"
+  return Evidence(frame, checksum(frames), dirty, strat)
 }
 "###,
     },
@@ -995,6 +1216,24 @@ $budget = [pscustomobject]@{
   ok = $true
 }
 $budget | ConvertTo-Json -Depth 4
+
+function Get-Checksum {
+  param([Frame[]]$Frames)
+  $hash = [UInt64]0xcbf29ce484222325
+  foreach ($f in $Frames) {
+    $hash = ($hash -bxor [UInt64]$f.Id) * 0x100000001b3
+    $hash = ($hash -bxor [UInt64]$f.Tags.Count) * 0x100000001b3
+  }
+  return ("0x{0:x}" -f $hash)
+}
+
+$evidence = [pscustomobject]@{
+  frame = 42
+  checksum = (Get-Checksum -Frames $frames)
+  dirty = ($frames | Where-Object { $_.Dirty }).Count
+  strategy = "full"
+}
+$evidence | ConvertTo-Json -Depth 3
 "###,
     },
     CodeSample {
@@ -1038,6 +1277,31 @@ static class Budget
         return (dirty <= limit, dirty);
     }
 }
+
+record Evidence(long Frame, ulong Checksum, int Dirty, string Strategy);
+
+static class EvidenceBuilder
+{
+    public static ulong Checksum(IEnumerable<Frame> frames)
+    {
+        ulong hash = 1469598103934665603;
+        foreach (var f in frames)
+        {
+            hash ^= (ulong)f.Id;
+            hash *= 1099511628211;
+            hash ^= (ulong)f.Tags.Count;
+            hash *= 1099511628211;
+        }
+        return hash;
+    }
+
+    public static Evidence Build(IEnumerable<Frame> frames, long frameId)
+    {
+        var dirty = frames.Count(f => f.Dirty);
+        var strategy = dirty > 120 ? "degrade" : "full";
+        return new Evidence(frameId, Checksum(frames), dirty, strategy);
+    }
+}
 "###,
     },
     CodeSample {
@@ -1068,6 +1332,20 @@ Pipeline.run(frames)
 
 budget = { frame_ms: 12, dirty_rows: frames.count(&:dirty) }
 puts "budget=#{budget}"
+
+def checksum(frames)
+  hash = 0xcbf29ce484222325
+  frames.each do |f|
+    hash ^= f.id
+    hash = (hash * 0x100000001b3) & 0xffffffffffffffff
+    hash ^= f.tags.size
+    hash = (hash * 0x100000001b3) & 0xffffffffffffffff
+  end
+  "0x#{hash.to_s(16)}"
+end
+
+evidence = { frame: 42, checksum: checksum(frames), dirty: frames.count(&:dirty), strategy: "full" }
+puts "evidence=#{evidence}"
 "###,
     },
     CodeSample {
@@ -1152,6 +1430,27 @@ class Main {
 }
 
 record BudgetSnapshot(int frameMs, int dirty, boolean ok) {}
+
+record Evidence(long frame, long checksum, int dirty, String strategy) {}
+
+final class Checksums {
+    static long hashFrames(List<Frame> frames) {
+        long hash = 0xcbf29ce484222325L;
+        for (var f : frames) {
+            hash ^= f.id();
+            hash *= 0x100000001b3L;
+            hash ^= f.tags().size();
+            hash *= 0x100000001b3L;
+        }
+        return hash;
+    }
+
+    static Evidence buildEvidence(long frame, List<Frame> frames) {
+        var dirty = (int)frames.stream().filter(Frame::dirty).count();
+        var strategy = dirty > 120 ? "degrade" : "full";
+        return new Evidence(frame, hashFrames(frames), dirty, strategy);
+    }
+}
 "###,
     },
     CodeSample {
@@ -1229,6 +1528,34 @@ int main(void) {
 
 static bool budget_ok(budget_t budget, uint32_t elapsed_ms) {
     return elapsed_ms <= (budget.render_ms + budget.present_ms);
+}
+
+static uint64_t checksum_frames(const frame_t *frames, size_t n) {
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < n; i++) {
+        hash ^= frames[i].id;
+        hash *= 0x100000001b3ULL;
+        hash ^= frames[i].tag_count;
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
+typedef struct {
+    uint64_t frame;
+    uint64_t checksum;
+    uint32_t dirty;
+    const char *strategy;
+} evidence_t;
+
+static evidence_t build_evidence(uint64_t frame, const frame_t *frames, size_t n) {
+    uint32_t dirty = 0;
+    for (size_t i = 0; i < n; i++) {
+        dirty += frames[i].dirty ? 1u : 0u;
+    }
+    const char *strategy = dirty > 120 ? "degrade" : "full";
+    evidence_t e = { frame, checksum_frames(frames, n), dirty, strategy };
+    return e;
 }
 "###,
     },
@@ -1320,6 +1647,24 @@ struct BudgetSnapshot: Codable {
     let dirty: Int
     let ok: Bool
 }
+
+struct Evidence: Codable {
+    let frame: Int
+    let checksum: UInt64
+    let dirty: Int
+    let strategy: String
+}
+
+func checksum(_ frames: [Frame]) -> UInt64 {
+    var hash: UInt64 = 0xcbf29ce484222325
+    for frame in frames {
+        hash ^= UInt64(frame.tags.count)
+        hash &*= 0x100000001b3
+        hash ^= UInt64(frame.id.uuidString.count)
+        hash &*= 0x100000001b3
+    }
+    return hash
+}
 "###,
     },
     CodeSample {
@@ -1407,6 +1752,25 @@ echo "\n" . json_encode([
     "budget" => ["frameMs" => 12, "dirty" => $summary["dirty"]],
     "mode" => Mode::Inline->value,
 ], JSON_PRETTY_PRINT);
+
+function checksum(array $frames): string {
+    $hash = 0xcbf29ce484222325;
+    foreach ($frames as $frame) {
+        $hash ^= $frame->id;
+        $hash *= 0x100000001b3;
+        $hash ^= count($frame->tags);
+        $hash *= 0x100000001b3;
+    }
+    return sprintf("0x%x", $hash);
+}
+
+$evidence = [
+    "frame" => 42,
+    "checksum" => checksum($frames),
+    "dirty" => $summary["dirty"],
+    "strategy" => $summary["dirty"] > 120 ? "degrade" : "full",
+];
+echo "\n" . json_encode($evidence, JSON_PRETTY_PRINT);
 "###,
     },
     CodeSample {
@@ -1468,6 +1832,22 @@ echo "\n" . json_encode([
           <p>Full-screen takeover for immersive apps.</p>
           <pre><code>ScreenMode::AltScreen</code></pre>
         </article>
+      </section>
+      <section aria-label="evidence">
+        <h3>Evidence Ledger</h3>
+        <table>
+          <thead><tr><th>Frame</th><th>Dirty</th><th>Strategy</th></tr></thead>
+          <tbody>
+            <tr><td>421</td><td>84</td><td>full</td></tr>
+            <tr><td>422</td><td>164</td><td>degrade</td></tr>
+          </tbody>
+        </table>
+        <pre><code>{
+  "frame": 422,
+  "checksum": "0x9f2d",
+  "policy": "degrade",
+  "notes": ["row overflow", "p95>16ms"]
+}</code></pre>
       </section>
     </main>
   </body>
@@ -1557,6 +1937,33 @@ echo "\n" . json_encode([
 .glow {
   box-shadow: 0 0 calc(var(--glow) * 24px) rgba(106, 209, 227, 0.4);
 }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th, td {
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in oklab, var(--accent), transparent 80%);
+  text-align: left;
+}
+tbody tr:hover {
+  background: color-mix(in oklab, var(--accent), transparent 88%);
+}
+
+.panel-title {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.08);
+}
 "###,
     },
     CodeSample {
@@ -1605,6 +2012,14 @@ function budget_report --argument budget
 end
 
 budget_report $budget
+
+function evidence --argument frame budget
+  set -l dirty (math $budget + 2)
+  set -l strategy (test $dirty -lt 8; and echo full; or echo degrade)
+  echo "frame=$frame dirty=$dirty strategy=$strategy checksum="(checksum $dirty)
+end
+
+evidence 42 $budget
 "###,
     },
     CodeSample {
@@ -1664,6 +2079,23 @@ end
 
 local report = budget(frames, 3)
 print(("budget ok=%s dirty=%d limit=%d"):format(tostring(report.ok), report.dirty, report.limit))
+
+local function checksum(frames)
+  local hash = 0xcbf29ce484222325
+  for _, f in ipairs(frames) do
+    hash = (hash ~ f.id) * 0x100000001b3
+    hash = (hash ~ #f.tags) * 0x100000001b3
+  end
+  return string.format("0x%x", hash)
+end
+
+local evidence = {
+  frame = 42,
+  checksum = checksum(frames),
+  dirty = summary.dirty,
+  strategy = summary.dirty > 120 and "degrade" or "full",
+}
+print(("evidence=%s"):format(require("json").encode(evidence)))
 "###,
     },
     CodeSample {
@@ -1709,6 +2141,23 @@ print(summary)
 
 budget <- tibble(frame_ms = 12, dirty = summary$dirty, ok = summary$dirty < 5)
 print(budget)
+
+checksum_frames <- function(frames) {
+  hash <- as.numeric(0xcbf29ce484222325)
+  for (row in seq_len(nrow(frames))) {
+    hash <- bitwXor(hash, frames$id[row])
+    hash <- (hash * 0x100000001b3) %% 2^64
+  }
+  hash
+}
+
+evidence <- tibble(
+  frame = 42,
+  checksum = checksum_frames(frames),
+  dirty = summary$dirty,
+  strategy = ifelse(summary$dirty > 120, "degrade", "full")
+)
+print(evidence)
 "###,
     },
     CodeSample {
@@ -1740,6 +2189,21 @@ panic = "abort"
 [[bench]]
 name = "diff"
 harness = false
+
+[workspace]
+members = [
+  "crates/ftui-core",
+  "crates/ftui-render",
+  "crates/ftui-runtime",
+  "crates/ftui-widgets",
+]
+
+[profile.dev]
+opt-level = 1
+
+[profile.bench]
+debug = true
+strip = false
 "###,
     },
     CodeSample {
@@ -1783,6 +2247,29 @@ setInterval(() => {
   pipe.push({ id: 1, dirty: Math.random() > 0.5, tags: { mode: 'inline' } });
   console.log(pipe.render());
 }, 16);
+
+function checksum(frames) {
+  let hash = 0xcbf29ce484222325n;
+  for (const f of frames) {
+    hash ^= BigInt(f.id);
+    hash *= 0x100000001b3n;
+    hash ^= BigInt(Object.keys(f.tags).length);
+    hash *= 0x100000001b3n;
+  }
+  return `0x${hash.toString(16)}`;
+}
+
+function evidence(pipe) {
+  const dirty = pipe.frames.filter(f => f.dirty).length;
+  return {
+    frame: pipe.frames.length,
+    checksum: checksum(pipe.frames),
+    dirty,
+    strategy: dirty > 120 ? 'degrade' : 'full',
+  };
+}
+
+console.log(evidence(pipe));
 "###,
     },
     CodeSample {
@@ -1810,6 +2297,35 @@ fn main() {
 > Note: Performance is key.
 
 [Docs](https://docs.rs/ftui)
+
+> [!TIP]
+> Use `Cmd::batch` to compose effects and keep render deterministic.
+
+| Metric | Target | Status |
+| :-- | --: | :--: |
+| Frame | <16ms | ✅ |
+| Diff | <4ms | ✅ |
+| Present | <4ms | ⚠️ |
+
+```mermaid
+sequenceDiagram
+  participant T as Terminal
+  participant R as Renderer
+  participant P as Presenter
+  T->>R: Events
+  R->>P: BufferDiff
+  P-->>T: ANSI Frame
+```
+
+<details>
+<summary>Evidence Ledger</summary>
+
+```json
+{ "frame": 42, "dirty": 84, "strategy": "full", "checksum": "0x9f2d" }
+```
+</details>
+
+[^1]: Determinism beats magic.
 "###,
     },
     CodeSample {
@@ -1854,6 +2370,30 @@ end
 # Usage
 {:ok, pid} = Pipeline.start_link(12)
 GenServer.cast(pid, {:push, %{id: 1, dirty: true, tags: %{mode: "inline"}}})
+
+defmodule Evidence do
+  use Bitwise
+
+  def checksum(frames) do
+    Enum.reduce(frames, 0xcbf29ce484222325, fn f, acc ->
+      acc
+      |> bxor(f.id)
+      |> Kernel.*(0x100000001b3)
+      |> bxor(map_size(f.tags))
+      |> Kernel.*(0x100000001b3)
+    end)
+  end
+
+  def build(frames, frame_id) do
+    dirty = Enum.count(frames, & &1.dirty)
+    %{
+      frame: frame_id,
+      checksum: checksum(frames),
+      dirty: dirty,
+      strategy: if(dirty > 120, do: "degrade", else: "full")
+    }
+  end
+end
 "###,
     },
     CodeSample {
@@ -1863,6 +2403,7 @@ GenServer.cast(pid, {:push, %{id: 1, dirty: true, tags: %{mode: "inline"}}})
 module Pipeline where
 
 import Data.List (foldl')
+import Data.Bits (xor)
 import qualified Data.Map as M
 import System.CPUTime
 
@@ -1890,6 +2431,17 @@ main = do
     end <- getCPUTime
     let diff = (end - start) `div` 1000000000
     print $ "Result: " ++ show result ++ " Time: " ++ show diff ++ "ms"
+
+checksum :: [Frame] -> Integer
+checksum = foldl' (\acc f -> (acc `xor` toInteger (frameId f)) * 0x100000001b3) 0xcbf29ce484222325
+
+data Evidence = Evidence { eFrame :: Int, eChecksum :: Integer, eDirty :: Int, eStrategy :: String }
+
+buildEvidence :: [Frame] -> Int -> Evidence
+buildEvidence frames fid =
+  let dirtyCount = length (filter dirty frames)
+      strategy = if dirtyCount > 120 then "degrade" else "full"
+  in Evidence fid (checksum frames) dirtyCount strategy
 "###,
     },
     CodeSample {
@@ -1925,6 +2477,29 @@ test "pipeline benchmark" {
     var frames = [_]Frame{};
     // Zig compile-time checks ensure correctness
     try std.testing.expectEqual(try render(std.testing.allocator, &frames, 1000), 0);
+}
+
+fn checksum(frames: []const Frame) u64 {
+    var hash: u64 = 0xcbf29ce484222325;
+    for (frames) |f| {
+        hash = (hash ^ f.id) * 0x100000001b3;
+        hash = (hash ^ @intCast(u64, f.tags.count())) * 0x100000001b3;
+    }
+    return hash;
+}
+
+const Evidence = struct {
+    frame: u64,
+    checksum: u64,
+    dirty: u64,
+    strategy: []const u8,
+};
+
+fn buildEvidence(frames: []const Frame, frame: u64) Evidence {
+    var dirty: u64 = 0;
+    for (frames) |f| if (f.dirty) dirty += 1;
+    const strategy = if (dirty > 120) "degrade" else "full";
+    return Evidence{ .frame = frame, .checksum = checksum(frames), .dirty = dirty, .strategy = strategy };
 }
 "###,
     },
@@ -1991,6 +2566,28 @@ graph TD
 Footnote[^1] and **links**: https://ftui.dev
 
 [^1]: Determinism beats magic.
+
+## Diff Ledger
+- **Strategy:** Full → DirtyRows → Spans
+- **Posterior:** α=3.5, β=92.5
+- **Decision:** DirtyRows (expected cost 0.41)
+
+### Code Snippets
+```toml
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+```
+
+```yaml
+streaming:
+  markdown:
+    chars_per_tick: 240
+```
+
+> [!WARNING]
+> Overflow detected in 2/120 rows. Degraded to safe mode.
 "###,
     r###"# Rendering Playbook
 
@@ -2024,6 +2621,51 @@ panic = "abort"
 
 > [!WARNING]
 > Never call `process::exit()` before `TerminalSession` drops.
+
+### Evidence Table
+| Frame | Dirty | Strategy | Checksum |
+| --: | --: | :-- | :-- |
+| 120 | 84 | full | `0x9f2d` |
+| 121 | 164 | degrade | `0xa120` |
+
+```diff
+- emit-per-cell
++ coalesce-run
+```
+
+> [!NOTE]
+> Inline mode preserves scrollback while the UI remains stable.
+"###,
+    r###"# Determinism Checklist
+
+- [x] Fixed seed
+- [x] Evidence ledger enabled
+- [x] Checksums chained
+- [ ] External I/O in render path (forbidden)
+
+## Control Surface
+| Panel | Focus | Shortcut |
+| --- | --- | --- |
+| Charts | yes | `g` |
+| Code | yes | `c` |
+| Markdown | yes | `m` |
+
+### Inline vs Alt
+> Inline keeps logs visible above the UI.
+> Alt-screen is immersive, but scrollback is hidden.
+
+```json
+{ "screen": "inline", "ui_height": 12, "sync": true }
+```
+
+```sql
+SELECT frame, strategy, checksum
+FROM evidence
+ORDER BY frame DESC
+LIMIT 3;
+```
+
+[^det]: All demos are deterministic under fixed inputs.
 "###,
 ];
 
@@ -2474,7 +3116,7 @@ impl Dashboard {
         }
         let md = self.current_markdown_sample();
         let max_len = md.len();
-        let mut new_pos = self.md_stream_pos.saturating_add(80);
+        let mut new_pos = self.md_stream_pos.saturating_add(240);
         while new_pos < max_len && !md.is_char_boundary(new_pos) {
             new_pos += 1;
         }
@@ -4054,6 +4696,35 @@ impl Dashboard {
             .render(bar_area, frame);
     }
 
+    fn wrap_markdown_for_panel(&self, text: &Text, width: u16) -> Text {
+        let width = usize::from(width);
+        if width == 0 {
+            return text.clone();
+        }
+
+        let mut lines = Vec::new();
+        for line in text.lines() {
+            let plain = line.to_plain_text();
+            if Self::is_table_line(&plain) || line.width() <= width {
+                lines.push(line.clone());
+                continue;
+            }
+
+            lines.extend(line.wrap(width, WrapMode::Word));
+        }
+
+        Text::from_lines(lines)
+    }
+
+    fn is_table_line(plain: &str) -> bool {
+        plain.chars().any(|c| {
+            matches!(
+                c,
+                '┌' | '┬' | '┐' | '├' | '┼' | '┤' | '└' | '┴' | '┘' | '│' | '─'
+            )
+        })
+    }
+
     /// Render markdown preview.
     fn render_markdown(&self, frame: &mut Frame, area: Rect) {
         if area.is_empty() || area.height < 2 {
@@ -4090,7 +4761,8 @@ impl Dashboard {
         let md = self.current_markdown_sample();
         let end = self.md_stream_pos.min(md.len());
         let fragment = &md[..end];
-        let mut rendered = self.md_renderer.render_streaming(fragment);
+        let renderer = self.md_renderer.clone().table_max_width(inner.width);
+        let mut rendered = renderer.render_streaming(fragment);
 
         if !self.markdown_stream_complete() {
             let cursor = Span::styled("▌", Style::new().fg(theme::accent::PRIMARY).blink());
@@ -4103,8 +4775,9 @@ impl Dashboard {
             rendered = Text::from_lines(lines);
         }
 
-        Paragraph::new(rendered)
-            .wrap(WrapMode::Word)
+        let wrapped = self.wrap_markdown_for_panel(&rendered, inner.width);
+        Paragraph::new(wrapped)
+            .wrap(WrapMode::None)
             .render(inner, frame);
         self.render_panel_hint(frame, inner, "Click → Markdown");
     }

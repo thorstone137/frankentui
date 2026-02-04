@@ -529,6 +529,74 @@ pub fn screen_count_in_category(category: ScreenCategory) -> usize {
     screens_in_category(category).count()
 }
 
+/// Next screen in registry order (wraps).
+pub fn next_screen(current: ScreenId) -> ScreenId {
+    let ids = screen_ids();
+    if ids.is_empty() {
+        return current;
+    }
+    let idx = screen_index(current);
+    ids[(idx + 1) % ids.len()]
+}
+
+/// Previous screen in registry order (wraps).
+pub fn prev_screen(current: ScreenId) -> ScreenId {
+    let ids = screen_ids();
+    if ids.is_empty() {
+        return current;
+    }
+    let idx = screen_index(current);
+    let prev = (idx + ids.len() - 1) % ids.len();
+    ids[prev]
+}
+
+/// Next category in IA order (wraps).
+pub fn next_category(category: ScreenCategory) -> ScreenCategory {
+    let idx = ScreenCategory::ALL
+        .iter()
+        .position(|c| *c == category)
+        .unwrap_or(0);
+    ScreenCategory::ALL[(idx + 1) % ScreenCategory::ALL.len()]
+}
+
+/// Previous category in IA order (wraps).
+pub fn prev_category(category: ScreenCategory) -> ScreenCategory {
+    let idx = ScreenCategory::ALL
+        .iter()
+        .position(|c| *c == category)
+        .unwrap_or(0);
+    let prev = (idx + ScreenCategory::ALL.len() - 1) % ScreenCategory::ALL.len();
+    ScreenCategory::ALL[prev]
+}
+
+/// First screen in a category (if any).
+pub fn first_in_category(category: ScreenCategory) -> Option<ScreenId> {
+    screens_in_category(category).next().map(|meta| meta.id)
+}
+
+/// Next screen within the same category (wraps).
+pub fn next_in_category(current: ScreenId) -> ScreenId {
+    let category = screen_category(current);
+    let ids: Vec<ScreenId> = screens_in_category(category).map(|meta| meta.id).collect();
+    if ids.is_empty() {
+        return current;
+    }
+    let idx = ids.iter().position(|id| *id == current).unwrap_or(0);
+    ids[(idx + 1) % ids.len()]
+}
+
+/// Previous screen within the same category (wraps).
+pub fn prev_in_category(current: ScreenId) -> ScreenId {
+    let category = screen_category(current);
+    let ids: Vec<ScreenId> = screens_in_category(category).map(|meta| meta.id).collect();
+    if ids.is_empty() {
+        return current;
+    }
+    let idx = ids.iter().position(|id| *id == current).unwrap_or(0);
+    let prev = (idx + ids.len() - 1) % ids.len();
+    ids[prev]
+}
+
 /// A help entry describing a keybinding.
 pub struct HelpEntry {
     /// Key label (e.g. "Tab", "Ctrl+F").
@@ -628,9 +696,9 @@ mod tests {
 
     #[test]
     fn registry_matches_screen_list() {
-        assert_eq!(SCREEN_REGISTRY.len(), ScreenId::ALL.len());
+        assert_eq!(SCREEN_REGISTRY.len(), screen_ids().len());
         assert_eq!(screen_ids().len(), SCREEN_REGISTRY.len());
-        for &id in ScreenId::ALL {
+        for &id in screen_ids() {
             assert!(
                 SCREEN_REGISTRY.iter().any(|meta| meta.id == id),
                 "missing screen in registry: {id:?}"
@@ -653,5 +721,35 @@ mod tests {
                 id = meta.id
             );
         }
+    }
+
+    #[test]
+    fn registry_next_prev_wrap() {
+        let ids = screen_ids();
+        assert!(!ids.is_empty());
+        let first = ids[0];
+        let last = ids[ids.len() - 1];
+        assert_eq!(next_screen(last), first);
+        assert_eq!(prev_screen(first), last);
+    }
+
+    #[test]
+    fn category_next_prev_wrap() {
+        let first_cat = ScreenCategory::ALL[0];
+        let last_cat = ScreenCategory::ALL[ScreenCategory::ALL.len() - 1];
+        assert_eq!(next_category(last_cat), first_cat);
+        assert_eq!(prev_category(first_cat), last_cat);
+    }
+
+    #[test]
+    fn category_screen_wraps() {
+        let category = ScreenCategory::Tour;
+        let first = first_in_category(category).expect("tour category has at least one screen");
+        let last = screens_in_category(category)
+            .last()
+            .expect("tour category has at least one screen")
+            .id;
+        assert_eq!(next_in_category(last), first);
+        assert_eq!(prev_in_category(first), last);
     }
 }

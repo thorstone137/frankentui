@@ -211,10 +211,13 @@ const ALIGNMENTS: &[Alignment] = &[Alignment::Left, Alignment::Center, Alignment
 const STREAM_CHARS_PER_TICK: usize = 3;
 /// Global speed multiplier for the streaming demo.
 const STREAM_SPEED_MULTIPLIER: usize = 9;
+/// Horizontal rule width for markdown rendering.
+const RULE_WIDTH: u16 = 36;
 
-struct MarkdownPanel {
-    text: Text,
+struct MarkdownPanel<'a> {
+    markdown: &'a str,
     scroll: u16,
+    theme: MarkdownTheme,
 }
 
 fn wrap_markdown_for_panel(text: &Text, width: u16) -> Text {
@@ -246,7 +249,7 @@ fn is_table_line(plain: &str) -> bool {
     })
 }
 
-impl Widget for MarkdownPanel {
+impl Widget for MarkdownPanel<'_> {
     fn render(&self, area: Rect, frame: &mut Frame) {
         let block = Block::new()
             .borders(Borders::ALL)
@@ -262,7 +265,11 @@ impl Widget for MarkdownPanel {
             return;
         }
 
-        let wrapped = wrap_markdown_for_panel(&self.text, inner.width);
+        let renderer = MarkdownRenderer::new(self.theme.clone())
+            .rule_width(RULE_WIDTH)
+            .table_max_width(inner.width);
+        let rendered = renderer.render(self.markdown);
+        let wrapped = wrap_markdown_for_panel(&rendered, inner.width);
         Paragraph::new(wrapped)
             .wrap(WrapMode::None)
             .scroll((self.scroll, 0))
@@ -272,7 +279,6 @@ impl Widget for MarkdownPanel {
 
 pub struct MarkdownRichText {
     md_scroll: u16,
-    rendered_md: Text,
     wrap_index: usize,
     align_index: usize,
     // Streaming simulation state
@@ -293,8 +299,6 @@ impl Default for MarkdownRichText {
 impl MarkdownRichText {
     pub fn new() -> Self {
         let md_theme = Self::build_theme();
-        let renderer = MarkdownRenderer::new(md_theme.clone()).rule_width(36);
-        let rendered_md = renderer.render(SAMPLE_MARKDOWN);
         let theme_inputs = Self::current_fx_theme();
         let mut markdown_backdrop =
             Backdrop::new(Box::new(PlasmaFx::new(PlasmaPalette::Ocean)), theme_inputs);
@@ -303,7 +307,6 @@ impl MarkdownRichText {
 
         Self {
             md_scroll: 0,
-            rendered_md,
             wrap_index: 1, // Start at Word
             align_index: 0,
             // Streaming starts active
@@ -318,8 +321,6 @@ impl MarkdownRichText {
 
     pub fn apply_theme(&mut self) {
         self.md_theme = Self::build_theme();
-        let renderer = MarkdownRenderer::new(self.md_theme.clone()).rule_width(36);
-        self.rendered_md = renderer.render(SAMPLE_MARKDOWN);
         let theme_inputs = Self::current_fx_theme();
         self.markdown_backdrop.borrow_mut().set_theme(theme_inputs);
     }
@@ -451,9 +452,11 @@ impl MarkdownRichText {
     /// Render the streaming fragment using streaming-aware rendering.
     ///
     /// Adds a visible blinking cursor at the end when still streaming.
-    fn render_stream_fragment(&self) -> Text {
+    fn render_stream_fragment(&self, width: u16) -> Text {
         let fragment = self.current_stream_fragment();
-        let renderer = MarkdownRenderer::new(self.md_theme.clone());
+        let renderer = MarkdownRenderer::new(self.md_theme.clone())
+            .rule_width(RULE_WIDTH)
+            .table_max_width(width);
         let mut text = renderer.render_streaming(fragment);
 
         // Add blinking cursor at end if still streaming
@@ -506,8 +509,9 @@ impl MarkdownRichText {
 
     fn render_markdown_panel(&self, frame: &mut Frame, area: Rect) {
         let panel = MarkdownPanel {
-            text: self.rendered_md.clone(),
+            markdown: SAMPLE_MARKDOWN,
             scroll: self.md_scroll,
+            theme: self.md_theme.clone(),
         };
 
         // Quality is now derived automatically from frame.buffer.degradation
@@ -699,7 +703,7 @@ impl MarkdownRichText {
             .split(inner);
 
         // Render the streaming markdown fragment
-        let stream_text = self.render_stream_fragment();
+        let stream_text = self.render_stream_fragment(chunks[0].width);
         let wrapped_stream = wrap_markdown_for_panel(&stream_text, chunks[0].width);
         Paragraph::new(wrapped_stream)
             .wrap(WrapMode::None)
@@ -900,6 +904,12 @@ impl Screen for MarkdownRichText {
 mod tests {
     use super::*;
 
+    fn rendered_sample() -> Text {
+        MarkdownRenderer::new(MarkdownTheme::default())
+            .rule_width(RULE_WIDTH)
+            .render(SAMPLE_MARKDOWN)
+    }
+
     fn press(code: KeyCode) -> Event {
         Event::Key(KeyEvent {
             code,
@@ -918,9 +928,8 @@ mod tests {
 
     #[test]
     fn markdown_renders_headings() {
-        let screen = MarkdownRichText::new();
-        let plain: String = screen
-            .rendered_md
+        let rendered = rendered_sample();
+        let plain: String = rendered
             .lines()
             .iter()
             .map(|l| l.to_plain_text())
@@ -933,9 +942,8 @@ mod tests {
 
     #[test]
     fn markdown_renders_code_block() {
-        let screen = MarkdownRichText::new();
-        let plain: String = screen
-            .rendered_md
+        let rendered = rendered_sample();
+        let plain: String = rendered
             .lines()
             .iter()
             .map(|l| l.to_plain_text())
@@ -947,9 +955,8 @@ mod tests {
 
     #[test]
     fn markdown_renders_task_lists() {
-        let screen = MarkdownRichText::new();
-        let plain: String = screen
-            .rendered_md
+        let rendered = rendered_sample();
+        let plain: String = rendered
             .lines()
             .iter()
             .map(|l| l.to_plain_text())

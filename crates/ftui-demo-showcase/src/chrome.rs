@@ -13,7 +13,7 @@ use ftui_widgets::help::{HelpCategory, HelpMode, KeyFormat, KeybindingHints};
 use ftui_widgets::paragraph::Paragraph;
 
 use crate::app::ScreenId;
-use crate::screens;
+use crate::screens::{self, ScreenCategory};
 use crate::theme;
 
 // ---------------------------------------------------------------------------
@@ -145,6 +145,114 @@ pub fn render_tab_bar(current: ScreenId, frame: &mut Frame, area: Rect) {
                 .attrs(StyleFlags::DIM);
             let sep = Paragraph::new("│").style(sep_style);
             sep.render(sep_area, frame);
+            x = x.saturating_add(1);
+        }
+    }
+}
+
+/// Render a category tab strip (bd-iuvb.16).
+pub fn render_category_tabs(current: ScreenId, frame: &mut Frame, area: Rect) {
+    let bg_style = theme::tab_bar();
+    Paragraph::new("").style(bg_style).render(area, frame);
+
+    let current_category = screens::screen_category(current);
+    let mut x = area.x;
+
+    for category in ScreenCategory::ALL {
+        let label = category.short_label();
+        let label_width = 1 + label.len() as u16 + 1; // " {label} "
+        if x + label_width > area.x + area.width {
+            break;
+        }
+
+        let tab_area = Rect::new(x, area.y, label_width, 1);
+        let is_active = *category == current_category;
+        let bg = if is_active {
+            theme::with_alpha(category_accent(*category), TAB_ACCENT_ALPHA)
+        } else {
+            theme::alpha::SURFACE.into()
+        };
+        let label_style = if is_active {
+            Style::new()
+                .bg(bg)
+                .fg(theme::fg::PRIMARY)
+                .attrs(StyleFlags::BOLD)
+        } else {
+            Style::new().bg(bg).fg(theme::fg::MUTED)
+        };
+        let pad_style = Style::new().bg(bg);
+
+        let line = Line::from_spans([
+            Span::styled(" ", pad_style),
+            Span::styled(label, label_style),
+            Span::styled(" ", pad_style),
+        ]);
+        Paragraph::new(Text::from_lines([line])).render(tab_area, frame);
+
+        x += label_width;
+        if x < area.x + area.width {
+            let sep_area = Rect::new(x, area.y, 1, 1);
+            let sep_style = Style::new()
+                .bg(theme::alpha::SURFACE)
+                .fg(theme::fg::MUTED)
+                .attrs(StyleFlags::DIM);
+            Paragraph::new("│").style(sep_style).render(sep_area, frame);
+            x = x.saturating_add(1);
+        }
+    }
+}
+
+/// Render screen tabs for a single category (bd-iuvb.16).
+pub fn render_screen_tabs_for_category(
+    current: ScreenId,
+    category: ScreenCategory,
+    frame: &mut Frame,
+    area: Rect,
+) {
+    let bg_style = theme::tab_bar();
+    Paragraph::new("").style(bg_style).render(area, frame);
+
+    let mut x = area.x;
+    for meta in screens::screens_in_category(category) {
+        let id = meta.id;
+        let label_text = meta.short_label;
+        let label_width = 1 + label_text.len() as u16 + 1;
+        if x + label_width > area.x + area.width {
+            break;
+        }
+
+        let tab_area = Rect::new(x, area.y, label_width, 1);
+        let is_active = id == current;
+        let bg = if is_active {
+            theme::with_alpha(accent_for(id), TAB_ACCENT_ALPHA)
+        } else {
+            theme::alpha::SURFACE.into()
+        };
+        let label_style = if is_active {
+            Style::new()
+                .bg(bg)
+                .fg(theme::fg::PRIMARY)
+                .attrs(StyleFlags::BOLD)
+        } else {
+            Style::new().bg(bg).fg(theme::fg::MUTED)
+        };
+        let pad_style = Style::new().bg(bg);
+
+        let line = Line::from_spans([
+            Span::styled(" ", pad_style),
+            Span::styled(label_text, label_style),
+            Span::styled(" ", pad_style),
+        ]);
+        Paragraph::new(Text::from_lines([line])).render(tab_area, frame);
+
+        x += label_width;
+        if x < area.x + area.width {
+            let sep_area = Rect::new(x, area.y, 1, 1);
+            let sep_style = Style::new()
+                .bg(theme::alpha::SURFACE)
+                .fg(theme::fg::MUTED)
+                .attrs(StyleFlags::DIM);
+            Paragraph::new("│").style(sep_style).render(sep_area, frame);
             x = x.saturating_add(1);
         }
     }
@@ -546,6 +654,18 @@ pub fn render_help_overlay(
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Return the accent color for a category tab.
+pub fn category_accent(category: ScreenCategory) -> theme::ColorToken {
+    match category {
+        ScreenCategory::Tour => theme::screen_accent::DASHBOARD,
+        ScreenCategory::Core => theme::screen_accent::LAYOUT_LAB,
+        ScreenCategory::Visuals => theme::screen_accent::VISUAL_EFFECTS,
+        ScreenCategory::Interaction => theme::screen_accent::FORMS_INPUT,
+        ScreenCategory::Text => theme::screen_accent::MARKDOWN,
+        ScreenCategory::Systems => theme::screen_accent::PERFORMANCE,
+    }
+}
+
 /// Return the accent color for the given screen.
 pub fn accent_for(id: ScreenId) -> theme::ColorToken {
     match id {
@@ -727,7 +847,7 @@ mod tests {
     #[test]
     fn accent_for_all_screens() {
         // Verify each screen has a distinct accent color
-        for &id in ScreenId::ALL {
+        for &id in screens::screen_ids() {
             let accent_value = accent_for(id);
             let color: PackedRgba = accent_value.into();
             // Just verify it returns something non-zero

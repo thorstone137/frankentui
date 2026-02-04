@@ -1565,6 +1565,153 @@ pub fn r_tokenizer() -> GenericTokenizer {
     })
 }
 
+/// Create a generic tokenizer configured for Elixir.
+pub fn elixir_tokenizer() -> GenericTokenizer {
+    GenericTokenizer::new(GenericTokenizerConfig {
+        name: "Elixir",
+        extensions: &["ex", "exs"],
+        keywords: &[
+            "def",
+            "defp",
+            "defmodule",
+            "defmacro",
+            "defguard",
+            "defprotocol",
+            "defimpl",
+            "defstruct",
+            "use",
+            "import",
+            "alias",
+            "require",
+            "quote",
+            "unquote",
+            "fn",
+            "end",
+            "do",
+            "when",
+            "with",
+            "receive",
+            "try",
+            "catch",
+            "rescue",
+            "after",
+            "raise",
+        ],
+        control_keywords: &[
+            "if", "unless", "case", "cond", "for", "while", "try", "catch", "rescue", "after",
+            "with", "receive", "do", "end",
+        ],
+        type_keywords: &[
+            "integer",
+            "float",
+            "boolean",
+            "atom",
+            "binary",
+            "bitstring",
+            "list",
+            "map",
+            "tuple",
+            "pid",
+            "port",
+            "reference",
+            "any",
+            "term",
+        ],
+        line_comment: "#",
+        block_comment_start: "",
+        block_comment_end: "",
+    })
+}
+
+/// Create a generic tokenizer configured for Haskell.
+pub fn haskell_tokenizer() -> GenericTokenizer {
+    GenericTokenizer::new(GenericTokenizerConfig {
+        name: "Haskell",
+        extensions: &["hs", "lhs"],
+        keywords: &[
+            "module",
+            "import",
+            "qualified",
+            "as",
+            "hiding",
+            "where",
+            "data",
+            "type",
+            "newtype",
+            "class",
+            "instance",
+            "deriving",
+            "default",
+            "infix",
+            "infixl",
+            "infixr",
+            "family",
+            "role",
+            "pattern",
+            "foreign",
+        ],
+        control_keywords: &[
+            "if", "then", "else", "case", "of", "do", "let", "in", "where",
+        ],
+        type_keywords: &[
+            "Int", "Integer", "Float", "Double", "Bool", "Char", "String", "IO", "Maybe", "Either",
+            "Ordering",
+        ],
+        line_comment: "--",
+        block_comment_start: "{-",
+        block_comment_end: "-}",
+    })
+}
+
+/// Create a generic tokenizer configured for Zig.
+pub fn zig_tokenizer() -> GenericTokenizer {
+    GenericTokenizer::new(GenericTokenizerConfig {
+        name: "Zig",
+        extensions: &["zig"],
+        keywords: &[
+            "const",
+            "var",
+            "fn",
+            "struct",
+            "enum",
+            "union",
+            "opaque",
+            "error",
+            "test",
+            "comptime",
+            "usingnamespace",
+            "pub",
+            "export",
+            "extern",
+            "packed",
+            "inline",
+            "noinline",
+            "anytype",
+            "anyframe",
+            "asm",
+            "nosuspend",
+            "suspend",
+            "resume",
+            "await",
+            "try",
+            "catch",
+            "defer",
+            "errdefer",
+        ],
+        control_keywords: &[
+            "if", "else", "switch", "while", "for", "break", "continue", "return", "try", "catch",
+            "defer", "errdefer",
+        ],
+        type_keywords: &[
+            "bool", "void", "noreturn", "usize", "isize", "u8", "u16", "u32", "u64", "u128", "i8",
+            "i16", "i32", "i64", "i128", "f16", "f32", "f64", "f80", "f128", "anytype",
+        ],
+        line_comment: "//",
+        block_comment_start: "/*",
+        block_comment_end: "*/",
+    })
+}
+
 /// Create a generic tokenizer configured for TypeScript.
 pub fn typescript_tokenizer() -> GenericTokenizer {
     GenericTokenizer::new(GenericTokenizerConfig {
@@ -2178,6 +2325,9 @@ impl SyntaxHighlighter {
         registry.register(Box::new(fish_tokenizer()));
         registry.register(Box::new(lua_tokenizer()));
         registry.register(Box::new(r_tokenizer()));
+        registry.register(Box::new(elixir_tokenizer()));
+        registry.register(Box::new(haskell_tokenizer()));
+        registry.register(Box::new(zig_tokenizer()));
         registry.register(Box::new(JsonTokenizer));
         registry.register(Box::new(TomlTokenizer));
         registry.register(Box::new(MarkdownTokenizer));
@@ -3909,6 +4059,9 @@ fn main() {
         reg.register(Box::new(fish_tokenizer()));
         reg.register(Box::new(lua_tokenizer()));
         reg.register(Box::new(r_tokenizer()));
+        reg.register(Box::new(elixir_tokenizer()));
+        reg.register(Box::new(haskell_tokenizer()));
+        reg.register(Box::new(zig_tokenizer()));
         reg.register(Box::new(JsonTokenizer));
         reg.register(Box::new(TomlTokenizer));
         reg.register(Box::new(MarkdownTokenizer));
@@ -3936,6 +4089,9 @@ fn main() {
         assert!(reg.for_extension("fish").is_some());
         assert!(reg.for_extension("lua").is_some());
         assert!(reg.for_extension("r").is_some());
+        assert!(reg.for_extension("ex").is_some());
+        assert!(reg.for_extension("hs").is_some());
+        assert!(reg.for_extension("zig").is_some());
         assert!(reg.for_extension("json").is_some());
         assert!(reg.for_extension("toml").is_some());
         assert!(reg.for_extension("md").is_some());

@@ -4,6 +4,7 @@
 
 use ftui_demo_showcase::app::{AppModel, ScreenId};
 use ftui_demo_showcase::cli;
+use ftui_demo_showcase::screens;
 use ftui_render::budget::FrameBudgetConfig;
 use ftui_runtime::{Program, ProgramConfig, ScreenMode};
 
@@ -23,7 +24,7 @@ fn main() {
 
     let start_screen = if opts.start_screen >= 1 {
         let idx = (opts.start_screen as usize).saturating_sub(1);
-        ScreenId::ALL
+        screens::screen_ids()
             .get(idx)
             .copied()
             .unwrap_or(ScreenId::Dashboard)

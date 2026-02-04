@@ -881,6 +881,7 @@ impl Default for MarkdownTheme {
 pub struct MarkdownRenderer {
     theme: MarkdownTheme,
     rule_width: u16,
+    table_max_width: Option<u16>,
 }
 
 impl MarkdownRenderer {
@@ -890,6 +891,7 @@ impl MarkdownRenderer {
         Self {
             theme,
             rule_width: 40,
+            table_max_width: None,
         }
     }
 
@@ -897,6 +899,13 @@ impl MarkdownRenderer {
     #[must_use]
     pub fn rule_width(mut self, width: u16) -> Self {
         self.rule_width = width;
+        self
+    }
+
+    /// Set a maximum width for table rendering (including borders).
+    #[must_use]
+    pub fn table_max_width(mut self, width: u16) -> Self {
+        self.table_max_width = Some(width);
         self
     }
 
@@ -915,7 +924,7 @@ impl MarkdownRenderer {
             | Options::ENABLE_GFM;
         let parser = Parser::new_ext(markdown, options);
 
-        let mut builder = RenderState::new(&self.theme, self.rule_width);
+        let mut builder = RenderState::new(&self.theme, self.rule_width, self.table_max_width);
         builder.process(parser);
         builder.finish()
     }
@@ -1069,6 +1078,7 @@ impl TableState {
 struct RenderState<'t> {
     theme: &'t MarkdownTheme,
     rule_width: u16,
+    table_max_width: Option<u16>,
     lines: Vec<Line>,
     current_spans: Vec<Span<'static>>,
     style_stack: Vec<StyleContext>,
@@ -1100,10 +1110,11 @@ struct RenderState<'t> {
 }
 
 impl<'t> RenderState<'t> {
-    fn new(theme: &'t MarkdownTheme, rule_width: u16) -> Self {
+    fn new(theme: &'t MarkdownTheme, rule_width: u16, table_max_width: Option<u16>) -> Self {
         Self {
             theme,
             rule_width,
+            table_max_width,
             lines: Vec::new(),
             current_spans: Vec::new(),
             style_stack: Vec::new(),
@@ -1661,6 +1672,7 @@ impl<'t> RenderState<'t> {
                 widths[idx] = widths[idx].max(width);
             }
         }
+        self.fit_table_widths(&mut widths);
 
         let border_style = self.theme.table_border;
         self.lines
@@ -1695,6 +1707,79 @@ impl<'t> RenderState<'t> {
         self.lines
             .push(self.table_border_line(&widths, '└', '┴', '┘', border_style));
         self.needs_blank = true;
+    }
+
+    fn fit_table_widths(&self, widths: &mut [usize]) {
+        let Some(max_width) = self.table_max_width else {
+            return;
+        };
+        if widths.is_empty() {
+            return;
+        }
+
+        let max_width = usize::from(max_width);
+        let border_width = widths.len().saturating_mul(3).saturating_add(1);
+        if max_width <= border_width {
+            widths.fill(1);
+            return;
+        }
+
+        let max_content = max_width.saturating_sub(border_width);
+        let total: usize = widths.iter().sum();
+        if total <= max_content {
+            return;
+        }
+
+        let min_width = 1usize;
+        let min_total = min_width.saturating_mul(widths.len());
+        if max_content <= min_total {
+            widths.fill(min_width);
+            return;
+        }
+
+        let total_orig = total;
+        let mut new_widths = vec![min_width; widths.len()];
+        let mut remaining = max_content.saturating_sub(min_total);
+
+        let mut allocations = Vec::with_capacity(widths.len());
+        for &orig in widths.iter() {
+            let share = remaining.saturating_mul(orig) / total_orig;
+            let cap = orig.saturating_sub(min_width);
+            allocations.push(share.min(cap));
+        }
+        let used: usize = allocations.iter().sum();
+        remaining = remaining.saturating_sub(used);
+
+        for (slot, add) in new_widths.iter_mut().zip(allocations.iter()) {
+            *slot = slot.saturating_add(*add);
+        }
+
+        if remaining > 0 {
+            let mut order: Vec<usize> = (0..widths.len()).collect();
+            order.sort_by_key(|&idx| {
+                let cap = widths[idx].saturating_sub(new_widths[idx]);
+                (std::cmp::Reverse(cap), idx)
+            });
+            while remaining > 0 {
+                let mut progressed = false;
+                for &idx in &order {
+                    let cap = widths[idx].saturating_sub(new_widths[idx]);
+                    if cap > 0 {
+                        new_widths[idx] += 1;
+                        remaining -= 1;
+                        progressed = true;
+                        if remaining == 0 {
+                            break;
+                        }
+                    }
+                }
+                if !progressed {
+                    break;
+                }
+            }
+        }
+
+        widths.copy_from_slice(&new_widths);
     }
 
     fn table_border_line(
@@ -1734,7 +1819,7 @@ impl<'t> RenderState<'t> {
                 .get(idx)
                 .cloned()
                 .unwrap_or_else(|| vec![Span::raw("")]);
-            let cell_width: usize = cell_spans.iter().map(|span| span.width()).sum();
+            let (cell_spans, cell_width) = self.table_cell_spans(&cell_spans, *width, base_style);
             let extra = width.saturating_sub(cell_width);
             let alignment = alignments.get(idx).copied().unwrap_or(Alignment::None);
 
@@ -1748,12 +1833,53 @@ impl<'t> RenderState<'t> {
             let right_pad = 1 + right_extra;
 
             spans.push(Span::styled(" ".repeat(left_pad), base_style));
-            spans.extend(self.apply_table_cell_style(&cell_spans, base_style));
+            spans.extend(cell_spans);
             spans.push(Span::styled(" ".repeat(right_pad), base_style));
             spans.push(Span::styled("│", border_style));
         }
 
         Line::from_spans(spans)
+    }
+
+    fn table_cell_spans(
+        &self,
+        spans: &[Span<'static>],
+        max_width: usize,
+        base_style: Style,
+    ) -> (Vec<Span<'static>>, usize) {
+        if max_width == 0 {
+            return (Vec::new(), 0);
+        }
+
+        let styled = self.apply_table_cell_style(spans, base_style);
+        let total_width: usize = styled.iter().map(|span| span.width()).sum();
+        if total_width <= max_width {
+            return (styled, total_width);
+        }
+
+        let content_limit = max_width.saturating_sub(1);
+        let mut out = Vec::new();
+        let mut used = 0usize;
+
+        if content_limit > 0 {
+            for span in styled {
+                let span_width = span.width();
+                if used + span_width <= content_limit {
+                    used += span_width;
+                    out.push(span);
+                } else {
+                    let remaining = content_limit.saturating_sub(used);
+                    if remaining > 0 {
+                        let (left, _right) = span.split_at_cell(remaining);
+                        out.push(left);
+                    }
+                    break;
+                }
+            }
+        }
+
+        out.push(Span::styled("…", base_style));
+        (out, max_width)
     }
 
     fn apply_table_cell_style(
@@ -2499,6 +2625,17 @@ The end.
         assert!(content.contains("Col3"));
         assert!(content.contains("A"));
         assert!(content.contains("F"));
+    }
+
+    #[test]
+    fn markdown_table_respects_max_width() {
+        let md = "| Col A | Column B |\n| --- | --- |\n| superlongvalue | evenlongervalue |\n";
+        let text = MarkdownRenderer::new(MarkdownTheme::default())
+            .table_max_width(20)
+            .render(md);
+        assert!(text.width() <= 20);
+        let content = plain(&text);
+        assert!(content.contains('…'));
     }
 
     #[test]
