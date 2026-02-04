@@ -371,45 +371,23 @@ impl<W: Write> Drop for InlineRenderer<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
-    /// Mock writer that captures all output.
-    #[derive(Default)]
-    struct MockWriter {
-        output: Vec<u8>,
+    type TestWriter = Cursor<Vec<u8>>;
+
+    fn test_writer() -> TestWriter {
+        Cursor::new(Vec::new())
     }
 
-    impl Write for MockWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.output.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
+    fn writer_contains_sequence(writer: &TestWriter, seq: &[u8]) -> bool {
+        writer
+            .get_ref()
+            .windows(seq.len())
+            .any(|window| window == seq)
     }
 
-    impl MockWriter {
-        #[allow(dead_code)] // Useful for debugging tests
-        fn output_str(&self) -> String {
-            // Escape for visibility
-            self.output
-                .iter()
-                .map(|&b| {
-                    if b == 0x1b {
-                        "ESC".to_string()
-                    } else if b.is_ascii_graphic() || b == b' ' {
-                        (b as char).to_string()
-                    } else {
-                        format!("<{:02x}>", b)
-                    }
-                })
-                .collect()
-        }
-
-        fn contains_sequence(&self, seq: &[u8]) -> bool {
-            self.output.windows(seq.len()).any(|window| window == seq)
-        }
+    fn writer_clear(writer: &mut TestWriter) {
+        writer.get_mut().clear();
     }
 
     #[test]
@@ -450,19 +428,19 @@ mod tests {
 
     #[test]
     fn enter_sets_scroll_region_for_scroll_strategy() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::ScrollRegion);
         let mut renderer = InlineRenderer::new(writer, config);
 
         renderer.enter().unwrap();
 
         // Should set scroll region: ESC [ 1 ; 18 r
-        assert!(renderer.writer.contains_sequence(b"\x1b[1;18r"));
+        assert!(writer_contains_sequence(&renderer.writer, b"\x1b[1;18r"));
     }
 
     #[test]
     fn exit_resets_scroll_region() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::ScrollRegion);
         let mut renderer = InlineRenderer::new(writer, config);
 
@@ -470,12 +448,15 @@ mod tests {
         renderer.exit().unwrap();
 
         // Should reset scroll region: ESC [ r
-        assert!(renderer.writer.contains_sequence(RESET_SCROLL_REGION));
+        assert!(writer_contains_sequence(
+            &renderer.writer,
+            RESET_SCROLL_REGION
+        ));
     }
 
     #[test]
     fn present_ui_saves_and_restores_cursor() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::OverlayRedraw);
         let mut renderer = InlineRenderer::new(writer, config);
 
@@ -487,14 +468,14 @@ mod tests {
             .unwrap();
 
         // Should save cursor (ESC 7)
-        assert!(renderer.writer.contains_sequence(CURSOR_SAVE));
+        assert!(writer_contains_sequence(&renderer.writer, CURSOR_SAVE));
         // Should restore cursor (ESC 8)
-        assert!(renderer.writer.contains_sequence(CURSOR_RESTORE));
+        assert!(writer_contains_sequence(&renderer.writer, CURSOR_RESTORE));
     }
 
     #[test]
     fn present_ui_uses_sync_output_when_enabled() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80)
             .with_strategy(InlineStrategy::OverlayRedraw)
             .with_sync_output(true);
@@ -503,13 +484,13 @@ mod tests {
         renderer.present_ui(|_, _| Ok(())).unwrap();
 
         // Should have sync begin and end
-        assert!(renderer.writer.contains_sequence(SYNC_BEGIN));
-        assert!(renderer.writer.contains_sequence(SYNC_END));
+        assert!(writer_contains_sequence(&renderer.writer, SYNC_BEGIN));
+        assert!(writer_contains_sequence(&renderer.writer, SYNC_END));
     }
 
     #[test]
     fn drop_cleans_up_scroll_region() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::ScrollRegion);
 
         {
@@ -523,27 +504,27 @@ mod tests {
 
     #[test]
     fn write_log_preserves_cursor_in_overlay_mode() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::OverlayRedraw);
         let mut renderer = InlineRenderer::new(writer, config);
 
         renderer.write_log("test log\n").unwrap();
 
         // Should save and restore cursor
-        assert!(renderer.writer.contains_sequence(CURSOR_SAVE));
-        assert!(renderer.writer.contains_sequence(CURSOR_RESTORE));
+        assert!(writer_contains_sequence(&renderer.writer, CURSOR_SAVE));
+        assert!(writer_contains_sequence(&renderer.writer, CURSOR_RESTORE));
     }
 
     #[test]
     fn hybrid_does_not_set_scroll_region_in_enter() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::Hybrid);
         let mut renderer = InlineRenderer::new(writer, config);
 
         renderer.enter().unwrap();
 
         // Hybrid should NOT set scroll region (uses overlay baseline)
-        assert!(!renderer.writer.contains_sequence(b"\x1b[1;18r"));
+        assert!(!writer_contains_sequence(&renderer.writer, b"\x1b[1;18r"));
         assert!(!renderer.scroll_region_set);
     }
 
@@ -575,7 +556,7 @@ mod tests {
 
     #[test]
     fn write_log_silently_drops_when_no_log_region() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         // UI takes full height - no room for logs
         let config = InlineConfig::new(24, 24, 80).with_strategy(InlineStrategy::OverlayRedraw);
         let mut renderer = InlineRenderer::new(writer, config);
@@ -584,21 +565,21 @@ mod tests {
         renderer.write_log("test log\n").unwrap();
 
         // Should not have written cursor save/restore since we bailed early
-        assert!(!renderer.writer.contains_sequence(CURSOR_SAVE));
+        assert!(!writer_contains_sequence(&renderer.writer, CURSOR_SAVE));
     }
 
     #[test]
     fn cleanup_does_not_restore_unsaved_cursor() {
-        let writer = MockWriter::default();
+        let writer = test_writer();
         let config = InlineConfig::new(6, 24, 80).with_strategy(InlineStrategy::ScrollRegion);
         let mut renderer = InlineRenderer::new(writer, config);
 
         // Just enter and exit, never save cursor explicitly
         renderer.enter().unwrap();
-        renderer.writer.output.clear(); // Clear output to check cleanup behavior
+        writer_clear(&mut renderer.writer); // Clear output to check cleanup behavior
         renderer.exit().unwrap();
 
         // Should NOT restore cursor since we never saved it
-        assert!(!renderer.writer.contains_sequence(CURSOR_RESTORE));
+        assert!(!writer_contains_sequence(&renderer.writer, CURSOR_RESTORE));
     }
 }

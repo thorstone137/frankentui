@@ -250,6 +250,13 @@ impl InputParser {
                     KeyEvent::new(KeyCode::Char(byte as char)).with_modifiers(Modifiers::ALT),
                 ))
             }
+            // Alt+Backspace (DEL)
+            0x7F => {
+                self.state = ParserState::Ground;
+                Some(Event::Key(
+                    KeyEvent::new(KeyCode::Backspace).with_modifiers(Modifiers::ALT),
+                ))
+            }
             // Invalid - return to ground
             _ => {
                 self.state = ParserState::Ground;
@@ -1333,7 +1340,7 @@ mod tests {
                 // The content should be all 'a' since we filled with 'a'
                 assert!(p.text.chars().all(|c| c == 'a'));
             }
-            _ => panic!("Expected Paste event"),
+            _ => unreachable!("Expected Paste event"),
         }
 
         // Verify we are back in ground state by parsing a key
@@ -1864,7 +1871,9 @@ mod tests {
                                 "Byte 0x{byte:02X} should have Ctrl modifier"
                             );
                         }
-                        other => panic!("Byte 0x{byte:02X}: expected Key event, got {other:?}"),
+                        other => {
+                            panic!("Byte 0x{byte:02X}: expected Key event, got {other:?}");
+                        }
                     }
                 }
             }

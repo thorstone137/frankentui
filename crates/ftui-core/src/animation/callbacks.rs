@@ -139,12 +139,16 @@ impl<A: Animation> Callbacks<A> {
     /// Fires when the animation's value crosses `threshold` (clamped to [0.0, 1.0]).
     #[must_use]
     pub fn at_progress(mut self, threshold: f32) -> Self {
+        if !threshold.is_finite() {
+            return self;
+        }
         let clamped = threshold.clamp(0.0, 1.0);
-        self.config.thresholds.push(clamped);
-        self.config
+        let idx = self
+            .config
             .thresholds
-            .sort_by(|a, b| a.partial_cmp(b).unwrap());
-        self.state.thresholds_fired.push(false);
+            .partition_point(|&value| value <= clamped);
+        self.config.thresholds.insert(idx, clamped);
+        self.state.thresholds_fired.insert(idx, false);
         self
     }
 

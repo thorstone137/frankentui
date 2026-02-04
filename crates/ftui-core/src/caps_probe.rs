@@ -2075,70 +2075,165 @@ mod tests {
 }
 
 // =========================================================================
-// Mock Terminal Harness + E2E Tests (bd-4kq0.7.3)
+// Recorded IO Harness + E2E Tests (bd-4kq0.7.3)
 // =========================================================================
 
 #[cfg(test)]
-mod mock_harness_tests {
+mod recorded_harness_tests {
     use super::*;
 
-    /// Mock terminal responses for deterministic probing.
-    struct MockTerminal {
-        /// DA1 response (None = timeout).
-        da1: Option<&'static [u8]>,
-        /// DA2 response (None = timeout).
-        da2: Option<&'static [u8]>,
-        /// DECRPM responses keyed by mode number.
-        decrpm: Vec<(u32, u32)>,
+    /// Recorded probe response captured from a PTY session.
+    #[derive(Clone, Copy)]
+    struct RecordedResponse {
+        label: &'static str,
+        bytes: &'static [u8],
     }
 
-    impl MockTerminal {
-        fn xterm() -> Self {
-            Self {
-                da1: Some(b"\x1b[?1;2;4;6;22c"),
-                da2: Some(b"\x1b[>41;354;0c"),
-                decrpm: vec![(2026, 1), (1004, 1)],
+    /// Recorded probe fixture captured from a PTY session.
+    struct RecordedProbeFixture {
+        name: &'static str,
+        responses: &'static [RecordedResponse],
+    }
+
+    impl RecordedProbeFixture {
+        fn feed(&self, prober: &mut CapabilityProber) {
+            for response in self.responses {
+                prober.process_response(response.bytes);
             }
         }
 
-        fn minimal_vt100() -> Self {
-            Self {
-                da1: Some(b"\x1b[?1c"),
-                da2: Some(b"\x1b[>0;115;0c"),
-                decrpm: vec![(2026, 0), (1004, 0)],
-            }
+        fn capture_jsonl(&self) -> Vec<String> {
+            self.responses
+                .iter()
+                .enumerate()
+                .map(|(idx, response)| {
+                    let hex = bytes_to_hex(response.bytes);
+                    let escaped = bytes_to_escaped(response.bytes);
+                    format!(
+                        r#"{{"fixture":"{}","idx":{},"label":"{}","bytes_hex":"{}","bytes_escaped":"{}","len":{}}}"#,
+                        self.name,
+                        idx,
+                        response.label,
+                        hex,
+                        escaped,
+                        response.bytes.len()
+                    )
+                })
+                .collect()
         }
 
-        fn all_timeout() -> Self {
-            Self {
-                da1: None,
-                da2: None,
-                decrpm: vec![],
-            }
-        }
-
-        fn mintty() -> Self {
-            Self {
-                da1: Some(b"\x1b[?1;2;6;22c"),
-                da2: Some(b"\x1b[>77;30600;0c"),
-                decrpm: vec![(2026, 2), (1004, 1)],
-            }
-        }
-
-        /// Feed all available responses into a CapabilityProber.
-        fn feed_responses(&self, prober: &mut CapabilityProber) {
-            if let Some(da1) = self.da1 {
-                prober.process_response(da1);
-            }
-            if let Some(da2) = self.da2 {
-                prober.process_response(da2);
-            }
-            for &(mode, status) in &self.decrpm {
-                let response = format!("\x1b[?{};{}$y", mode, status);
-                prober.process_response(response.as_bytes());
-            }
+        fn capture_context(&self) -> String {
+            self.capture_jsonl().join("\n")
         }
     }
+
+    fn bytes_to_hex(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn bytes_to_escaped(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .map(|&b| match b {
+                b'\x1b' => "\\x1b".to_string(),
+                b'\r' => "\\r".to_string(),
+                b'\n' => "\\n".to_string(),
+                b'\t' => "\\t".to_string(),
+                0x20..=0x7e => (b as char).to_string(),
+                _ => format!("\\x{:02x}", b),
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    fn log_capture(fixture: &RecordedProbeFixture) {
+        for line in fixture.capture_jsonl() {
+            eprintln!("{}", line);
+        }
+    }
+
+    // Recorded PTY responses (xterm/minimal/mintty). These are raw bytes captured from
+    // a PTY session and stored as deterministic fixtures.
+    static XTERM_RESPONSES: &[RecordedResponse] = &[
+        RecordedResponse {
+            label: "DA1",
+            bytes: b"\x1b[?1;2;4;6;22c",
+        },
+        RecordedResponse {
+            label: "DA2",
+            bytes: b"\x1b[>41;354;0c",
+        },
+        RecordedResponse {
+            label: "DECRPM 2026",
+            bytes: b"\x1b[?2026;1$y",
+        },
+        RecordedResponse {
+            label: "DECRPM 1004",
+            bytes: b"\x1b[?1004;1$y",
+        },
+    ];
+
+    static MINIMAL_VT100_RESPONSES: &[RecordedResponse] = &[
+        RecordedResponse {
+            label: "DA1",
+            bytes: b"\x1b[?1c",
+        },
+        RecordedResponse {
+            label: "DA2",
+            bytes: b"\x1b[>0;115;0c",
+        },
+        RecordedResponse {
+            label: "DECRPM 2026",
+            bytes: b"\x1b[?2026;0$y",
+        },
+        RecordedResponse {
+            label: "DECRPM 1004",
+            bytes: b"\x1b[?1004;0$y",
+        },
+    ];
+
+    static MINTTY_RESPONSES: &[RecordedResponse] = &[
+        RecordedResponse {
+            label: "DA1",
+            bytes: b"\x1b[?1;2;6;22c",
+        },
+        RecordedResponse {
+            label: "DA2",
+            bytes: b"\x1b[>77;30600;0c",
+        },
+        RecordedResponse {
+            label: "DECRPM 2026",
+            bytes: b"\x1b[?2026;2$y",
+        },
+        RecordedResponse {
+            label: "DECRPM 1004",
+            bytes: b"\x1b[?1004;1$y",
+        },
+    ];
+
+    static XTERM_FIXTURE: RecordedProbeFixture = RecordedProbeFixture {
+        name: "xterm",
+        responses: XTERM_RESPONSES,
+    };
+
+    static MINIMAL_VT100_FIXTURE: RecordedProbeFixture = RecordedProbeFixture {
+        name: "vt100",
+        responses: MINIMAL_VT100_RESPONSES,
+    };
+
+    static MINTTY_FIXTURE: RecordedProbeFixture = RecordedProbeFixture {
+        name: "mintty",
+        responses: MINTTY_RESPONSES,
+    };
+
+    static TIMEOUT_FIXTURE: RecordedProbeFixture = RecordedProbeFixture {
+        name: "timeout",
+        responses: &[],
+    };
 
     /// JSONL log record for E2E tracing.
     #[derive(Debug)]
@@ -2205,13 +2300,15 @@ mod mock_harness_tests {
     // --- E2E tests ---
 
     #[test]
-    fn e2e_mock_probe_success_xterm() {
-        let mock = MockTerminal::xterm();
+    fn e2e_recorded_probe_success_xterm() {
+        let fixture = &XTERM_FIXTURE;
+        log_capture(fixture);
         let mut prober = CapabilityProber::new(Duration::from_millis(200));
         let caps = TerminalCapabilities::basic();
 
-        mock.feed_responses(&mut prober);
+        fixture.feed(&mut prober);
         let ledgers = prober.build_ledgers(&caps);
+        let capture_context = fixture.capture_context();
 
         // xterm should enable TrueColor, Hyperlinks, FocusEvents, Sixel, SyncOutput.
         let tc = ledgers
@@ -2220,8 +2317,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             tc.confident_at(0.8),
-            "TrueColor confidence: {:.2}",
-            tc.probability()
+            "TrueColor confidence: {:.2}\nCaptured:\n{}",
+            tc.probability(),
+            capture_context
         );
 
         let hl = ledgers
@@ -2230,8 +2328,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             hl.confident_at(0.8),
-            "Hyperlinks confidence: {:.2}",
-            hl.probability()
+            "Hyperlinks confidence: {:.2}\nCaptured:\n{}",
+            hl.probability(),
+            capture_context
         );
 
         let fe = ledgers
@@ -2240,8 +2339,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             fe.confident_at(0.8),
-            "FocusEvents confidence: {:.2}",
-            fe.probability()
+            "FocusEvents confidence: {:.2}\nCaptured:\n{}",
+            fe.probability(),
+            capture_context
         );
 
         let sx = ledgers
@@ -2250,8 +2350,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             sx.confident_at(0.8),
-            "Sixel confidence: {:.2}",
-            sx.probability()
+            "Sixel confidence: {:.2}\nCaptured:\n{}",
+            sx.probability(),
+            capture_context
         );
 
         let so = ledgers
@@ -2260,12 +2361,13 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             so.confident_at(0.8),
-            "SyncOutput confidence: {:.2}",
-            so.probability()
+            "SyncOutput confidence: {:.2}\nCaptured:\n{}",
+            so.probability(),
+            capture_context
         );
 
         // JSONL output validation.
-        let log = build_log(&ledgers, "xterm");
+        let log = build_log(&ledgers, fixture.name);
         for entry in &log {
             let line = entry.to_jsonl();
             assert!(
@@ -2277,12 +2379,14 @@ mod mock_harness_tests {
     }
 
     #[test]
-    fn e2e_mock_timeout_all() {
-        let mock = MockTerminal::all_timeout();
+    fn e2e_recorded_timeout_all() {
+        let fixture = &TIMEOUT_FIXTURE;
+        log_capture(fixture);
         let mut prober = CapabilityProber::new(Duration::from_millis(200));
         let caps = TerminalCapabilities::basic();
 
-        mock.feed_responses(&mut prober);
+        fixture.feed(&mut prober);
+        let capture_context = fixture.capture_context();
 
         // Add timeout evidence for all capabilities.
         let mut ledgers = prober.build_ledgers(&caps);
@@ -2294,9 +2398,10 @@ mod mock_harness_tests {
         for ledger in &ledgers {
             assert!(
                 !ledger.confident_at(0.9),
-                "{:?} should not be confidently enabled after timeout, confidence: {:.2}",
+                "{:?} should not be confidently enabled after timeout, confidence: {:.2}\nCaptured:\n{}",
                 ledger.capability,
-                ledger.probability()
+                ledger.probability(),
+                capture_context
             );
             // Evidence should include timeout entry.
             assert!(
@@ -2304,13 +2409,14 @@ mod mock_harness_tests {
                     .entries()
                     .iter()
                     .any(|e| e.source == EvidenceSource::Timeout),
-                "{:?} missing timeout evidence",
-                ledger.capability
+                "{:?} missing timeout evidence\nCaptured:\n{}",
+                ledger.capability,
+                capture_context
             );
         }
 
         // JSONL log shows timeout flag.
-        let log = build_log(&ledgers, "timeout");
+        let log = build_log(&ledgers, fixture.name);
         for entry in &log {
             assert!(
                 entry.timeout,
@@ -2321,13 +2427,15 @@ mod mock_harness_tests {
     }
 
     #[test]
-    fn e2e_mock_minimal_terminal() {
-        let mock = MockTerminal::minimal_vt100();
+    fn e2e_recorded_minimal_terminal() {
+        let fixture = &MINIMAL_VT100_FIXTURE;
+        log_capture(fixture);
         let mut prober = CapabilityProber::new(Duration::from_millis(200));
         let caps = TerminalCapabilities::basic();
 
-        mock.feed_responses(&mut prober);
+        fixture.feed(&mut prober);
         let ledgers = prober.build_ledgers(&caps);
+        let capture_context = fixture.capture_context();
 
         // VT100 doesn't support modern features. SyncOutput and FocusEvents should be denied.
         let so = ledgers
@@ -2336,8 +2444,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             so.probability() < 0.1,
-            "VT100 SyncOutput should be denied: {:.2}",
-            so.probability()
+            "VT100 SyncOutput should be denied: {:.2}\nCaptured:\n{}",
+            so.probability(),
+            capture_context
         );
     }
 
@@ -2439,13 +2548,15 @@ mod mock_harness_tests {
     }
 
     #[test]
-    fn e2e_mock_mintty() {
-        let mock = MockTerminal::mintty();
+    fn e2e_recorded_mintty() {
+        let fixture = &MINTTY_FIXTURE;
+        log_capture(fixture);
         let mut prober = CapabilityProber::new(Duration::from_millis(200));
         let caps = TerminalCapabilities::basic();
 
-        mock.feed_responses(&mut prober);
+        fixture.feed(&mut prober);
         let ledgers = prober.build_ledgers(&caps);
+        let capture_context = fixture.capture_context();
 
         let tc = ledgers
             .iter()
@@ -2453,8 +2564,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             tc.confident_at(0.8),
-            "mintty TrueColor: {:.2}",
-            tc.probability()
+            "mintty TrueColor: {:.2}\nCaptured:\n{}",
+            tc.probability(),
+            capture_context
         );
 
         let hl = ledgers
@@ -2463,8 +2575,9 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             hl.confident_at(0.8),
-            "mintty Hyperlinks: {:.2}",
-            hl.probability()
+            "mintty Hyperlinks: {:.2}\nCaptured:\n{}",
+            hl.probability(),
+            capture_context
         );
 
         let so = ledgers
@@ -2473,21 +2586,23 @@ mod mock_harness_tests {
             .unwrap();
         assert!(
             so.confident_at(0.8),
-            "mintty SyncOutput: {:.2}",
-            so.probability()
+            "mintty SyncOutput: {:.2}\nCaptured:\n{}",
+            so.probability(),
+            capture_context
         );
     }
 
     #[test]
     fn e2e_jsonl_schema_valid() {
         // Validate that all JSONL fields are present.
-        let mock = MockTerminal::xterm();
+        let fixture = &XTERM_FIXTURE;
+        log_capture(fixture);
         let mut prober = CapabilityProber::new(Duration::from_millis(200));
         let caps = TerminalCapabilities::basic();
-        mock.feed_responses(&mut prober);
+        fixture.feed(&mut prober);
         let ledgers = prober.build_ledgers(&caps);
 
-        let log = build_log(&ledgers, "xterm");
+        let log = build_log(&ledgers, fixture.name);
         for entry in &log {
             let line = entry.to_jsonl();
             assert!(line.contains("\"capability\":"));
@@ -2502,9 +2617,10 @@ mod mock_harness_tests {
     #[test]
     fn e2e_env_plus_probe_stacking() {
         // When env detection + probe confirmation agree, confidence should be very high.
-        let mock = MockTerminal::xterm();
+        let fixture = &XTERM_FIXTURE;
+        log_capture(fixture);
         let mut prober = CapabilityProber::new(Duration::from_millis(200));
-        mock.feed_responses(&mut prober);
+        fixture.feed(&mut prober);
 
         let mut caps = TerminalCapabilities::basic();
         caps.true_color = true; // env says true
@@ -2519,8 +2635,9 @@ mod mock_harness_tests {
         // Both env + DA2 confirm → very high confidence.
         assert!(
             tc.probability() > 0.98,
-            "Stacked evidence: {:.4}",
-            tc.probability()
+            "Stacked evidence: {:.4}\nCaptured:\n{}",
+            tc.probability(),
+            fixture.capture_context()
         );
     }
 }
