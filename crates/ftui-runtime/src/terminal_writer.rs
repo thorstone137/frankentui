@@ -1161,19 +1161,30 @@ impl<W: Write> TerminalWriter<W> {
         // Enforce dirty_rows_enabled toggle
         if !self.diff_config.dirty_rows_enabled && strategy == DiffStrategy::DirtyRows {
             strategy = DiffStrategy::Full;
+            if self.diff_config.bayesian_enabled {
+                self.diff_strategy
+                    .override_last_strategy(strategy, "dirty_rows_disabled");
+            }
         }
 
         // Periodic probe when FullRedraw is selected (to update posterior)
         if strategy == DiffStrategy::FullRedraw {
             if self.full_redraw_probe >= FULL_REDRAW_PROBE_INTERVAL {
                 self.full_redraw_probe = 0;
-                strategy = if self.diff_config.dirty_rows_enabled
+                let probed = if self.diff_config.dirty_rows_enabled
                     && dirty_rows < buffer.height() as usize
                 {
                     DiffStrategy::DirtyRows
                 } else {
                     DiffStrategy::Full
                 };
+                if probed != strategy {
+                    strategy = probed;
+                    if self.diff_config.bayesian_enabled {
+                        self.diff_strategy
+                            .override_last_strategy(strategy, "full_redraw_probe");
+                    }
+                }
             } else {
                 self.full_redraw_probe = self.full_redraw_probe.saturating_add(1);
             }
@@ -3641,6 +3652,18 @@ mod tests {
         assert!(
             value["max_span_len"].is_number(),
             "max_span_len should be numeric"
+        );
+        assert!(
+            value["guard_reason"].is_string(),
+            "guard_reason should be a string"
+        );
+        assert!(
+            value["hysteresis_applied"].is_boolean(),
+            "hysteresis_applied should be boolean"
+        );
+        assert!(
+            value["hysteresis_ratio"].is_number(),
+            "hysteresis_ratio should be numeric"
         );
         assert!(
             value["fallback_reason"].is_string(),

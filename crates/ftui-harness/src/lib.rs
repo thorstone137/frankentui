@@ -366,8 +366,8 @@ pub fn assert_buffer_snapshot(name: &str, buf: &Buffer, base_dir: &str, mode: Ma
 
             if norm_expected != norm_actual {
                 let diff = diff_text(&norm_expected, &norm_actual);
-                // ubs:ignore — snapshot assertion helper intentionally panics on mismatch
-                panic!(
+                std::panic::panic_any(format!(
+                    // ubs:ignore — snapshot assertion helper intentionally panics in tests
                     "\n\
                      === Snapshot mismatch: '{name}' ===\n\
                      File: {}\n\
@@ -375,12 +375,12 @@ pub fn assert_buffer_snapshot(name: &str, buf: &Buffer, base_dir: &str, mode: Ma
                      Set BLESS=1 to update.\n\n\
                      Diff (- expected, + actual):\n{diff}",
                     path.display()
-                );
+                ));
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // ubs:ignore — snapshot assertion helper intentionally panics when missing
-            panic!(
+            std::panic::panic_any(format!(
+                // ubs:ignore — snapshot assertion helper intentionally panics in tests
                 "\n\
                  === No snapshot found: '{name}' ===\n\
                  Expected at: {}\n\
@@ -389,11 +389,14 @@ pub fn assert_buffer_snapshot(name: &str, buf: &Buffer, base_dir: &str, mode: Ma
                 path.display(),
                 w = buf.width(),
                 h = buf.height(),
-            );
+            ));
         }
         Err(e) => {
-            // ubs:ignore — snapshot assertion helper intentionally panics on IO failure
-            panic!("Failed to read snapshot '{}': {e}", path.display());
+            std::panic::panic_any(format!(
+                // ubs:ignore — snapshot assertion helper intentionally panics in tests
+                "Failed to read snapshot '{}': {e}",
+                path.display()
+            ));
         }
     }
 }
@@ -423,31 +426,34 @@ pub fn assert_buffer_snapshot_ansi(name: &str, buf: &Buffer, base_dir: &str) {
         Ok(expected) => {
             if expected != actual {
                 let diff = diff_text(&expected, &actual);
-                // ubs:ignore — snapshot assertion helper intentionally panics on mismatch
-                panic!(
+                std::panic::panic_any(format!(
+                    // ubs:ignore — snapshot assertion helper intentionally panics in tests
                     "\n\
                      === ANSI snapshot mismatch: '{name}' ===\n\
                      File: {}\n\
                      Set BLESS=1 to update.\n\n\
                      Diff (- expected, + actual):\n{diff}",
                     path.display()
-                );
+                ));
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // ubs:ignore — snapshot assertion helper intentionally panics when missing
-            panic!(
+            std::panic::panic_any(format!(
+                // ubs:ignore — snapshot assertion helper intentionally panics in tests
                 "\n\
                  === No ANSI snapshot found: '{resolved_name}' ===\n\
                  Expected at: {}\n\
                  Run with BLESS=1 to create it.\n\n\
                  Actual output:\n{actual}",
                 path.display(),
-            );
+            ));
         }
         Err(e) => {
-            // ubs:ignore — snapshot assertion helper intentionally panics on IO failure
-            panic!("Failed to read snapshot '{}': {e}", path.display());
+            std::panic::panic_any(format!(
+                // ubs:ignore — snapshot assertion helper intentionally panics in tests
+                "Failed to read snapshot '{}': {e}",
+                path.display()
+            ));
         }
     }
 }
@@ -589,12 +595,12 @@ where
                         );
                     }
                     ProfileCompareMode::Strict => {
-                        // ubs:ignore — snapshot assertion helper intentionally panics on mismatch
-                        panic!(
+                        std::panic::panic_any(format!(
+                            // ubs:ignore — snapshot assertion helper intentionally panics in tests
                             "Profile comparison drift: {} vs {}\n{diff}",
                             baseline_profile.as_str(),
                             snapshot.profile.as_str()
-                        );
+                        ));
                     }
                     ProfileCompareMode::None => {}
                 }
