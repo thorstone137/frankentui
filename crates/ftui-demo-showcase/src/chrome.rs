@@ -23,6 +23,8 @@ use crate::tour::TourOverlayState;
 
 /// Base hit ID for tab bar entries.  Tab i has HitId(TAB_HIT_BASE + i).
 pub const TAB_HIT_BASE: u32 = 1000;
+/// Base hit ID for category tabs (ScreenCategory::ALL order).
+pub const CATEGORY_HIT_BASE: u32 = 2000;
 /// Base hit ID for clickable panes (one per screen).
 pub const PANE_HIT_BASE: u32 = 4000;
 const TAB_ACCENT_ALPHA: u8 = 220;
@@ -33,6 +35,17 @@ pub fn screen_from_hit_id(id: HitId) -> Option<ScreenId> {
     if raw >= TAB_HIT_BASE && raw < TAB_HIT_BASE + screens::screen_registry().len() as u32 {
         let idx = (raw - TAB_HIT_BASE) as usize;
         screens::screen_registry().get(idx).map(|meta| meta.id)
+    } else {
+        None
+    }
+}
+
+/// Convert a category hit ID to a ScreenCategory.
+pub fn category_from_hit_id(id: HitId) -> Option<ScreenCategory> {
+    let raw = id.id();
+    if raw >= CATEGORY_HIT_BASE && raw < CATEGORY_HIT_BASE + ScreenCategory::ALL.len() as u32 {
+        let idx = (raw - CATEGORY_HIT_BASE) as usize;
+        ScreenCategory::ALL.get(idx).copied()
     } else {
         None
     }
@@ -51,7 +64,9 @@ pub fn screen_from_pane_hit_id(id: HitId) -> Option<ScreenId> {
 
 /// Convert any demo hit ID to its target screen.
 pub fn screen_from_any_hit_id(id: HitId) -> Option<ScreenId> {
-    screen_from_hit_id(id).or_else(|| screen_from_pane_hit_id(id))
+    screen_from_hit_id(id)
+        .or_else(|| screen_from_pane_hit_id(id))
+        .or_else(|| category_from_hit_id(id).and_then(screens::first_in_category))
 }
 
 /// Register a pane-sized hit region to route clicks to a screen.
@@ -315,7 +330,7 @@ pub fn render_category_tabs(current: ScreenId, frame: &mut Frame, area: Rect) {
     let current_category = screens::screen_category(current);
     let mut x = area.x;
 
-    for category in ScreenCategory::ALL {
+    for &category in ScreenCategory::ALL {
         let label = category.short_label();
         let label_width = 1 + display_width(label) as u16 + 1; // " {label} "
         if x + label_width > area.x + area.width {
@@ -323,9 +338,9 @@ pub fn render_category_tabs(current: ScreenId, frame: &mut Frame, area: Rect) {
         }
 
         let tab_area = Rect::new(x, area.y, label_width, 1);
-        let is_active = *category == current_category;
+        let is_active = category == current_category;
         let bg = if is_active {
-            theme::with_alpha(category_accent(*category), TAB_ACCENT_ALPHA)
+            theme::with_alpha(category_accent(category), TAB_ACCENT_ALPHA)
         } else {
             theme::alpha::SURFACE.into()
         };
@@ -345,6 +360,10 @@ pub fn render_category_tabs(current: ScreenId, frame: &mut Frame, area: Rect) {
             Span::styled(" ", pad_style),
         ]);
         Paragraph::new(Text::from_lines([line])).render(tab_area, frame);
+        frame.register_hit_region(
+            tab_area,
+            HitId::new(CATEGORY_HIT_BASE + category_index(category) as u32),
+        );
 
         x += label_width;
         if x < area.x + area.width {
@@ -357,6 +376,13 @@ pub fn render_category_tabs(current: ScreenId, frame: &mut Frame, area: Rect) {
             x = x.saturating_add(1);
         }
     }
+}
+
+fn category_index(category: ScreenCategory) -> usize {
+    ScreenCategory::ALL
+        .iter()
+        .position(|candidate| *candidate == category)
+        .unwrap_or(0)
 }
 
 /// Render screen tabs for a single category (bd-iuvb.16).
@@ -771,9 +797,8 @@ pub fn render_help_overlay(
             "Switch to screen by number",
             HelpCategory::Navigation,
         )
-        .global_entry_categorized("Tab / L", "Next screen", HelpCategory::Navigation)
-        .global_entry_categorized("S-Tab / H", "Previous screen", HelpCategory::Navigation)
-        .global_entry_categorized("← / →", "Previous/next screen", HelpCategory::Navigation)
+        .global_entry_categorized("Tab", "Next screen", HelpCategory::Navigation)
+        .global_entry_categorized("Shift+Tab", "Previous screen", HelpCategory::Navigation)
         // View
         .global_entry_categorized("?", "Toggle this help overlay", HelpCategory::View)
         .global_entry_categorized("A", "Toggle A11y panel", HelpCategory::View)
@@ -1053,6 +1078,43 @@ mod tests {
         if let Some((id, _region, _data)) = hit {
             let screen = screen_from_hit_id(id);
             assert_eq!(screen, Some(ScreenId::GuidedTour));
+        }
+    }
+
+    #[test]
+    fn pane_hit_maps_to_screen() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::with_hit_grid(20, 10, &mut pool);
+        let rect = Rect::new(2, 2, 8, 4);
+
+        register_pane_hit(&mut frame, rect, ScreenId::Dashboard);
+
+        let hit = frame.hit_test(3, 3);
+        assert!(hit.is_some(), "Pane region should be hit-testable");
+        if let Some((id, _region, _data)) = hit {
+            let screen = screen_from_any_hit_id(id);
+            assert_eq!(screen, Some(ScreenId::Dashboard));
+        }
+    }
+
+    #[test]
+    fn category_tabs_register_hit_regions() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::with_hit_grid(120, 1, &mut pool);
+        let area = Rect::new(0, 0, 120, 1);
+
+        render_category_tabs(ScreenId::Dashboard, &mut frame, area);
+
+        let hit = frame.hit_test(1, 0);
+        assert!(
+            hit.is_some(),
+            "First category tab should register hit region"
+        );
+        if let Some((id, _region, _data)) = hit {
+            let category = category_from_hit_id(id);
+            assert_eq!(category, Some(ScreenCategory::Tour));
+            let screen = screen_from_any_hit_id(id);
+            assert_eq!(screen, screens::first_in_category(ScreenCategory::Tour));
         }
     }
 

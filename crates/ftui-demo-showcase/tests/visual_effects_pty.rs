@@ -56,6 +56,58 @@ fn send_key(
     Ok(())
 }
 
+fn extract_vfx_hashes(output: &[u8]) -> Vec<u64> {
+    let text = String::from_utf8_lossy(output);
+    text.lines()
+        .filter_map(|line| {
+            if !line.contains("\"event\":\"vfx_frame\"") {
+                return None;
+            }
+            let key = "\"hash\":";
+            let start = line.find(key)? + key.len();
+            let rest = &line[start..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            rest[..end].parse::<u64>().ok()
+        })
+        .collect()
+}
+
+fn run_vfx_harness(demo_bin: &str, label: &str) -> Result<Vec<u64>, String> {
+    let config = PtyConfig::default()
+        .with_size(120, 40)
+        .with_test_name(label)
+        .logging(false);
+
+    let mut cmd = CommandBuilder::new(demo_bin);
+    cmd.arg("--vfx-harness");
+    cmd.arg("--vfx-effect=doom-e1m1");
+    cmd.arg("--vfx-tick-ms=16");
+    cmd.arg("--vfx-frames=6");
+    cmd.arg("--vfx-cols=120");
+    cmd.arg("--vfx-rows=40");
+    cmd.arg("--vfx-jsonl=-");
+    cmd.arg("--exit-after-ms=4000");
+
+    let mut session =
+        spawn_command(config, cmd).map_err(|err| format!("spawn vfx harness: {err}"))?;
+    let status = session
+        .wait_and_drain(Duration::from_secs(6))
+        .map_err(|err| format!("wait vfx harness: {err}"))?;
+    let output = session.output().to_vec();
+    let hashes = extract_vfx_hashes(&output);
+
+    if !status.success() {
+        let tail = tail_output(&output, 4096);
+        return Err(format!(
+            "vfx harness exit failure: {status:?}\nTAIL:\n{tail}"
+        ));
+    }
+
+    Ok(hashes)
+}
+
 // ---------------------------------------------------------------------------
 // PTY E2E: cycle effects/palettes without panic
 // ---------------------------------------------------------------------------
@@ -169,4 +221,47 @@ fn pty_visual_effects_input_no_panic() -> Result<(), String> {
             Err(msg)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// PTY E2E: deterministic VFX harness hashes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pty_vfx_harness_deterministic_hashes() -> Result<(), String> {
+    let demo_bin = std::env::var("CARGO_BIN_EXE_ftui-demo-showcase").map_err(|err| {
+        format!("CARGO_BIN_EXE_ftui-demo-showcase must be set for PTY tests: {err}")
+    })?;
+
+    log_jsonl(
+        "env",
+        &[
+            ("test", "pty_vfx_harness_deterministic_hashes".to_string()),
+            ("bin", demo_bin.clone()),
+        ],
+    );
+
+    let hashes_a = run_vfx_harness(&demo_bin, "vfx_harness_run_a")?;
+    let hashes_b = run_vfx_harness(&demo_bin, "vfx_harness_run_b")?;
+
+    if hashes_a.is_empty() {
+        return Err("vfx harness produced no hashes".to_string());
+    }
+
+    if hashes_a != hashes_b {
+        return Err(format!(
+            "vfx harness hashes diverged:\nA={:?}\nB={:?}",
+            hashes_a, hashes_b
+        ));
+    }
+
+    log_jsonl(
+        "result",
+        &[
+            ("case", "pty_vfx_harness_deterministic_hashes".to_string()),
+            ("frames", hashes_a.len().to_string()),
+        ],
+    );
+
+    Ok(())
 }

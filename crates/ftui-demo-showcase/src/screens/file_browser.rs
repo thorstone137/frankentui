@@ -687,7 +687,7 @@ mod icons {
             "png" | "jpg" | "jpeg" | "gif" | "svg" => "🖼️",
             "mp3" | "wav" | "flac" => "🎵",
             "mp4" | "mov" | "mkv" => "🎬",
-            "sh" | "bash" => "⚡",
+            "sh" | "bash" => "⚡️",
             _ => "📄",
         }
     }

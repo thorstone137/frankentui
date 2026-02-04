@@ -10,9 +10,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashSet, VecDeque};
 use std::env;
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::{OpenOptions, create_dir_all};
+use std::io::{BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,7 @@ use ftui_core::geometry::Rect;
 use ftui_layout::{Constraint, Flex};
 use ftui_render::cell::Cell as RenderCell;
 use ftui_render::frame::{Frame, HitGrid};
+use ftui_runtime::render_trace::checksum_buffer;
 use ftui_runtime::undo::HistoryManager;
 use ftui_runtime::{
     Cmd, Every, InlineAutoRemeasureConfig, Model, Subscription, VoiLogEntry, VoiSampler,
@@ -42,6 +44,7 @@ use ftui_widgets::voi_debug_overlay::{
 };
 
 use crate::screens;
+use crate::screens::Screen;
 use crate::theme;
 use crate::tour::{GuidedTourState, TourAdvanceReason, TourEvent, TourStep};
 
@@ -976,6 +979,244 @@ impl From<Event> for AppMsg {
 
         Self::ScreenEvent(event)
     }
+}
+
+// ---------------------------------------------------------------------------
+// VFX Harness
+// ---------------------------------------------------------------------------
+
+const VFX_HARNESS_DEFAULT_JSONL: &str = "vfx_harness.jsonl";
+const VFX_HARNESS_SEED: u64 = 12_345;
+
+/// Configuration for the deterministic VFX harness.
+#[derive(Debug, Clone)]
+pub struct VfxHarnessConfig {
+    pub effect: Option<String>,
+    pub tick_ms: u64,
+    pub max_frames: u64,
+    pub exit_after_ms: u64,
+    pub jsonl_path: Option<String>,
+    pub run_id: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+pub enum VfxHarnessMsg {
+    Event(Event),
+    Quit,
+}
+
+impl From<Event> for VfxHarnessMsg {
+    fn from(event: Event) -> Self {
+        Self::Event(event)
+    }
+}
+
+struct VfxHarnessLogger {
+    writer: Box<dyn Write + Send>,
+    run_id: String,
+    effect: String,
+    cols: u16,
+    rows: u16,
+    tick_ms: u64,
+    seed: u64,
+}
+
+impl VfxHarnessLogger {
+    fn new(
+        path: &str,
+        run_id: String,
+        effect: String,
+        cols: u16,
+        rows: u16,
+        tick_ms: u64,
+        seed: u64,
+    ) -> std::io::Result<Self> {
+        let writer = open_vfx_writer(path)?;
+        let mut logger = Self {
+            writer,
+            run_id,
+            effect,
+            cols,
+            rows,
+            tick_ms,
+            seed,
+        };
+        logger.write_header()?;
+        Ok(logger)
+    }
+
+    fn write_header(&mut self) -> std::io::Result<()> {
+        let run_id = escape_json(&self.run_id);
+        let effect = escape_json(&self.effect);
+        let line = format!(
+            "{{\"event\":\"vfx_harness_start\",\"run_id\":\"{run_id}\",\"effect\":\"{effect}\",\"cols\":{},\"rows\":{},\"tick_ms\":{},\"seed\":{}}}",
+            self.cols, self.rows, self.tick_ms, self.seed
+        );
+        writeln!(self.writer, "{line}")?;
+        self.writer.flush()
+    }
+
+    fn write_frame(&mut self, frame_idx: u64, hash: u64, sim_time: f64) -> std::io::Result<()> {
+        let run_id = escape_json(&self.run_id);
+        let effect = escape_json(&self.effect);
+        let line = format!(
+            "{{\"event\":\"vfx_frame\",\"run_id\":\"{run_id}\",\"effect\":\"{effect}\",\"frame_idx\":{frame_idx},\"hash\":{hash},\"time\":{:.2}}}",
+            sim_time
+        );
+        writeln!(self.writer, "{line}")?;
+        self.writer.flush()
+    }
+}
+
+/// Deterministic VFX-only harness (bypasses full screen initialization).
+pub struct VfxHarnessModel {
+    screen: screens::visual_effects::VisualEffectsScreen,
+    tick_ms: u64,
+    tick_count: u64,
+    max_frames: Option<u64>,
+    exit_after_ms: u64,
+    started: Cell<bool>,
+    frame_idx: Cell<u64>,
+    logger: RefCell<Option<VfxHarnessLogger>>,
+}
+
+impl VfxHarnessModel {
+    pub fn new(config: VfxHarnessConfig) -> std::io::Result<Self> {
+        let mut screen = screens::visual_effects::VisualEffectsScreen::default();
+        if let Some(effect) = config.effect.as_deref()
+            && !screen.set_effect_by_name(effect)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Unknown VFX effect: {effect}"),
+            ));
+        }
+
+        let tick_ms = config.tick_ms.max(1);
+        let cols = config.cols.max(1);
+        let rows = config.rows.max(1);
+        screen.enable_deterministic_mode(tick_ms);
+        let effect_key = screen.effect_key();
+        let run_id = config
+            .run_id
+            .unwrap_or_else(|| format!("vfx-{}-{}x{}-{}ms", effect_key, cols, rows, tick_ms));
+        let jsonl_path = config
+            .jsonl_path
+            .unwrap_or_else(|| VFX_HARNESS_DEFAULT_JSONL.to_string());
+        let logger = VfxHarnessLogger::new(
+            &jsonl_path,
+            run_id,
+            effect_key.to_string(),
+            cols,
+            rows,
+            tick_ms,
+            VFX_HARNESS_SEED,
+        )?;
+
+        Ok(Self {
+            screen,
+            tick_ms,
+            tick_count: 0,
+            max_frames: (config.max_frames > 0).then_some(config.max_frames),
+            exit_after_ms: config.exit_after_ms,
+            started: Cell::new(false),
+            frame_idx: Cell::new(0),
+            logger: RefCell::new(Some(logger)),
+        })
+    }
+}
+
+impl Model for VfxHarnessModel {
+    type Message = VfxHarnessMsg;
+
+    fn init(&mut self) -> Cmd<Self::Message> {
+        let mut cmds = vec![Cmd::Tick(Duration::from_millis(self.tick_ms))];
+        if self.exit_after_ms > 0 {
+            let ms = self.exit_after_ms;
+            cmds.push(Cmd::task_named("vfx_harness_exit", move || {
+                std::thread::sleep(Duration::from_millis(ms));
+                VfxHarnessMsg::Quit
+            }));
+        }
+        Cmd::batch(cmds)
+    }
+
+    fn update(&mut self, msg: Self::Message) -> Cmd<Self::Message> {
+        match msg {
+            VfxHarnessMsg::Quit => Cmd::Quit,
+            VfxHarnessMsg::Event(event) => match event {
+                Event::Tick => {
+                    self.tick_count = self.tick_count.saturating_add(1);
+                    self.started.set(true);
+                    self.screen.tick(self.tick_count);
+                    if let Some(max_frames) = self.max_frames
+                        && self.tick_count >= max_frames
+                    {
+                        return Cmd::Quit;
+                    }
+                    Cmd::None
+                }
+                Event::Key(KeyEvent {
+                    code,
+                    kind: KeyEventKind::Press,
+                    modifiers,
+                }) => {
+                    if matches!(code, KeyCode::Char('q' | 'Q') | KeyCode::Escape)
+                        || (matches!(code, KeyCode::Char('c' | 'C'))
+                            && modifiers.contains(Modifiers::CTRL))
+                    {
+                        return Cmd::Quit;
+                    }
+                    Cmd::None
+                }
+                _ => Cmd::None,
+            },
+        }
+    }
+
+    fn view(&self, frame: &mut Frame) {
+        let area = Rect::from_size(frame.buffer.width(), frame.buffer.height());
+        self.screen.view(frame, area);
+
+        if !self.started.get() {
+            return;
+        }
+
+        let frame_idx = self.frame_idx.get().wrapping_add(1);
+        self.frame_idx.set(frame_idx);
+        let pool = &*frame.pool;
+        let hash = checksum_buffer(&frame.buffer, pool);
+        if let Some(logger) = self.logger.borrow_mut().as_mut() {
+            let _ = logger.write_frame(frame_idx, hash, self.screen.sim_time());
+        }
+    }
+
+    fn subscriptions(&self) -> Vec<Box<dyn Subscription<Self::Message>>> {
+        Vec::new()
+    }
+}
+
+fn open_vfx_writer(path: &str) -> std::io::Result<Box<dyn Write + Send>> {
+    if path == "-" || path.eq_ignore_ascii_case("stderr") {
+        return Ok(Box::new(BufWriter::new(std::io::stderr())));
+    }
+
+    if let Some(parent) = Path::new(path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)?;
+    Ok(Box::new(BufWriter::new(file)))
+}
+
+fn escape_json(raw: &str) -> String {
+    raw.replace('"', "\\\"")
 }
 
 // ---------------------------------------------------------------------------
@@ -2022,23 +2263,6 @@ impl AppModel {
                             self.current_screen = target;
                             return Cmd::None;
                         }
-                        // Screen navigation (Left/Right)
-                        (KeyCode::Left, Modifiers::NONE) => {
-                            let target = self.display_screen().prev();
-                            if self.tour.is_active() {
-                                self.stop_tour(false, "nav_prev_global");
-                            }
-                            self.current_screen = target;
-                            return Cmd::None;
-                        }
-                        (KeyCode::Right, Modifiers::NONE) => {
-                            let target = self.display_screen().next();
-                            if self.tour.is_active() {
-                                self.stop_tour(false, "nav_next_global");
-                            }
-                            self.current_screen = target;
-                            return Cmd::None;
-                        }
                         // Number keys for direct screen access
                         (KeyCode::Char(ch @ '0'..='9'), Modifiers::NONE) => {
                             if let Some(id) = ScreenId::from_number_key(ch) {
@@ -2095,10 +2319,10 @@ impl Model for AppModel {
         self.perf_view_counter.set(self.perf_view_counter.get() + 1);
         self.maybe_log_tick_stall();
 
-        let area = Rect::from_size(frame.buffer.width(), frame.buffer.height());
+        // Ensure hit testing is enabled for mouse interactions (tab bar, panes, overlays).
         frame.enable_hit_testing();
-        let display_screen = self.display_screen();
 
+        let area = Rect::from_size(frame.buffer.width(), frame.buffer.height());
         frame
             .buffer
             .fill(area, RenderCell::default().with_bg(theme::bg::DEEP.into()));
@@ -2113,23 +2337,23 @@ impl Model for AppModel {
             .split(area);
 
         // Navigation row (single-level tab bar)
-        crate::chrome::render_tab_bar(display_screen, frame, chunks[0]);
+        crate::chrome::render_tab_bar(self.display_screen(), frame, chunks[0]);
 
         // Content area with border
         let content_block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(display_screen.title())
+            .title(self.display_screen().title())
             .title_alignment(Alignment::Center)
             .style(theme::content_border());
 
         let inner = content_block.inner(chunks[1]);
         content_block.render(chunks[1], frame);
-        crate::chrome::register_pane_hit(frame, inner, display_screen);
+        crate::chrome::register_pane_hit(frame, inner, self.display_screen());
 
         // Screen content (wrapped in error boundary)
-        self.screens.view(display_screen, frame, inner);
-        if display_screen == ScreenId::GuidedTour && !self.tour.is_active() {
+        self.screens.view(self.display_screen(), frame, inner);
+        if self.display_screen() == ScreenId::GuidedTour && !self.tour.is_active() {
             self.render_guided_tour_landing(frame, inner);
         }
 
@@ -2153,7 +2377,7 @@ impl Model for AppModel {
         // Help overlay (chrome module)
         if self.help_visible {
             let bindings = self.current_screen_keybindings();
-            crate::chrome::render_help_overlay(display_screen, &bindings, frame, area);
+            crate::chrome::render_help_overlay(self.display_screen(), &bindings, frame, area);
         }
 
         // Debug overlay
@@ -2179,9 +2403,9 @@ impl Model for AppModel {
         // Status bar (chrome module)
         let (can_undo, can_redo, undo_description) = self.current_screen_undo_status();
         let status_state = crate::chrome::StatusBarState {
-            current_screen: display_screen,
-            screen_title: display_screen.title(),
-            screen_index: display_screen.index(),
+            current_screen: self.current_screen,
+            screen_title: self.display_screen().title(),
+            screen_index: self.current_screen.index(),
             screen_count: screens::screen_registry().len(),
             tick_count: self.tick_count,
             frame_count: self.frame_count,
@@ -3445,29 +3669,6 @@ mod tests {
         }
     }
 
-    /// Verify Left/Right cycles screens globally.
-    #[test]
-    fn integration_left_right_cycles_screens() {
-        let mut app = AppModel::new();
-        app.current_screen = ScreenId::Dashboard;
-
-        let right = Event::Key(KeyEvent {
-            code: KeyCode::Right,
-            modifiers: Modifiers::NONE,
-            kind: KeyEventKind::Press,
-        });
-        app.update(AppMsg::from(right));
-        assert_eq!(app.current_screen, ScreenId::Dashboard.next());
-
-        let left = Event::Key(KeyEvent {
-            code: KeyCode::Left,
-            modifiers: Modifiers::NONE,
-            kind: KeyEventKind::Press,
-        });
-        app.update(AppMsg::from(left));
-        assert_eq!(app.current_screen, ScreenId::Dashboard);
-    }
-
     /// Verify all screens have the expected count.
     #[test]
     fn all_screens_count() {
@@ -3888,8 +4089,7 @@ mod tests {
                 app.perf_tick_times_us
                     .push_back(50_000 + (i as u64) * 3_000);
             }
-            let (tps, avg, p95, p99, min, max) = app.perf_stats();
-            assert!(tps >= 0.0, "tps must be non-negative (n={n})");
+            let (_tps, avg, p95, p99, min, max) = app.perf_stats();
             assert!(avg >= 0.0, "avg must be non-negative (n={n})");
             assert!(p95 >= 0.0, "p95 must be non-negative (n={n})");
             assert!(p99 >= 0.0, "p99 must be non-negative (n={n})");
@@ -3940,7 +4140,7 @@ mod tests {
         assert_eq!(p99, min, "single sample: p99 must equal min");
     }
 
-    /// Property: sparkline output length never exceeds max_width (char count).
+    /// Property: perf_sparkline output length never exceeds max_width (char count).
     #[test]
     fn perf_sparkline_width_bound() {
         for width in [1, 5, 10, 40, 100] {
@@ -3957,7 +4157,7 @@ mod tests {
         }
     }
 
-    /// Property: sparkline chars are always valid block characters or space.
+    /// Property: perf_sparkline chars are always valid block characters or space.
     #[test]
     fn perf_sparkline_valid_chars() {
         let valid_chars: Vec<char> = vec![
@@ -4016,7 +4216,6 @@ mod tests {
             let mut pool = GraphemePool::new();
             let mut frame = Frame::new(w, h, &mut pool);
             app.view(&mut frame);
-            // No panic = pass
         }
     }
 

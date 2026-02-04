@@ -298,7 +298,7 @@ pub mod icons {
     /// Critical priority (P0) - requires immediate attention.
     pub const PRIORITY_CRITICAL: &str = "🔥";
     /// High priority (P1) - important work.
-    pub const PRIORITY_HIGH: &str = "⚡";
+    pub const PRIORITY_HIGH: &str = "⚡️";
     /// Medium priority (P2) - standard work.
     pub const PRIORITY_MEDIUM: &str = "🔹";
     /// Low priority (P3) - can wait.
@@ -929,6 +929,7 @@ impl<'a> ScopedRenderLock<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ftui_text::display_width;
 
     #[test]
     fn spacing_tokens_are_strictly_ordered() {
@@ -1279,8 +1280,8 @@ mod tests {
     #[test]
     fn selection_indicators_have_same_width() {
         // Both indicators must have the same width for proper alignment
-        let selected_width = selection::INDICATOR.chars().count();
-        let empty_width = selection::EMPTY.chars().count();
+        let selected_width = display_width(selection::INDICATOR);
+        let empty_width = display_width(selection::EMPTY);
         assert_eq!(selected_width, empty_width);
     }
 

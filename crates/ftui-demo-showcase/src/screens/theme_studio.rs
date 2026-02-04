@@ -998,10 +998,9 @@ palette = 7={}
             let rating_width = display_width(rating) as u16;
             if rating_x + rating_width <= line_area.x + line_area.width {
                 let rating_style = Style::new().fg(rating_color).attrs(StyleFlags::BOLD);
-                Paragraph::new(rating).style(rating_style).render(
-                    Rect::new(rating_x, line_area.y, rating_width, 1),
-                    frame,
-                );
+                Paragraph::new(rating)
+                    .style(rating_style)
+                    .render(Rect::new(rating_x, line_area.y, rating_width, 1), frame);
             }
         }
     }

@@ -23,6 +23,7 @@ use ftui_render::cell::{Cell, PackedRgba};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::Style;
+use ftui_text::display_width;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
@@ -625,7 +626,7 @@ fn render_mini_bar(frame: &mut Frame, area: Rect, label: &str, value: f64, color
     }
 
     let label_text = format!("{label} ");
-    let label_width = label_text.chars().count() as u16;
+    let label_width = display_width(&label_text) as u16;
     let cols = Flex::horizontal()
         .constraints([Constraint::Fixed(label_width), Constraint::Min(1)])
         .split(area);

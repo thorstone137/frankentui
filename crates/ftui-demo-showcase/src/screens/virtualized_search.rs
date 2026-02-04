@@ -33,6 +33,7 @@ use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::Style;
+use ftui_text::display_width;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
@@ -951,7 +952,8 @@ impl VirtualizedSearch {
 
             // Set cursor if focused
             if is_focused && !inner.is_empty() {
-                let cursor_x = inner.x + self.query.len().min(inner.width as usize - 1) as u16;
+                let cursor_x =
+                    inner.x + display_width(&self.query).min(inner.width as usize - 1) as u16;
                 frame.set_cursor(Some((cursor_x, inner.y)));
             }
         }

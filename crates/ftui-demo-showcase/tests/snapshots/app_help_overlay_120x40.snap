@@ -1,40 +1,40 @@
- Tour │ Core │ Visuals │ Interact │ Text │ Systems │                                                                    
- Dash │ Inline │                                                                                                        
+ 1: Tour │ 2: Dash │ 3: Shakes │ 4: Code │ 5: Widgets │ 6: Layout │ 7: Forms │ 8: DataViz │ 9: Files │ 0: Adv │ -: Caps 
 ╭──────────────────────────────────────────────────────Dashboard───────────────────────────────────────────────────────╮
 │FRANKENTUI DASHBOARD                                                                                                  │
 │╭────────Plasma────────╮╭─────────Charts · Pulse──────────╮╭───────Code · Rust (1/28)────────╮╭─────────Info─────────╮│
 ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿││g:cycle · sparklines + mini bars ││// runtime.rs                    ││FrankenTUI Kernel · LI││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿╔════════════════════════ ⌨ Keyboard Shortcuts ════════════════════════╗ INLINE   BRAILLE FX  ││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│Navigation▄▂▂▇▅▃▅▂▃▄▆▄▇█▂▆▅▄▂ 41%││                                 │║Status: NOMINAL │ Even││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[1-9, 0]                 Switch to screen by numbervent::Event;     │║FPS: 0  TicSize: 118x3││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[Tab / L]                Next screense ftui_render::cell::Cell;     │║Events/s: 1Theme: Cybe││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[S-Tab / H]              Previous screentui_render::frame::Frame;   │║CPU:  46%  Alerts: 1  ││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[← / →]                  Prev/next screen (category):{Cmd, Model, Pr│║NET:   14↓ Pipeline: B││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[Shift+← / Shift+→]      Jump categories                            │║Frame:  0.0Headroom: +││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│                                 ││#[derive(Debug, Clone)]          │║                      ││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│View                             ││enum Msg {                       │║                      ││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿││CPU ▃ ▃▃▂▂▁▁▄▃▄▂▅▅▅▆▂▄▅▃▆▅▄▄▆ 46%││use std::{collections::HashMap, s││ INLINE   BRAILLE FX  ││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿╔═══════════════════════ ? Keyboard Shortcuts ════════════════════════╗Status: NOMINAL │ Even││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│Navigation ▁   ▇▁▁    ▁ █▁▁▁▁█ 14││use ftui_core::event::Event;     │║FPS: 0  TicSize: 118x3││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[1-9, 0]                 Switch to screen by number:cell::Cell;     │║Events/s: 1Theme: Cybe││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[Tab]                    Next screense ftui_render::frame::Frame;   │║CPU:  46%  Alerts: 1  ││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[Shift+Tab]              Previous screentui_runtime::{Cmd, Model, Pr│║NET:   14↓ Pipeline: B││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│                                 ││                                 │║Frame:  0.0Headroom: +││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│View                             ││#[derive(Debug, Clone)]          │║                      ││
 ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[?]                      Toggle this help overlay                   │║                      ││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[A]                      Toggle A11y panelize { w: u16, h: u16 },   │║CPU ██████░░░░░░░  46%││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[F12]                    Toggle debug overlayring),                 │║MEM █████░░░░░░░░  41%││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│                                 ││    Quit,                        │║NET █░░░░░░░░░░░░   8%││
-││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│Editing                          ││}                                │║FRM                n/a││
-││Click → Visual Effects║│[Ctrl+Z]                 Undo    ││Click → Code Explorer            │║Click → Performance163││
-│╰──────────────────────║╰[Ctrl+Y / Ctrl+Shift+Z]  Redo────╯╰─────────────────────────────────╯║──────────────────────╯│
-│╭───Text FX · 3-Up (1/2║)────╮╭──────────────────Activity───────────────────╮╭───────Markdown ║ Streaming… 0%────────╮│
-││Sample 1 of 3 · 3-Up s║aGlobalSEV TIME  COMP  MESSAGE                      ││▌               ║                      ││
-││1 · None · S1         ║ [Ctrl+K]                 Open command palettere 3  ││                ║                      ││
-││# FX Lab              ║ [Ctrl+T]                 Cycle color theme         ││                ║                      ││
-││> *"Render truth, not ║i[H/M/L]                  A11y: high contrast, reduced motion, large  ║                      ││
-││2 · FadeIn · S2       ║ [Ctrl+1..6]              Palette: filter by category│                ║                      ││
-││## GFM Stress         ║ [Ctrl+0]                 Palette: clear category filter              ║                      ││
-││1. **Bold** + _italic_║ [Ctrl+F]                 Palette: toggle favorite  ││                ║                      ││
-││3 · FadeOut · S3      ║ [Ctrl+Shift+F]           Palette: favorites only   ││                ║                      ││
-││### Mixed             ║ Categories: Tour Core Visuals Interact Text Systems││                ║                      ││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[A]                      Toggle A11y panelk(u64),                   │║                      ││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[F12]                    Toggle debug overlay { w: u16, h: u16 },   │║                      ││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│                                 ││    Log(String),                 │║CPU ██████░░░░░░░  46%││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│Editing                          ││    Quit,                        │║MEM █████░░░░░░░░  41%││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[Ctrl+Z]                 Undo    ││}                                │║NET █░░░░░░░░░░░░   8%││
+││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿║│[Ctrl+Y / Ctrl+Shift+Z]  Redo    ││                                 │║FRM                n/a││
+││Click → Visual Effects║│Click → Data Viz                 ││Click → Code ExplorerSync + 'stat│║Click → Performance163││
+│╰──────────────────────║╰Global───────────────────────────╯╰─────────────────────────────────╯║──────────────────────╯│
+│╭───Text FX · 3-Up (1/2║)[Ctrl+K]                 Open command palette──────╮╭───────Markdown ║ Streaming… 0%────────╮│
+││Sample 1 of 3 · 3-Up s║a[Ctrl+T]                 Cycle color theme         ││▌               ║                      ││
+││1 · None · S1         ║ [H/M/L]                  A11y: high contrast, reduced motion, large  ║                      ││
+││# FX Lab · Determinist║c[Ctrl+1..6]              Palette: filter by category│                ║                      ││
+││> *"Render truth, not ║i[Ctrl+0]                 Palette: clear category filter              ║                      ││
+││2 · FadeIn · S2       ║ [Ctrl+F]                 Palette: toggle favorite  ││                ║                      ││
+││## GFM Stress · Ledger║ [Ctrl+Shift+F]           Palette: favorites only   ││                ║                      ││
+││1. **Bold** + _italic_║+[q / Ctrl+C]             Quit application          ││                ║                      ││
+││3 · FadeOut · S3      ║     ││                                             ││                ║                      ││
+││### Runtime Ledger · M║xCategories: Tour Core Visuals Interact Text Systems││                ║                      ││
 ││- [x] Tasks           ║     ││                                             ││                ║                      ││
 ││- [ ] Benchmarks      ╚═══════════════════════Press ? or Esc to close════════════════════════╝                      ││
-││                            ││                                             ││                                       ││
+││- [x] Evidence log          ││                                             ││                                       ││
 ││e: next set · click → Visual││Click → Action Timeline                      ││Click → Markdown                       ││
 │╰────────────────────────────╯╰─────────────────────────────────────────────╯╰───────────────────────────────────────╯│
 │g:charts c:code e:fx m:md | 1-9:screens | Tab:next | t:theme | ?:help | q:quit                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Dashboard [1/36]  Cyberpunk Aurora                               tick:0 frm:0                                0x0 00:00 
+ Dashboard [2/37]  Cyberpunk Aurora             Tab: next screen · Shift+Tab: prev │ tick:0 frm:0             0x0 00:00 

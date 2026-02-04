@@ -26,6 +26,14 @@ OPTIONS:
     --tour-speed=F       Guided tour speed multiplier (default: 1.0)
     --tour-start-step=N  Start tour at step N, 1-indexed (default: 1)
     --no-mouse           Disable mouse event capture
+    --vfx-harness        Run deterministic VFX harness (locks effect/size/tick)
+    --vfx-effect=NAME    VFX harness effect name (e.g., doom, quake, plasma)
+    --vfx-tick-ms=N      VFX harness tick cadence in ms (default: 16)
+    --vfx-frames=N       VFX harness auto-exit after N frames (default: 0)
+    --vfx-cols=N         VFX harness forced cols (default: 120)
+    --vfx-rows=N         VFX harness forced rows (default: 40)
+    --vfx-jsonl=PATH     VFX harness JSONL output path (default: vfx_harness.jsonl)
+    --vfx-run-id=ID      VFX harness run id override (optional)
     --help, -h           Show this help message
     --version, -V        Show version
 
@@ -84,7 +92,17 @@ ENVIRONMENT VARIABLES:
     FTUI_DEMO_EXIT_AFTER_MS   Auto-quit after N milliseconds (for testing)
     FTUI_DEMO_TOUR            Override --tour (1/true to enable)
     FTUI_DEMO_TOUR_SPEED      Override --tour-speed
-    FTUI_DEMO_TOUR_START_STEP Override --tour-start-step";
+    FTUI_DEMO_TOUR_START_STEP Override --tour-start-step
+    FTUI_DEMO_VFX_HARNESS     Enable VFX-only harness (1/true)
+    FTUI_DEMO_VFX_EFFECT      Lock VFX effect (metaballs/plasma/doom/quake/...)
+    FTUI_DEMO_VFX_TICK_MS     Override VFX tick interval in milliseconds
+    FTUI_DEMO_VFX_FRAMES      Auto-quit after N frames (deterministic)
+    FTUI_DEMO_VFX_EXIT_AFTER_MS Override exit-after-ms for VFX harness
+    FTUI_DEMO_VFX_SIZE        Fixed render size (e.g., 120x40)
+    FTUI_DEMO_VFX_COLS        Fixed render cols (if size not set)
+    FTUI_DEMO_VFX_ROWS        Fixed render rows (if size not set)
+    FTUI_DEMO_VFX_RUN_ID      Run id for VFX JSONL logs
+    FTUI_DEMO_VFX_JSONL       Path for VFX JSONL logs (or '-' for stderr)";
 
 /// Parsed command-line options.
 pub struct Opts {
@@ -108,6 +126,22 @@ pub struct Opts {
     pub mouse: bool,
     /// Auto-exit after this many milliseconds (0 = disabled).
     pub exit_after_ms: u64,
+    /// Enable deterministic VFX harness mode.
+    pub vfx_harness: bool,
+    /// VFX harness effect name (None = default).
+    pub vfx_effect: Option<String>,
+    /// VFX harness tick cadence in milliseconds.
+    pub vfx_tick_ms: u64,
+    /// VFX harness auto-exit after N frames (0 = disabled).
+    pub vfx_frames: u64,
+    /// VFX harness forced columns.
+    pub vfx_cols: u16,
+    /// VFX harness forced rows.
+    pub vfx_rows: u16,
+    /// VFX harness JSONL output path.
+    pub vfx_jsonl: Option<String>,
+    /// VFX harness run id override.
+    pub vfx_run_id: Option<String>,
 }
 
 impl Default for Opts {
@@ -123,6 +157,14 @@ impl Default for Opts {
             tour_start_step: 1,
             mouse: true,
             exit_after_ms: 0,
+            vfx_harness: false,
+            vfx_effect: None,
+            vfx_tick_ms: 16,
+            vfx_frames: 0,
+            vfx_cols: 120,
+            vfx_rows: 40,
+            vfx_jsonl: None,
+            vfx_run_id: None,
         }
     }
 }
@@ -179,6 +221,56 @@ impl Opts {
             eprintln!("WARNING: FTUI_DEMO_EXIT_AFTER_MS is set to {n}. App will auto-exit.");
             opts.exit_after_ms = n;
         }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_HARNESS") {
+            let enabled = val == "1" || val.eq_ignore_ascii_case("true");
+            opts.vfx_harness = enabled;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_EFFECT")
+            && !val.trim().is_empty()
+        {
+            opts.vfx_effect = Some(val);
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_TICK_MS")
+            && let Ok(n) = val.parse()
+        {
+            opts.vfx_tick_ms = n;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_FRAMES")
+            && let Ok(n) = val.parse()
+        {
+            opts.vfx_frames = n;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_EXIT_AFTER_MS")
+            && let Ok(n) = val.parse()
+        {
+            opts.exit_after_ms = n;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_SIZE")
+            && let Some((cols, rows)) = parse_size(&val)
+        {
+            opts.vfx_cols = cols;
+            opts.vfx_rows = rows;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_COLS")
+            && let Ok(n) = val.parse()
+        {
+            opts.vfx_cols = n;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_ROWS")
+            && let Ok(n) = val.parse()
+        {
+            opts.vfx_rows = n;
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_JSONL")
+            && !val.trim().is_empty()
+        {
+            opts.vfx_jsonl = Some(val);
+        }
+        if let Ok(val) = env::var("FTUI_DEMO_VFX_RUN_ID")
+            && !val.trim().is_empty()
+        {
+            opts.vfx_run_id = Some(val);
+        }
 
         // Parse command-line args (override env vars)
         let args: Vec<String> = env::args().skip(1).collect();
@@ -196,6 +288,9 @@ impl Opts {
                 }
                 "--no-mouse" => {
                     opts.mouse = false;
+                }
+                "--vfx-harness" => {
+                    opts.vfx_harness = true;
                 }
                 "--tour" => {
                     opts.tour = true;
@@ -259,6 +354,50 @@ impl Opts {
                                 process::exit(1);
                             }
                         }
+                    } else if let Some(val) = other.strip_prefix("--vfx-effect=") {
+                        if !val.trim().is_empty() {
+                            opts.vfx_effect = Some(val.to_string());
+                        }
+                    } else if let Some(val) = other.strip_prefix("--vfx-tick-ms=") {
+                        match val.parse() {
+                            Ok(n) => opts.vfx_tick_ms = n,
+                            Err(_) => {
+                                eprintln!("Invalid --vfx-tick-ms value: {val}");
+                                process::exit(1);
+                            }
+                        }
+                    } else if let Some(val) = other.strip_prefix("--vfx-frames=") {
+                        match val.parse() {
+                            Ok(n) => opts.vfx_frames = n,
+                            Err(_) => {
+                                eprintln!("Invalid --vfx-frames value: {val}");
+                                process::exit(1);
+                            }
+                        }
+                    } else if let Some(val) = other.strip_prefix("--vfx-cols=") {
+                        match val.parse() {
+                            Ok(n) => opts.vfx_cols = n,
+                            Err(_) => {
+                                eprintln!("Invalid --vfx-cols value: {val}");
+                                process::exit(1);
+                            }
+                        }
+                    } else if let Some(val) = other.strip_prefix("--vfx-rows=") {
+                        match val.parse() {
+                            Ok(n) => opts.vfx_rows = n,
+                            Err(_) => {
+                                eprintln!("Invalid --vfx-rows value: {val}");
+                                process::exit(1);
+                            }
+                        }
+                    } else if let Some(val) = other.strip_prefix("--vfx-jsonl=") {
+                        if !val.trim().is_empty() {
+                            opts.vfx_jsonl = Some(val.to_string());
+                        }
+                    } else if let Some(val) = other.strip_prefix("--vfx-run-id=") {
+                        if !val.trim().is_empty() {
+                            opts.vfx_run_id = Some(val.to_string());
+                        }
                     } else {
                         eprintln!("Unknown argument: {other}");
                         eprintln!("Run with --help for usage information.");
@@ -271,6 +410,17 @@ impl Opts {
 
         opts
     }
+}
+
+fn parse_size(raw: &str) -> Option<(u16, u16)> {
+    let trimmed = raw.trim();
+    let mut parts = trimmed.split(['x', 'X']);
+    let cols: u16 = parts.next()?.parse().ok()?;
+    let rows: u16 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((cols, rows))
 }
 
 #[cfg(test)]
@@ -290,6 +440,14 @@ mod tests {
         assert_eq!(opts.tour_start_step, 1);
         assert!(opts.mouse);
         assert_eq!(opts.exit_after_ms, 0);
+        assert!(!opts.vfx_harness);
+        assert!(opts.vfx_effect.is_none());
+        assert_eq!(opts.vfx_tick_ms, 16);
+        assert_eq!(opts.vfx_frames, 0);
+        assert_eq!(opts.vfx_cols, 120);
+        assert_eq!(opts.vfx_rows, 40);
+        assert!(opts.vfx_jsonl.is_none());
+        assert!(opts.vfx_run_id.is_none());
     }
 
     #[test]
@@ -341,5 +499,15 @@ mod tests {
         assert!(HELP_TEXT.contains("FTUI_DEMO_TOUR"));
         assert!(HELP_TEXT.contains("FTUI_DEMO_TOUR_SPEED"));
         assert!(HELP_TEXT.contains("FTUI_DEMO_TOUR_START_STEP"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_HARNESS"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_EFFECT"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_TICK_MS"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_FRAMES"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_EXIT_AFTER_MS"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_SIZE"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_COLS"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_ROWS"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_RUN_ID"));
+        assert!(HELP_TEXT.contains("FTUI_DEMO_VFX_JSONL"));
     }
 }

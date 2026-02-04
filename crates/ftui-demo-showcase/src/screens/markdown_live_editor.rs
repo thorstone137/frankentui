@@ -14,7 +14,7 @@ use ftui_extras::markdown::{MarkdownRenderer, MarkdownTheme};
 use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
-use ftui_style::Style;
+use ftui_style::{Style, TableTheme};
 use ftui_text::CursorPosition;
 use ftui_text::search::{SearchResult, search_ascii_case_insensitive};
 use ftui_text::text::{Line, Span, Text};
@@ -197,6 +197,31 @@ impl MarkdownLiveEditor {
     }
 
     fn build_theme() -> MarkdownTheme {
+        let table_theme = TableTheme {
+            border: Style::new().fg(theme::accent::SECONDARY),
+            header: Style::new()
+                .fg(theme::fg::PRIMARY)
+                .bg(theme::alpha::ACCENT_PRIMARY)
+                .bold(),
+            row: Style::new().fg(theme::fg::PRIMARY),
+            row_alt: Style::new()
+                .fg(theme::fg::PRIMARY)
+                .bg(theme::alpha::OVERLAY),
+            row_selected: Style::new()
+                .fg(theme::fg::PRIMARY)
+                .bg(theme::alpha::ACCENT_PRIMARY)
+                .bold(),
+            row_hover: Style::new()
+                .fg(theme::fg::PRIMARY)
+                .bg(theme::alpha::OVERLAY),
+            divider: Style::new().fg(theme::accent::SECONDARY),
+            padding: 1,
+            column_gap: 1,
+            row_height: 1,
+            effects: Vec::new(),
+            preset_id: None,
+        };
+
         MarkdownTheme {
             h1: Style::new().fg(theme::fg::PRIMARY).bold(),
             h2: Style::new().fg(theme::accent::PRIMARY).bold(),
@@ -217,15 +242,7 @@ impl MarkdownLiveEditor {
             strikethrough: Style::new().strikethrough(),
             list_bullet: Style::new().fg(theme::accent::PRIMARY),
             horizontal_rule: Style::new().fg(theme::fg::MUTED).dim(),
-            table_border: Style::new().fg(theme::accent::SECONDARY),
-            table_header: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::ACCENT_PRIMARY)
-                .bold(),
-            table_row: Style::new().fg(theme::fg::PRIMARY),
-            table_row_alt: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::OVERLAY),
+            table_theme,
             task_done: Style::new().fg(theme::accent::SUCCESS),
             task_todo: Style::new().fg(theme::accent::INFO),
             math_inline: Style::new().fg(theme::accent::SECONDARY).italic(),

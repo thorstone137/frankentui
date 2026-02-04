@@ -18,7 +18,7 @@ use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::{Style, StyleFlags};
 use ftui_text::search::search_ascii_case_insensitive;
-use ftui_text::{display_width, grapheme_width, graphemes};
+use ftui_text::{display_width, grapheme_count, grapheme_width, graphemes};
 use ftui_widgets::StatefulWidget;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
@@ -1590,7 +1590,7 @@ impl CodeExplorer {
         if !lines.is_empty() {
             let total_chars = lines
                 .iter()
-                .map(|line| line.chars().count() + 1)
+                .map(|line| grapheme_count(line) + 1)
                 .sum::<usize>()
                 .max(1);
             let progress = ((self.time * 0.6).sin() * 0.5 + 0.5).clamp(0.0, 1.0);

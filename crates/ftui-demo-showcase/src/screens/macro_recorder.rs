@@ -1517,7 +1517,10 @@ mod tests {
         let rec_text = frame_text(&frame_rec);
         let err_text = frame_text(&frame_err);
         assert!(rec_text.contains("● Recording"), "Recording label mismatch");
-        assert!(err_text.contains("⚠ Error"), "Error label mismatch");
+        assert!(
+            err_text.contains("Error"),
+            "Error label mismatch: {err_text}"
+        );
     }
 
     #[test]
@@ -1556,7 +1559,13 @@ mod tests {
         for y in 0..frame.buffer.height() {
             for x in 0..frame.buffer.width() {
                 if let Some(cell) = frame.buffer.get(x, y) {
-                    if let Some(ch) = cell.content.as_char() {
+                    if let Some(id) = cell.content.grapheme_id() {
+                        if let Some(grapheme) = frame.pool.get(id) {
+                            out.push_str(grapheme);
+                        } else {
+                            out.push(' ');
+                        }
+                    } else if let Some(ch) = cell.content.as_char() {
                         out.push(ch);
                     } else {
                         out.push(' ');

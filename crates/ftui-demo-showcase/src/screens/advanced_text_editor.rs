@@ -31,6 +31,7 @@ use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::Style;
+use ftui_text::grapheme_count;
 use ftui_text::search::{SearchResult, search_ascii_case_insensitive};
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
@@ -947,7 +948,7 @@ and proper Unicode handling throughout.
             .with_query(self.search_input.value())
             .with_replacement(&replacement)
             .with_match_position(idx + 1)
-            .with_text_len(new_text.chars().count());
+            .with_text_len(grapheme_count(&new_text));
         self.log_event(entry);
 
         self.editor.set_text(&new_text);
@@ -987,7 +988,7 @@ and proper Unicode handling throughout.
             .with_query(&query)
             .with_replacement(&replacement)
             .with_replace_count(count)
-            .with_text_len(new_text.chars().count());
+            .with_text_len(grapheme_count(&new_text));
         self.log_event(entry);
 
         self.editor.set_text(&new_text);
@@ -1002,7 +1003,8 @@ and proper Unicode handling throughout.
         let selection_len = self
             .editor
             .selected_text()
-            .map(|s| s.chars().count())
+            .as_deref()
+            .map(grapheme_count)
             .unwrap_or(0);
 
         let match_info = if !self.search_results.is_empty() {
@@ -1396,7 +1398,7 @@ impl Screen for AdvancedTextEditor {
                     // Log text edit
                     let cursor = self.editor.cursor();
                     let entry = DiagnosticEntry::new(DiagnosticEventKind::TextEdited)
-                        .with_text_len(after.chars().count())
+                        .with_text_len(grapheme_count(&after))
                         .with_cursor(cursor.line, cursor.grapheme)
                         .with_undo_depth(self.undo_stack.len());
                     self.log_event(entry);

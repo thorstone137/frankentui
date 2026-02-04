@@ -35,7 +35,7 @@ use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::{Style, StyleFlags};
 use ftui_text::{Line, Span, Text, WrapMode};
-use ftui_text::{display_width, grapheme_width, graphemes};
+use ftui_text::{display_width, grapheme_count, grapheme_width, graphemes};
 use ftui_widgets::Badge;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
@@ -5172,7 +5172,7 @@ impl Dashboard {
                     let clipped = truncate_to_width(raw, max_width);
                     lines.push(clipped);
                 }
-                let text_len: usize = lines.iter().map(|l| l.chars().count()).sum();
+                let text_len: usize = lines.iter().map(|l| grapheme_count(l)).sum();
                 let effect = self.build_effect(demo.kind, text_len);
                 let styled = StyledMultiLine::new(lines)
                     .effect(effect)

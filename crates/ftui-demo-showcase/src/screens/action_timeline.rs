@@ -26,6 +26,7 @@ use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
 use ftui_style::Style;
+use ftui_text::grapheme_count;
 use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
@@ -235,7 +236,7 @@ impl ActionTimeline {
                 (summary, fields, Severity::Debug)
             }
             Event::Paste(paste) => {
-                let char_count = paste.text.chars().count();
+                let char_count = grapheme_count(&paste.text);
                 let summary = format!("Paste {char_count} chars");
                 let fields = vec![
                     ("chars".to_string(), char_count.to_string()),
@@ -257,7 +258,7 @@ impl ActionTimeline {
                 let fields: Vec<(String, String)> = vec![
                     (
                         "chars".to_string(),
-                        clipboard.content.chars().count().to_string(),
+                        grapheme_count(&clipboard.content).to_string(),
                     ),
                     ("source".to_string(), format!("{:?}", clipboard.source)),
                 ];
