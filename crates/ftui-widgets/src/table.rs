@@ -1,10 +1,16 @@
 use crate::block::Block;
 use crate::undo_support::{TableUndoExt, UndoSupport, UndoWidgetId};
-use crate::{MeasurableWidget, SizeConstraints, StatefulWidget, Widget, set_style_area};
+use crate::{
+    MeasurableWidget, SizeConstraints, StatefulWidget, Widget, apply_style, set_style_area,
+};
 use ftui_core::geometry::{Rect, Size};
 use ftui_layout::{Constraint, Flex};
+use ftui_render::buffer::Buffer;
+use ftui_render::cell::Cell;
 use ftui_render::frame::{Frame, HitId, HitRegion};
-use ftui_style::Style;
+use ftui_style::{
+    Style, TableEffectResolver, TableEffectScope, TableEffectTarget, TableSection, TableTheme,
+};
 use ftui_text::Text;
 use std::any::Any;
 
@@ -57,6 +63,8 @@ pub struct Table<'a> {
     block: Option<Block<'a>>,
     style: Style,
     highlight_style: Style,
+    theme: TableTheme,
+    theme_phase: f32,
     column_spacing: u16,
     /// Optional hit ID for mouse interaction.
     /// When set, each table row registers a hit region with the hit grid.
@@ -87,6 +95,8 @@ impl<'a> Table<'a> {
             block: None,
             style: Style::default(),
             highlight_style: Style::default(),
+            theme: TableTheme::default(),
+            theme_phase: 0.0,
             column_spacing: 1,
             hit_id: None,
         }
@@ -113,6 +123,20 @@ impl<'a> Table<'a> {
     /// Set the style for the selected row.
     pub fn highlight_style(mut self, style: Style) -> Self {
         self.highlight_style = style;
+        self
+    }
+
+    /// Set the table theme (base/states/effects).
+    pub fn theme(mut self, theme: TableTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Set the explicit animation phase for theme effects.
+    ///
+    /// Phase is deterministic and should be supplied by the caller (e.g. from tick count).
+    pub fn theme_phase(mut self, phase: f32) -> Self {
+        self.theme_phase = phase;
         self
     }
 
@@ -181,6 +205,8 @@ pub struct TableState {
     undo_id: UndoWidgetId,
     /// Index of the currently selected row, if any.
     pub selected: Option<usize>,
+    /// Index of the currently hovered row, if any.
+    pub hovered: Option<usize>,
     /// Scroll offset (first visible row index).
     pub offset: usize,
     /// Optional persistence ID for state saving/restoration.
@@ -393,11 +419,26 @@ impl<'a> StatefulWidget for Table<'a> {
             return;
         }
 
+        let apply_styling = frame.degradation.apply_styling();
+        let theme = &self.theme;
+        let effects_enabled = apply_styling && !theme.effects.is_empty();
+        let has_column_effects = effects_enabled && theme_has_column_effects(theme);
+        let effect_resolver = theme.effect_resolver();
+        let effects = if effects_enabled {
+            Some((&effect_resolver, self.theme_phase))
+        } else {
+            None
+        };
+
         // Render block if present
         let table_area = match &self.block {
             Some(b) => {
-                b.render(area, frame);
-                b.inner(area)
+                let mut block = b.clone();
+                if apply_styling {
+                    block = block.border_style(theme.border);
+                }
+                block.render(area, frame);
+                block.inner(area)
             }
             None => area,
         };
@@ -410,11 +451,10 @@ impl<'a> StatefulWidget for Table<'a> {
         // This is critical for rows with height > 1 that are partially visible at the bottom.
         frame.buffer.push_scissor(table_area);
 
-        let deg = frame.degradation;
-
         // Apply base style to the entire table area (clears gaps/empty space)
-        if deg.apply_styling() {
-            set_style_area(&mut frame.buffer, table_area, self.style);
+        if apply_styling {
+            let fill_style = self.style.merge(&theme.row);
+            set_style_area(&mut frame.buffer, table_area, fill_style);
         }
 
         let header_height = self
@@ -529,6 +569,7 @@ impl<'a> StatefulWidget for Table<'a> {
 
         let mut y = table_area.y;
         let max_y = table_area.bottom();
+        let divider_char = divider_char(self.block.as_ref());
 
         // Render header
         if let Some(header) = &self.header {
@@ -537,13 +578,55 @@ impl<'a> StatefulWidget for Table<'a> {
                 return;
             }
             let row_area = Rect::new(table_area.x, y, table_area.width, header.height);
-            let header_style = if deg.apply_styling() {
-                set_style_area(&mut frame.buffer, row_area, header.style);
-                header.style
+            let header_style = if apply_styling {
+                let mut style = theme.header;
+                style = self.style.merge(&style);
+                header.style.merge(&style)
             } else {
                 Style::default()
             };
-            render_row(header, &column_rects, frame, y, header_style);
+
+            if apply_styling {
+                if let Some((resolver, phase)) = effects {
+                    for (col_idx, rect) in column_rects.iter().enumerate() {
+                        let cell_area = Rect::new(rect.x, y, rect.width, header.height);
+                        let scope = TableEffectScope {
+                            section: TableSection::Header,
+                            row: None,
+                            column: Some(col_idx),
+                        };
+                        let style = resolver.resolve(header_style, scope, phase);
+                        set_style_area(&mut frame.buffer, cell_area, style);
+                    }
+                } else {
+                    set_style_area(&mut frame.buffer, row_area, header_style);
+                }
+            }
+
+            let divider_style = if apply_styling {
+                theme.divider.merge(&header_style)
+            } else {
+                Style::default()
+            };
+            draw_vertical_dividers(
+                &mut frame.buffer,
+                row_area,
+                &column_rects,
+                divider_char,
+                divider_style,
+            );
+
+            render_row(
+                header,
+                &column_rects,
+                frame,
+                y,
+                header_style,
+                TableSection::Header,
+                None,
+                effects,
+                effects.is_some(),
+            );
             y = y
                 .saturating_add(header.height)
                 .saturating_add(header.bottom_margin);
@@ -564,20 +647,73 @@ impl<'a> StatefulWidget for Table<'a> {
             }
 
             let is_selected = state.selected == Some(i);
+            let is_hovered = state.hovered == Some(i);
             let row_area = Rect::new(table_area.x, y, table_area.width, row.height);
-            let style = if deg.apply_styling() {
-                let s = if is_selected {
-                    self.highlight_style.merge(&row.style)
-                } else {
-                    row.style
-                };
-                set_style_area(&mut frame.buffer, row_area, s);
-                s
+            let row_style = if apply_styling {
+                let mut style = if i % 2 == 0 { theme.row } else { theme.row_alt };
+                if is_selected {
+                    style = theme.row_selected.merge(&style);
+                }
+                if is_hovered {
+                    style = theme.row_hover.merge(&style);
+                }
+                style = self.style.merge(&style);
+                style = row.style.merge(&style);
+                if is_selected {
+                    style = self.highlight_style.merge(&style);
+                }
+                style
             } else {
                 Style::default()
             };
 
-            render_row(row, &column_rects, frame, y, style);
+            if apply_styling {
+                if let Some((resolver, phase)) = effects {
+                    if has_column_effects {
+                        for (col_idx, rect) in column_rects.iter().enumerate() {
+                            let cell_area = Rect::new(rect.x, y, rect.width, row.height);
+                            let scope = TableEffectScope {
+                                section: TableSection::Body,
+                                row: Some(i),
+                                column: Some(col_idx),
+                            };
+                            let style = resolver.resolve(row_style, scope, phase);
+                            set_style_area(&mut frame.buffer, cell_area, style);
+                        }
+                    } else {
+                        let scope = TableEffectScope::row(TableSection::Body, i);
+                        let style = resolver.resolve(row_style, scope, phase);
+                        set_style_area(&mut frame.buffer, row_area, style);
+                    }
+                } else {
+                    set_style_area(&mut frame.buffer, row_area, row_style);
+                }
+            }
+
+            let divider_style = if apply_styling {
+                theme.divider.merge(&row_style)
+            } else {
+                Style::default()
+            };
+            draw_vertical_dividers(
+                &mut frame.buffer,
+                row_area,
+                &column_rects,
+                divider_char,
+                divider_style,
+            );
+
+            render_row(
+                row,
+                &column_rects,
+                frame,
+                y,
+                row_style,
+                TableSection::Body,
+                Some(i),
+                effects,
+                has_column_effects,
+            );
 
             // Register hit region for this row (if hit testing enabled)
             if let Some(id) = self.hit_id {
@@ -593,15 +729,62 @@ impl<'a> StatefulWidget for Table<'a> {
     }
 }
 
-fn render_row(row: &Row, col_rects: &[Rect], frame: &mut Frame, y: u16, style: Style) {
+#[allow(clippy::too_many_arguments)]
+fn render_row(
+    row: &Row,
+    col_rects: &[Rect],
+    frame: &mut Frame,
+    y: u16,
+    base_style: Style,
+    section: TableSection,
+    row_idx: Option<usize>,
+    effects: Option<(&TableEffectResolver<'_>, f32)>,
+    column_effects: bool,
+) {
     let apply_styling = frame.degradation.apply_styling();
+    let row_effect_base = if apply_styling {
+        if let Some((resolver, phase)) = effects {
+            if !column_effects {
+                let scope = TableEffectScope {
+                    section,
+                    row: row_idx,
+                    column: None,
+                };
+                Some(resolver.resolve(base_style, scope, phase))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    for (i, cell_text) in row.cells.iter().enumerate() {
-        if i >= col_rects.len() {
+    for (col_idx, cell_text) in row.cells.iter().enumerate() {
+        if col_idx >= col_rects.len() {
             break;
         }
-        let rect = col_rects[i];
+        let rect = col_rects[col_idx];
         let cell_area = Rect::new(rect.x, y, rect.width, row.height);
+        let scope = if effects.is_some() {
+            Some(TableEffectScope {
+                section,
+                row: row_idx,
+                column: if column_effects { Some(col_idx) } else { None },
+            })
+        } else {
+            None
+        };
+        let column_effect_base = if apply_styling && column_effects {
+            if let (Some((resolver, phase)), Some(scope)) = (effects, scope) {
+                Some(resolver.resolve(base_style, scope, phase))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         for (line_idx, line) in cell_text.lines().iter().enumerate() {
             if line_idx as u16 >= row.height {
@@ -611,14 +794,29 @@ fn render_row(row: &Row, col_rects: &[Rect], frame: &mut Frame, y: u16, style: S
             let mut x = cell_area.x;
             for span in line.spans() {
                 // At NoStyling+, ignore span-level styles
-                let span_style = if apply_styling {
+                let mut span_style = if apply_styling {
                     match span.style {
-                        Some(s) => s.merge(&style),
-                        None => style,
+                        Some(s) => s.merge(&base_style),
+                        None => base_style,
                     }
                 } else {
                     Style::default()
                 };
+
+                if let (Some((resolver, phase)), Some(scope)) = (effects, scope) {
+                    if span.style.is_none() {
+                        if let Some(base_effect) =
+                            column_effect_base.or(row_effect_base)
+                        {
+                            span_style = base_effect;
+                        } else {
+                            span_style = resolver.resolve(span_style, scope, phase);
+                        }
+                    } else {
+                        span_style = resolver.resolve(span_style, scope, phase);
+                    }
+                }
+
                 x = crate::draw_text_span_with_link(
                     frame,
                     x,
@@ -632,6 +830,51 @@ fn render_row(row: &Row, col_rects: &[Rect], frame: &mut Frame, y: u16, style: S
                     break;
                 }
             }
+        }
+    }
+}
+
+fn theme_has_column_effects(theme: &TableTheme) -> bool {
+    theme.effects.iter().any(|rule| {
+        matches!(
+            rule.target,
+            TableEffectTarget::Column(_) | TableEffectTarget::ColumnRange { .. }
+        )
+    })
+}
+
+fn divider_char(block: Option<&Block<'_>>) -> char {
+    block
+        .map(|b| b.border_set().vertical)
+        .unwrap_or(crate::borders::BorderSet::SQUARE.vertical)
+}
+
+fn draw_vertical_dividers(
+    buf: &mut Buffer,
+    row_area: Rect,
+    col_rects: &[Rect],
+    divider_char: char,
+    style: Style,
+) {
+    if col_rects.len() < 2 || row_area.is_empty() {
+        return;
+    }
+
+    for pair in col_rects.windows(2) {
+        let left = pair[0];
+        let right = pair[1];
+        let gap = right.x.saturating_sub(left.right());
+        if gap == 0 {
+            continue;
+        }
+        let x = left.right();
+        if x >= row_area.right() {
+            continue;
+        }
+        for y in row_area.y..row_area.bottom() {
+            let mut cell = Cell::from_char(divider_char);
+            apply_style(&mut cell, style);
+            buf.set(x, y, cell);
         }
     }
 }
