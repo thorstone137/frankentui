@@ -83,6 +83,11 @@ mod text_width {
     }
 
     #[inline]
+    fn is_emoji_grapheme(grapheme: &str) -> bool {
+        has_emoji_presentation_selector(grapheme) || grapheme.chars().any(is_probable_emoji)
+    }
+
+    #[inline]
     pub(crate) fn grapheme_width(grapheme: &str) -> usize {
         if grapheme.is_ascii() {
             return ascii_display_width(grapheme);
@@ -91,10 +96,7 @@ mod text_width {
             return 0;
         }
         let width = unicode_display_width(grapheme) as usize;
-        if width == 1
-            && (has_emoji_presentation_selector(grapheme)
-                || grapheme.chars().any(is_probable_emoji))
-        {
+        if is_emoji_grapheme(grapheme) {
             return 2;
         }
         width

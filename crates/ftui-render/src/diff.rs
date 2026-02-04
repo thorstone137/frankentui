@@ -657,12 +657,9 @@ fn compute_changes(old: &Buffer, new: &Buffer, changes: &mut Vec<(u16, u16)>) {
         let old_row = &old_cells[row_start..row_start + w];
         let new_row = &new_cells[row_start..row_start + w];
 
-        // Fast path: skip entirely unchanged rows.
-        if old_row == new_row {
-            continue;
-        }
-
-        // Scan for changed cells using blockwise row scan
+        // Scan for changed cells using blockwise row scan.
+        // This avoids a full-row equality pre-scan and prevents
+        // double-scanning rows that contain changes.
         scan_row_changes(old_row, new_row, y, changes);
     }
 
@@ -1494,7 +1491,7 @@ mod tests {
     #[test]
     fn perf_block_scan_vs_scalar_baseline() {
         // Verify that block scan works correctly on large buffers
-        // and measure relative performance
+        // and measure relative performance with structured diagnostics.
         use std::time::Instant;
 
         let width = 200u16;
@@ -1510,18 +1507,59 @@ mod tests {
             new.set_raw(x, y, Cell::from_char(ch));
         }
 
-        let iterations = 1000;
-        let start = Instant::now();
-        for _ in 0..iterations {
-            let diff = BufferDiff::compute(&old, &new);
-            assert!(!diff.is_empty());
-        }
-        let elapsed = start.elapsed();
+        let iterations = 1000u32;
+        let samples = std::env::var("FTUI_DIFF_BLOCK_SAMPLES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(50)
+            .clamp(1, iterations as usize);
+        let iters_per_sample = (iterations / samples as u32).max(1) as u64;
 
-        // Should complete 1000 iterations of 200x50 diff in < 500ms
+        let mut times_us = Vec::with_capacity(samples);
+        let mut last_checksum = 0u64;
+
+        for _ in 0..samples {
+            let start = Instant::now();
+            for _ in 0..iters_per_sample {
+                let diff = BufferDiff::compute(&old, &new);
+                assert!(!diff.is_empty());
+                last_checksum = fnv1a_hash(diff.changes());
+            }
+            let elapsed = start.elapsed();
+            let per_iter = (elapsed.as_micros() as u64) / iters_per_sample;
+            times_us.push(per_iter);
+        }
+
+        times_us.sort_unstable();
+        let len = times_us.len();
+        let p50 = times_us[len / 2];
+        let p95 = times_us[((len as f64 * 0.95) as usize).min(len.saturating_sub(1))];
+        let p99 = times_us[((len as f64 * 0.99) as usize).min(len.saturating_sub(1))];
+        let mean = times_us
+            .iter()
+            .copied()
+            .map(|value| value as f64)
+            .sum::<f64>()
+            / len as f64;
+        let variance = times_us
+            .iter()
+            .map(|value| {
+                let delta = *value as f64 - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / len as f64;
+
+        // JSONL log line for perf diagnostics (captured by --nocapture/CI artifacts).
+        eprintln!(
+            "{{\"ts\":\"2026-02-04T00:00:00Z\",\"event\":\"block_scan_baseline\",\"width\":{},\"height\":{},\"samples\":{},\"iters_per_sample\":{},\"p50_us\":{},\"p95_us\":{},\"p99_us\":{},\"mean_us\":{:.2},\"variance_us\":{:.2},\"checksum\":\"0x{:016x}\"}}",
+            width, height, samples, iters_per_sample, p50, p95, p99, mean, variance, last_checksum
+        );
+
+        let budget_us = 500u64; // ~500µs per diff for 200x50 in debug
         assert!(
-            elapsed.as_millis() < 500,
-            "Diff too slow: {elapsed:?} for {iterations} iterations of {width}x{height}"
+            p95 <= budget_us,
+            "Diff too slow: p95={p95}µs (budget {budget_us}µs) for {width}x{height}"
         );
     }
     // =========================================================================
