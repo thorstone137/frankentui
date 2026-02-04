@@ -21,12 +21,12 @@
 
 use std::time::{Duration, Instant};
 
+use crate::{Widget, set_style_area};
 use ftui_core::geometry::Rect;
 use ftui_render::cell::Cell;
 use ftui_render::frame::Frame;
 use ftui_style::Style;
 use ftui_text::display_width;
-use crate::{Widget, set_style_area};
 
 /// Unique identifier for a toast notification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1193,7 +1193,15 @@ impl Toast {
         let max_width = self.config.max_width as usize;
 
         // Calculate content width
-        let icon_width = if self.content.icon.is_some() { 2 } else { 0 }; // icon + space
+        let icon_width = self
+            .content
+            .icon
+            .map(|icon| {
+                let mut buf = [0u8; 4];
+                let s = icon.as_char().encode_utf8(&mut buf);
+                display_width(s) + 1
+            })
+            .unwrap_or(0); // icon + space
         let message_width = display_width(self.content.message.as_str());
         let title_width = self
             .content
@@ -1466,6 +1474,26 @@ mod tests {
     use super::*;
     use ftui_render::grapheme_pool::GraphemePool;
 
+    fn cell_at(frame: &Frame, x: u16, y: u16) -> Cell {
+        frame
+            .buffer
+            .get(x, y)
+            .copied()
+            .unwrap_or_else(|| panic!("test cell should exist at ({x},{y})"))
+    }
+
+    fn focused_action_id(toast: &Toast) -> &str {
+        toast
+            .focused_action()
+            .expect("focused action should exist")
+            .id
+            .as_str()
+    }
+
+    fn unwrap_remaining(remaining: Option<Duration>) -> Duration {
+        remaining.expect("remaining duration should exist")
+    }
+
     #[test]
     fn test_toast_new() {
         let toast = Toast::new("Hello");
@@ -1591,8 +1619,10 @@ mod tests {
     fn test_toast_dimensions_with_icon() {
         let toast = Toast::new("Message").icon(ToastIcon::Success);
         let (w, _h) = toast.calculate_dimensions();
-        // icon(1) + space(1) + "Message"(7) + padding+border(4) = 13
-        assert_eq!(w, 13);
+        let mut buf = [0u8; 4];
+        let icon = ToastIcon::Success.as_char().encode_utf8(&mut buf);
+        let expected = display_width(icon) + 1 + display_width("Message") + 4;
+        assert_eq!(w, expected as u16);
     }
 
     #[test]
@@ -1611,10 +1641,7 @@ mod tests {
         toast.render(area, &mut frame);
 
         // Check border corners
-        assert_eq!(
-            frame.buffer.get(0, 0).unwrap().content.as_char(),
-            Some('\u{250C}')
-        ); // ┌
+        assert_eq!(cell_at(&frame, 0, 0).content.as_char(), Some('\u{250C}')); // ┌
         assert!(frame.buffer.get(1, 1).is_some()); // Content area exists
     }
 
@@ -1627,8 +1654,14 @@ mod tests {
         toast.render(area, &mut frame);
 
         // Icon should be at position (1, 1) - inside border
-        let icon_cell = frame.buffer.get(1, 1).unwrap();
-        assert_eq!(icon_cell.content.as_char(), Some('\u{2713}')); // ✓
+        let icon_cell = cell_at(&frame, 1, 1);
+        if let Some(ch) = icon_cell.content.as_char() {
+            assert_eq!(ch, '\u{2713}'); // ✓
+        } else if let Some(id) = icon_cell.content.grapheme_id() {
+            assert_eq!(frame.pool.get(id), Some("\u{2713}"));
+        } else {
+            panic!("expected toast icon cell to contain ✓");
+        }
     }
 
     #[test]
@@ -1640,7 +1673,7 @@ mod tests {
         toast.render(area, &mut frame);
 
         // Title at row 1, message at row 2
-        let title_cell = frame.buffer.get(1, 1).unwrap();
+        let title_cell = cell_at(&frame, 1, 1);
         assert_eq!(title_cell.content.as_char(), Some('H'));
     }
 
@@ -1671,12 +1704,12 @@ mod tests {
         let mut frame = Frame::new(20, 5, &mut pool);
 
         // Save original state
-        let original = frame.buffer.get(0, 0).unwrap().content.as_char();
+        let original = cell_at(&frame, 0, 0).content.as_char();
 
         toast.render(area, &mut frame);
 
         // Buffer should be unchanged (dismissed toast doesn't render)
-        assert_eq!(frame.buffer.get(0, 0).unwrap().content.as_char(), original);
+        assert_eq!(cell_at(&frame, 0, 0).content.as_char(), original);
     }
 
     #[test]
@@ -2124,9 +2157,9 @@ mod tests {
             .no_animation();
         assert!(toast.focused_action().is_none());
         toast.handle_key(KeyEvent::Tab);
-        assert_eq!(toast.focused_action().unwrap().id, "x");
+        assert_eq!(focused_action_id(&toast), "x");
         toast.handle_key(KeyEvent::Tab);
-        assert_eq!(toast.focused_action().unwrap().id, "y");
+        assert_eq!(focused_action_id(&toast), "y");
     }
 
     #[test]
@@ -2261,7 +2294,7 @@ mod tests {
             .no_animation();
         let remaining = toast.remaining_time();
         assert!(remaining.is_some());
-        let r = remaining.unwrap();
+        let r = unwrap_remaining(remaining);
         assert!(r > Duration::from_secs(9));
     }
 }

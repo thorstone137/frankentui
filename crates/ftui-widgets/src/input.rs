@@ -210,6 +210,11 @@ impl TextInput {
                 self.select_all();
                 true
             }
+            // Ctrl+W: delete word back
+            KeyCode::Char('w') if ctrl => {
+                self.delete_word_back();
+                true
+            }
             KeyCode::Backspace => {
                 if self.selection_anchor.is_some() {
                     self.delete_selection();
@@ -301,6 +306,7 @@ impl TextInput {
         }
 
         let current_count = self.grapheme_count();
+        let old_cursor = self.cursor;
         let avail = if let Some(max) = self.max_length {
             if current_count >= max {
                 // Allow trying to insert 1 grapheme to see if it merges (combining char)
@@ -314,16 +320,16 @@ impl TextInput {
 
         // Calculate grapheme count of new text to see if we need to truncate
         let new_graphemes = clean_text.graphemes(true).count();
-        let (to_insert, insert_count) = if new_graphemes > avail {
+        let to_insert = if new_graphemes > avail {
             // Find byte index to truncate at
             let end_byte = clean_text
                 .grapheme_indices(true)
                 .map(|(i, _)| i)
                 .nth(avail)
                 .unwrap_or(clean_text.len());
-            (&clean_text[..end_byte], avail)
+            &clean_text[..end_byte]
         } else {
-            (clean_text.as_str(), new_graphemes)
+            clean_text.as_str()
         };
 
         if to_insert.is_empty() {
@@ -343,20 +349,9 @@ impl TextInput {
             return;
         }
 
-        self.cursor += insert_count;
-        // Clamp cursor when combining characters merge with adjacent graphemes
-        // Note: insert_count might be > 0, but if it merged, total count didn't increase as much.
-        // We need to be careful with cursor positioning.
-        // If we inserted "´" (1 grapheme) and it merged, total count increased by 0.
-        // But `insert_count` is 1.
-        // `self.cursor` becomes old_cursor + 1.
-        // `gc` (new total) is old_total.
-        // If old_cursor == old_total, then new_cursor > gc. Clamped to gc.
-        // Correct.
         let gc = self.grapheme_count();
-        if self.cursor > gc {
-            self.cursor = gc;
-        }
+        let delta = gc.saturating_sub(current_count);
+        self.cursor = (old_cursor + delta).min(gc);
     }
 
     fn insert_char(&mut self, c: char) {
@@ -956,6 +951,16 @@ impl TextInput {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
+    fn cell_at(frame: &Frame, x: u16, y: u16) -> Cell {
+        frame
+            .buffer
+            .get(x, y)
+            .copied()
+            .unwrap_or_else(|| panic!("test cell should exist at ({x},{y})"))
+    }
+
+    #[allow(dead_code)]
     #[test]
     fn test_empty_input() {
         let input = TextInput::new();
@@ -1267,9 +1272,9 @@ mod tests {
         let mut pool = GraphemePool::new();
         let mut frame = Frame::new(10, 1, &mut pool);
         input.render(area, &mut frame);
-        let cell_h = frame.buffer.get(0, 0).unwrap();
+        let cell_h = cell_at(&frame, 0, 0);
         assert_eq!(cell_h.content.as_char(), Some('h'));
-        let cell_i = frame.buffer.get(1, 0).unwrap();
+        let cell_i = cell_at(&frame, 1, 0);
         assert_eq!(cell_i.content.as_char(), Some('i'));
     }
 
@@ -1314,11 +1319,11 @@ mod tests {
         let mut frame = Frame::new(6, 1, &mut pool);
         input.render(area, &mut frame);
 
-        let cell = frame.buffer.get(0, 0).unwrap();
+        let cell = cell_at(&frame, 0, 0);
         assert!(cell.content.is_grapheme());
         let width = grapheme_width(grapheme);
         if width > 1 {
-            assert!(frame.buffer.get(1, 0).unwrap().is_continuation());
+            assert!(cell_at(&frame, 1, 0).is_continuation());
         }
     }
 
@@ -1446,7 +1451,7 @@ mod tests {
             text: "hi".to_string(),
         });
         assert!(cmd.is_some());
-        let cmd = cmd.unwrap();
+        let cmd = cmd.expect("test command should exist");
         assert_eq!(cmd.widget_id(), input.undo_id());
         assert_eq!(cmd.description(), "Insert text");
     }
@@ -1486,6 +1491,17 @@ mod tests {
     }
 
     #[test]
+    fn test_paste_combining_merge_mid_string() {
+        let mut input = TextInput::new().with_value("ab");
+        input.cursor = 1; // between a and b
+        let event = Event::Paste(ftui_core::event::PasteEvent::bracketed("\u{0301}"));
+        assert!(input.handle_event(&event));
+        assert_eq!(input.value(), "a\u{0301}b");
+        assert_eq!(input.grapheme_count(), 2);
+        assert_eq!(input.cursor(), 1);
+    }
+
+    #[test]
     fn test_wide_char_scroll_visibility() {
         use ftui_render::frame::Frame;
         use ftui_render::grapheme_pool::GraphemePool;
@@ -1504,7 +1520,7 @@ mod tests {
         let mut frame = Frame::new(2, 1, &mut pool);
         input.render(area, &mut frame);
 
-        let cell = frame.buffer.get(0, 0).unwrap();
+        let cell = cell_at(&frame, 0, 0);
         // If bug exists, this assertion will fail because cell is empty/default
         assert!(!cell.is_empty(), "Wide char should be visible");
     }

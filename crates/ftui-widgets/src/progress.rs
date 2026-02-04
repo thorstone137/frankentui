@@ -415,7 +415,7 @@ impl Widget for MiniBar {
         let percent_width = if self.show_percent {
             percent_text = format!(" {:3.0}%", value * 100.0);
             render_percent = true;
-            percent_text.chars().count() as u16
+            display_width(&percent_text) as u16
         } else {
             0
         };
@@ -504,6 +504,14 @@ mod tests {
     use ftui_render::cell::PackedRgba;
     use ftui_render::grapheme_pool::GraphemePool;
 
+    fn cell_at(frame: &Frame, x: u16, y: u16) -> Cell {
+        frame
+            .buffer
+            .get(x, y)
+            .copied()
+            .unwrap_or_else(|| panic!("test cell should exist at ({x},{y})"))
+    }
+
     // --- Builder tests ---
 
     #[test]
@@ -561,7 +569,7 @@ mod tests {
 
         // No cells should have the gauge style bg
         for x in 0..10 {
-            let cell = frame.buffer.get(x, 0).unwrap();
+            let cell = cell_at(&frame, x, 0);
             assert_ne!(
                 cell.bg,
                 PackedRgba::RED,
@@ -581,7 +589,7 @@ mod tests {
 
         // All cells should have gauge bg
         for x in 0..10 {
-            let cell = frame.buffer.get(x, 0).unwrap();
+            let cell = cell_at(&frame, x, 0);
             assert_eq!(
                 cell.bg,
                 PackedRgba::GREEN,
@@ -601,7 +609,7 @@ mod tests {
 
         // About 5 cells should be filled (10 * 0.5 = 5)
         let filled_count = (0..10)
-            .filter(|&x| frame.buffer.get(x, 0).unwrap().bg == PackedRgba::BLUE)
+            .filter(|&x| cell_at(&frame, x, 0).bg == PackedRgba::BLUE)
             .count();
         assert_eq!(filled_count, 5);
     }
@@ -618,7 +626,7 @@ mod tests {
         // All 3 rows should be filled
         for y in 0..3 {
             for x in 0..5 {
-                let cell = frame.buffer.get(x, y).unwrap();
+                let cell = cell_at(&frame, x, y);
                 assert_eq!(
                     cell.bg,
                     PackedRgba::RED,
@@ -660,7 +668,7 @@ mod tests {
         // Inner area is 8x1 (border takes 1 on each side)
         // All inner cells should have gauge bg
         for x in 1..9 {
-            let cell = frame.buffer.get(x, 1).unwrap();
+            let cell = cell_at(&frame, x, 1);
             assert_eq!(
                 cell.bg,
                 PackedRgba::GREEN,
@@ -687,7 +695,7 @@ mod tests {
         // Nothing should be rendered
         for x in 0..10 {
             assert!(
-                frame.buffer.get(x, 0).unwrap().is_empty(),
+                cell_at(&frame, x, 0).is_empty(),
                 "cell at x={x} should be empty at Skeleton"
             );
         }
@@ -707,11 +715,11 @@ mod tests {
         Widget::render(&pb, area, &mut frame);
 
         // Should show "50%" text, no gauge bar
-        assert_eq!(frame.buffer.get(0, 0).unwrap().content.as_char(), Some('5'));
-        assert_eq!(frame.buffer.get(1, 0).unwrap().content.as_char(), Some('0'));
-        assert_eq!(frame.buffer.get(2, 0).unwrap().content.as_char(), Some('%'));
+        assert_eq!(cell_at(&frame, 0, 0).content.as_char(), Some('5'));
+        assert_eq!(cell_at(&frame, 1, 0).content.as_char(), Some('0'));
+        assert_eq!(cell_at(&frame, 2, 0).content.as_char(), Some('%'));
         // No gauge background color
-        assert_ne!(frame.buffer.get(0, 0).unwrap().bg, PackedRgba::GREEN);
+        assert_ne!(cell_at(&frame, 0, 0).bg, PackedRgba::GREEN);
     }
 
     #[test]
@@ -730,7 +738,7 @@ mod tests {
         // All cells should have gauge bg
         for x in 0..10 {
             assert_eq!(
-                frame.buffer.get(x, 0).unwrap().bg,
+                cell_at(&frame, x, 0).bg,
                 PackedRgba::BLUE,
                 "cell at x={x} should have gauge bg at Full"
             );

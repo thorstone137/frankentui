@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::Widget;
-use crate::borders::{BorderType, Borders};
+use crate::borders::{BorderSet, BorderType, Borders};
 use crate::measurable::{MeasurableWidget, SizeConstraints};
 use crate::{apply_style, draw_text_span, set_style_area};
 use ftui_core::geometry::{Rect, Size};
@@ -61,6 +61,11 @@ impl<'a> Block<'a> {
     pub fn border_type(mut self, border_type: BorderType) -> Self {
         self.border_type = border_type;
         self
+    }
+
+    /// Get the border set for this block.
+    pub(crate) fn border_set(&self) -> BorderSet {
+        self.border_type.to_border_set()
     }
 
     /// Set the block title displayed on the top border.
