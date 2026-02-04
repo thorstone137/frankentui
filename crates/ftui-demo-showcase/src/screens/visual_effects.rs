@@ -106,10 +106,10 @@ pub struct VisualEffectsScreen {
     spiral: SpiralState,
     /// Spin lattice state.
     spin_lattice: SpinLatticeState,
-    /// Doom E1M1 braille automap state.
-    doom_e1m1: RefCell<DoomE1M1State>,
-    /// Quake E1M1 braille rasterizer state.
-    quake_e1m1: RefCell<QuakeE1M1State>,
+    /// Doom E1M1 braille automap state (lazy init).
+    doom_e1m1: RefCell<Option<DoomE1M1State>>,
+    /// Quake E1M1 braille rasterizer state (lazy init).
+    quake_e1m1: RefCell<Option<QuakeE1M1State>>,
     // FPS tracking
     /// Frame times for FPS calculation (microseconds).
     frame_times: VecDeque<u64>,
@@ -3354,6 +3354,7 @@ struct WallSeg {
     vx: f32,
     vy: f32,
     len_sq: f32,
+    inv_len_sq: f32,
 }
 
 impl WallSeg {
@@ -3372,19 +3373,16 @@ impl WallSeg {
             vx,
             vy,
             len_sq,
+            inv_len_sq: 1.0 / len_sq,
         })
     }
 
     #[inline]
     fn distance_sq(self, px: f32, py: f32) -> f32 {
-        if self.len_sq <= 1e-6 {
-            let dx = px - self.x1;
-            let dy = py - self.y1;
-            return dx * dx + dy * dy;
-        }
+        debug_assert!(self.len_sq > 1e-6);
         let wx = px - self.x1;
         let wy = py - self.y1;
-        let t = ((wx * self.vx) + (wy * self.vy)) / self.len_sq;
+        let t = ((wx * self.vx) + (wy * self.vy)) * self.inv_len_sq;
         let t = t.clamp(0.0, 1.0);
         let proj_x = self.x1 + t * self.vx;
         let proj_y = self.y1 + t * self.vy;
@@ -3645,7 +3643,7 @@ impl QuakeE1M1State {
             {
                 continue;
             }
-            let dist_sq = min_wall_distance_sq(cx, cy, &self.wall_segments);
+            let dist_sq = min_wall_distance_sq_bounded(cx, cy, &self.wall_segments, min_clear_sq);
             if dist_sq < min_clear_sq {
                 continue;
             }
@@ -4180,6 +4178,20 @@ fn min_wall_distance_sq(x: f32, y: f32, walls: &[WallSeg]) -> f32 {
     best
 }
 
+fn min_wall_distance_sq_bounded(x: f32, y: f32, walls: &[WallSeg], bound_sq: f32) -> f32 {
+    let mut best = f32::INFINITY;
+    for seg in walls {
+        let dist_sq = seg.distance_sq(x, y);
+        if dist_sq < best {
+            best = dist_sq;
+            if best <= bound_sq {
+                break;
+            }
+        }
+    }
+    best
+}
+
 fn clip_triangle_near(a: Vec3, b: Vec3, c: Vec3, near: f32, out: &mut [Vec3; 4]) -> usize {
     let verts = [a, b, c];
     let mut count = 0usize;
@@ -4264,8 +4276,8 @@ impl Default for VisualEffectsScreen {
             wave_interference: WaveInterferenceState::default(),
             spiral: SpiralState::default(),
             spin_lattice: SpinLatticeState::default(),
-            doom_e1m1: RefCell::new(DoomE1M1State::default()),
-            quake_e1m1: RefCell::new(QuakeE1M1State::default()),
+            doom_e1m1: RefCell::new(None),
+            quake_e1m1: RefCell::new(None),
             // FPS tracking
             frame_times: VecDeque::with_capacity(60),
             last_frame: None,
@@ -4302,6 +4314,28 @@ fn initial_effect_from_env() -> Option<EffectType> {
 }
 
 impl VisualEffectsScreen {
+    fn with_doom_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut DoomE1M1State) -> R,
+    {
+        let mut guard = self.doom_e1m1.borrow_mut();
+        if guard.is_none() {
+            *guard = Some(DoomE1M1State::default());
+        }
+        f(guard.as_mut().expect("doom state should be initialized"))
+    }
+
+    fn with_quake_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut QuakeE1M1State) -> R,
+    {
+        let mut guard = self.quake_e1m1.borrow_mut();
+        if guard.is_none() {
+            *guard = Some(QuakeE1M1State::default());
+        }
+        f(guard.as_mut().expect("quake state should be initialized"))
+    }
+
     fn is_fps_effect(&self) -> bool {
         matches!(self.effect, EffectType::DoomE1M1 | EffectType::QuakeE1M1)
     }
@@ -4350,31 +4384,30 @@ impl VisualEffectsScreen {
 
         match self.effect {
             EffectType::DoomE1M1 => {
-                if forward != 0.0 {
-                    self.doom_e1m1
-                        .borrow_mut()
-                        .move_forward(forward * DOOM_MOVE_STEP);
-                }
-                if strafe != 0.0 {
-                    self.doom_e1m1
-                        .borrow_mut()
-                        .strafe(strafe * DOOM_STRAFE_STEP);
-                }
-                if turn != 0.0 {
-                    self.doom_e1m1.borrow_mut().look(turn * DOOM_TURN_RATE, 0.0);
-                }
+                self.with_doom_mut(|doom| {
+                    if forward != 0.0 {
+                        doom.move_forward(forward * DOOM_MOVE_STEP);
+                    }
+                    if strafe != 0.0 {
+                        doom.strafe(strafe * DOOM_STRAFE_STEP);
+                    }
+                    if turn != 0.0 {
+                        doom.look(turn * DOOM_TURN_RATE, 0.0);
+                    }
+                });
             }
             EffectType::QuakeE1M1 => {
-                let mut quake = self.quake_e1m1.borrow_mut();
-                if forward != 0.0 {
-                    quake.move_forward(forward * QUAKE_MOVE_STEP);
-                }
-                if strafe != 0.0 {
-                    quake.strafe(strafe * QUAKE_STRAFE_STEP);
-                }
-                if turn != 0.0 {
-                    quake.look(turn * QUAKE_TURN_RATE, 0.0);
-                }
+                self.with_quake_mut(|quake| {
+                    if forward != 0.0 {
+                        quake.move_forward(forward * QUAKE_MOVE_STEP);
+                    }
+                    if strafe != 0.0 {
+                        quake.strafe(strafe * QUAKE_STRAFE_STEP);
+                    }
+                    if turn != 0.0 {
+                        quake.look(turn * QUAKE_TURN_RATE, 0.0);
+                    }
+                });
             }
             _ => {}
         }
@@ -4388,8 +4421,8 @@ impl VisualEffectsScreen {
 
         match code {
             KeyCode::Char(' ') => match self.effect {
-                EffectType::DoomE1M1 => self.doom_e1m1.borrow_mut().jump(),
-                EffectType::QuakeE1M1 => self.quake_e1m1.borrow_mut().jump(),
+                EffectType::DoomE1M1 => self.with_doom_mut(|doom| doom.jump()),
+                EffectType::QuakeE1M1 => self.with_quake_mut(|quake| quake.jump()),
                 _ => {}
             },
             KeyCode::Char('[') | KeyCode::Left => {
@@ -4414,10 +4447,10 @@ impl VisualEffectsScreen {
                     let pitch_delta = dy as f32 * self.fps_mouse_sensitivity;
                     match self.effect {
                         EffectType::DoomE1M1 => {
-                            self.doom_e1m1.borrow_mut().look(yaw_delta, pitch_delta)
+                            self.with_doom_mut(|doom| doom.look(yaw_delta, pitch_delta))
                         }
                         EffectType::QuakeE1M1 => {
-                            self.quake_e1m1.borrow_mut().look(yaw_delta, pitch_delta);
+                            self.with_quake_mut(|quake| quake.look(yaw_delta, pitch_delta));
                         }
                         _ => {}
                     }
@@ -4425,8 +4458,8 @@ impl VisualEffectsScreen {
                 self.fps_last_mouse = Some((x, y));
             }
             MouseEventKind::Down(MouseButton::Left) => match self.effect {
-                EffectType::DoomE1M1 => self.doom_e1m1.borrow_mut().fire(),
-                EffectType::QuakeE1M1 => self.quake_e1m1.borrow_mut().fire(),
+                EffectType::DoomE1M1 => self.with_doom_mut(|doom| doom.fire()),
+                EffectType::QuakeE1M1 => self.with_quake_mut(|quake| quake.fire()),
                 _ => {}
             },
             _ => {}
@@ -5054,24 +5087,14 @@ impl Screen for VisualEffectsScreen {
                         self.spin_lattice.render(&mut painter, pw, ph, quality)
                     }
                     EffectType::DoomE1M1 => {
-                        self.doom_e1m1.borrow_mut().render(
-                            &mut painter,
-                            pw,
-                            ph,
-                            quality,
-                            self.time,
-                            self.frame,
-                        );
+                        self.with_doom_mut(|doom| {
+                            doom.render(&mut painter, pw, ph, quality, self.time, self.frame);
+                        });
                     }
                     EffectType::QuakeE1M1 => {
-                        self.quake_e1m1.borrow_mut().render(
-                            &mut painter,
-                            pw,
-                            ph,
-                            quality,
-                            self.time,
-                            self.frame,
-                        );
+                        self.with_quake_mut(|quake| {
+                            quake.render(&mut painter, pw, ph, quality, self.time, self.frame);
+                        });
                     }
                     // Canvas adapters for metaballs and plasma (bd-l8x9.5.3)
                     EffectType::Metaballs => {
@@ -5307,12 +5330,12 @@ impl Screen for VisualEffectsScreen {
             }
             EffectType::DoomE1M1 => {
                 if update_this_frame {
-                    self.doom_e1m1.borrow_mut().update();
+                    self.with_doom_mut(|doom| doom.update());
                 }
             }
             EffectType::QuakeE1M1 => {
                 if update_this_frame {
-                    self.quake_e1m1.borrow_mut().update();
+                    self.with_quake_mut(|quake| quake.update());
                 }
             }
             EffectType::Metaballs | EffectType::Plasma => {}

@@ -1067,8 +1067,10 @@ impl Buffer {
                 };
 
                 if let Some(cell) = src.get(sx, sy) {
-                    // Handle dangling tail at start of copy region
-                    if dx == 0 && cell.is_continuation() {
+                    // Continuation cells without their head should not be copied.
+                    // Heads are handled separately and skip over tails, so any
+                    // continuation we see here is orphaned by the copy region.
+                    if cell.is_continuation() {
                         self.set(target_x, target_y, Cell::default());
                         dx = dx.saturating_add(1);
                         continue;

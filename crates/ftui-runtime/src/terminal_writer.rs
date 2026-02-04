@@ -1285,8 +1285,9 @@ impl<W: Write> TerminalWriter<W> {
                 &span_stats,
                 tile_stats,
             );
+            let total_cells = width.saturating_mul(height);
             self.diff_strategy
-                .observe(scan_cost, self.diff_scratch.len());
+                .observe(total_cells, self.diff_scratch.len());
             span_stats_snapshot = Some(span_stats);
             scan_cost_estimate = scan_cost;
             fallback_reason = reason;
@@ -1729,13 +1730,16 @@ impl<W: Write> TerminalWriter<W> {
                     if current_link.is_some() {
                         writer.write_all(b"\x1b]8;;\x1b\\")?;
                     }
-                    // Open new link if present
-                    if let Some(link_id) = new_link
+                    // Open new link if present and resolvable
+                    let actually_opened = if let Some(link_id) = new_link
                         && let Some(url) = self.links.get(link_id)
                     {
                         write!(writer, "\x1b]8;;{}\x1b\\", url)?;
-                    }
-                    current_link = new_link;
+                        true
+                    } else {
+                        false
+                    };
+                    current_link = if actually_opened { new_link } else { None };
                 }
 
                 let raw_width = effective_cell.content.width();
@@ -1885,13 +1889,16 @@ impl<W: Write> TerminalWriter<W> {
                     if current_link.is_some() {
                         writer.write_all(b"\x1b]8;;\x1b\\")?;
                     }
-                    // Open new link if present
-                    if let Some(link_id) = new_link
+                    // Open new link if present and resolvable
+                    let actually_opened = if let Some(link_id) = new_link
                         && let Some(url) = self.links.get(link_id)
                     {
                         write!(writer, "\x1b]8;;{}\x1b\\", url)?;
-                    }
-                    current_link = new_link;
+                        true
+                    } else {
+                        false
+                    };
+                    current_link = if actually_opened { new_link } else { None };
                 }
 
                 let raw_width = effective_cell.content.width();
