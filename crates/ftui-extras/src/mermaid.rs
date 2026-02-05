@@ -8235,4 +8235,101 @@ mod tests {
         assert!(cache.is_empty(), "Cache must stay empty when disabled");
         assert_eq!(cache.hits(), 0);
     }
+
+    #[test]
+    fn feature_matrix_not_empty() {
+        assert!(!FEATURE_MATRIX.is_empty());
+        assert!(FEATURE_MATRIX.len() >= 30, "Expected at least 30 features");
+    }
+
+    #[test]
+    fn feature_matrix_all_types_covered() {
+        let types = [
+            DiagramType::Graph,
+            DiagramType::Sequence,
+            DiagramType::State,
+            DiagramType::Class,
+            DiagramType::Er,
+            DiagramType::Gantt,
+            DiagramType::Mindmap,
+            DiagramType::Pie,
+        ];
+        for dt in &types {
+            let features = features_for_type(*dt);
+            assert!(
+                !features.is_empty(),
+                "No features for diagram type {:?}",
+                dt
+            );
+        }
+    }
+
+    #[test]
+    fn feature_coverage_summary_adds_up() {
+        let (supported, partial, unsupported) = feature_coverage_summary();
+        assert_eq!(
+            supported + partial + unsupported,
+            FEATURE_MATRIX.len(),
+            "coverage counts must sum to total"
+        );
+        assert!(supported > partial, "more features should be supported than partial");
+    }
+
+    #[test]
+    fn uncovered_features_subset_of_matrix() {
+        let uncovered = uncovered_features();
+        for entry in &uncovered {
+            assert!(entry.fixture.is_none());
+        }
+        assert!(
+            uncovered.len() < FEATURE_MATRIX.len(),
+            "not all features should be uncovered"
+        );
+    }
+
+    #[test]
+    fn palette_preset_parse_roundtrip() {
+        for &preset in DiagramPalettePreset::all() {
+            let s = preset.as_str();
+            let parsed = DiagramPalettePreset::parse(s).unwrap();
+            assert_eq!(parsed, preset, "roundtrip failed for {s}");
+        }
+    }
+
+    #[test]
+    fn palette_preset_next_cycles_through_all() {
+        let start = DiagramPalettePreset::Default;
+        let mut current = start;
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            seen.push(current);
+            current = current.next();
+        }
+        assert_eq!(current, start);
+        assert_eq!(seen.len(), 6);
+    }
+
+    #[test]
+    fn palette_preset_parse_aliases() {
+        assert_eq!(DiagramPalettePreset::parse("corp"), Some(DiagramPalettePreset::Corporate));
+        assert_eq!(DiagramPalettePreset::parse("mono"), Some(DiagramPalettePreset::Monochrome));
+        assert_eq!(DiagramPalettePreset::parse("hc"), Some(DiagramPalettePreset::HighContrast));
+        assert_eq!(DiagramPalettePreset::parse("glow"), Some(DiagramPalettePreset::Neon));
+        assert_eq!(DiagramPalettePreset::parse("soft"), Some(DiagramPalettePreset::Pastel));
+        assert_eq!(DiagramPalettePreset::parse("invalid"), None);
+    }
+
+    #[test]
+    fn config_palette_in_hash() {
+        let mut c1 = MermaidConfig::default();
+        c1.palette = DiagramPalettePreset::Default;
+        let mut c2 = MermaidConfig::default();
+        c2.palette = DiagramPalettePreset::Neon;
+        assert_ne!(
+            hash_config_layout(&c1),
+            hash_config_layout(&c2),
+            "different palettes should produce different hashes"
+        );
+    }
+
 }
