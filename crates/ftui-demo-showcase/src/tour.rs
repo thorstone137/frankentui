@@ -482,6 +482,27 @@ mod tests {
     }
 
     #[test]
+    fn tour_jump_to_clamps_to_last() {
+        let mut tour = GuidedTourState::new();
+        tour.active = true;
+        tour.steps = vec![
+            test_step(ScreenId::Dashboard, "First", 1000, None),
+            test_step(ScreenId::MarkdownRichText, "Second", 1000, None),
+        ];
+        tour.step_index = 0;
+
+        let event = tour.jump_to(99).expect("jump to last step");
+        match event {
+            TourEvent::StepChanged { to, reason, .. } => {
+                assert_eq!(to, ScreenId::MarkdownRichText);
+                assert_eq!(reason, TourAdvanceReason::Jump);
+            }
+            _ => panic!("expected step change"),
+        }
+        assert_eq!(tour.step_index(), 1);
+    }
+
+    #[test]
     fn overlay_state_window_and_highlight() {
         let mut tour = GuidedTourState::new();
         tour.active = true;
@@ -511,6 +532,63 @@ mod tests {
         assert!(highlight.y >= area.y);
         assert!(highlight.right() <= area.right());
         assert!(highlight.bottom() <= area.bottom());
+    }
+
+    #[test]
+    fn overlay_state_handles_tiny_area() {
+        let mut tour = GuidedTourState::new();
+        tour.active = true;
+        tour.paused = true;
+        tour.speed = 1.0;
+        tour.step_index = 0;
+        tour.step_elapsed = Duration::from_millis(250);
+        tour.steps = vec![test_step(
+            ScreenId::Dashboard,
+            "First",
+            1000,
+            Some(TourHighlight::new_pct(0.9, 0.9, 0.8, 0.8)),
+        )];
+
+        let area = Rect::new(0, 0, 1, 1);
+        let overlay = tour.overlay_state(area, 0).expect("overlay state");
+        assert_eq!(overlay.steps.len(), 1);
+        let highlight = overlay.highlight.expect("highlight rect");
+        assert!(highlight.x >= area.x);
+        assert!(highlight.y >= area.y);
+        assert!(highlight.right() <= area.right());
+        assert!(highlight.bottom() <= area.bottom());
+    }
+
+    #[test]
+    fn overlay_state_handles_large_area() {
+        let mut tour = GuidedTourState::new();
+        tour.active = true;
+        tour.paused = false;
+        tour.speed = 1.0;
+        tour.step_index = 0;
+        tour.step_elapsed = Duration::from_millis(100);
+        tour.steps = vec![test_step(
+            ScreenId::Dashboard,
+            "First",
+            1000,
+            Some(TourHighlight::new_pct(0.2, 0.2, 0.3, 0.4)),
+        )];
+
+        let area = Rect::new(2, 3, 120, 40);
+        let overlay = tour.overlay_state(area, 5).expect("overlay state");
+        let highlight = overlay.highlight.expect("highlight rect");
+        assert!(highlight.x >= area.x);
+        assert!(highlight.y >= area.y);
+        assert!(highlight.right() <= area.right());
+        assert!(highlight.bottom() <= area.bottom());
+    }
+
+    #[test]
+    fn tour_steps_exclude_guided_tour_screen() {
+        let steps = build_steps();
+        assert!(!steps.is_empty());
+        assert!(steps.iter().all(|step| step.screen != ScreenId::GuidedTour));
+        assert!(steps.iter().all(|step| step.hint.is_some()));
     }
 
     #[test]

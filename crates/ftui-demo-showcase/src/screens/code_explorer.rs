@@ -10,7 +10,7 @@ use ftui_extras::charts::Sparkline;
 use ftui_extras::filesize;
 use ftui_extras::syntax::{GenericTokenizer, GenericTokenizerConfig, SyntaxHighlighter};
 use ftui_extras::text_effects::{
-    ColorGradient, CursorPosition, CursorStyle, Direction, StyledMultiLine, StyledText, TextEffect,
+    ColorGradient, Direction, StyledMultiLine, StyledText, TextEffect,
 };
 use ftui_layout::{Constraint, Flex};
 use ftui_render::cell::{Cell as RenderCell, PackedRgba};
@@ -40,6 +40,12 @@ const SQLITE_SOURCE: &str = include_str!("../../data/sqlite3.c");
 struct Hotspot {
     label: &'static str,
     line: usize,
+}
+
+struct ResultRow {
+    play: &'static str,
+    speaker: &'static str,
+    line: &'static str,
 }
 
 const HOTSPOT_QUERIES: &[(&str, &str)] = &[
@@ -72,6 +78,68 @@ const RESULT_PREVIEWS: &[&str] = &[
     "rows=128 · p95=2.4ms · cache=99%",
     "rows=5 · p95=0.9ms · cache=97%",
     "rows=5 · p95=1.6ms · cache=95%",
+];
+
+const RESULT_SETS: &[&[ResultRow]] = &[
+    &[
+        ResultRow {
+            play: "HAMLET",
+            speaker: "HAMLET",
+            line: "To be, or not to be, that is the question:",
+        },
+        ResultRow {
+            play: "HAMLET",
+            speaker: "OPHELIA",
+            line: "O, what a noble mind is here o'erthrown!",
+        },
+        ResultRow {
+            play: "ROMEO",
+            speaker: "ROMEO",
+            line: "But, soft! what light through yonder window breaks?",
+        },
+    ],
+    &[
+        ResultRow {
+            play: "MACBETH",
+            speaker: "MACBETH",
+            line: "Is this a dagger which I see before me?",
+        },
+        ResultRow {
+            play: "MACBETH",
+            speaker: "LADY M.",
+            line: "Out, damned spot! out, I say!",
+        },
+        ResultRow {
+            play: "LEAR",
+            speaker: "LEAR",
+            line: "How sharper than a serpent's tooth it is",
+        },
+    ],
+    &[
+        ResultRow {
+            play: "JULIUS",
+            speaker: "BRUTUS",
+            line: "Not that I loved Caesar less, but that I loved Rome more.",
+        },
+        ResultRow {
+            play: "JULIUS",
+            speaker: "CAESAR",
+            line: "Et tu, Brute? Then fall, Caesar!",
+        },
+        ResultRow {
+            play: "OTHELLO",
+            speaker: "OTHELLO",
+            line: "Put out the light, and then put out the light.",
+        },
+    ],
+];
+
+const SCHEMA_PREVIEW: &[&str] = &[
+    "table shakespeare(play TEXT, line TEXT, speaker TEXT)",
+    "index idx_speaker ON shakespeare(speaker)",
+    "index idx_play ON shakespeare(play)",
+    "virtual table fts_shakespeare using fts5(line, speaker)",
+    "table plays(id INTEGER PRIMARY KEY, title TEXT, year INT)",
 ];
 
 const PLAN_GRAPH: &[&str] = &[
@@ -1559,13 +1627,24 @@ impl CodeExplorer {
 
     fn render_sidebar_query_lab(&self, frame: &mut Frame, area: Rect) {
         self.reset_sidebar_layouts();
-        let rows = Flex::vertical()
-            .constraints([
-                Constraint::Percentage(40.0),
-                Constraint::Percentage(30.0),
-                Constraint::Percentage(30.0),
-            ])
-            .split(area);
+        let rows = if area.height >= 28 {
+            Flex::vertical()
+                .constraints([
+                    Constraint::Percentage(35.0),
+                    Constraint::Percentage(25.0),
+                    Constraint::Percentage(20.0),
+                    Constraint::Percentage(20.0),
+                ])
+                .split(area)
+        } else {
+            Flex::vertical()
+                .constraints([
+                    Constraint::Percentage(40.0),
+                    Constraint::Percentage(30.0),
+                    Constraint::Percentage(30.0),
+                ])
+                .split(area)
+        };
 
         // Panel 1: SQL Studio
         self.layout_info.set(rows[0]);
@@ -1588,43 +1667,22 @@ impl CodeExplorer {
             lines.push(truncate_to_width(line, studio_inner.width));
         }
         if !lines.is_empty() {
-            let total_chars = lines
-                .iter()
-                .map(|line| grapheme_count(line) + 1)
-                .sum::<usize>()
-                .max(1);
+            let preview = lines.join("\n");
+            let total_chars = grapheme_count(&preview).max(1);
             let progress = ((self.time * 0.6).sin() * 0.5 + 0.5).clamp(0.0, 1.0);
-            let visible_chars = total_chars as f64 * progress;
-            let styled = StyledMultiLine::new(lines)
-                .effect(TextEffect::Typewriter { visible_chars })
-                .effect(TextEffect::Cursor {
-                    style: CursorStyle::Block,
-                    blink_speed: 2.0,
-                    position: CursorPosition::AfterReveal,
-                })
-                .effect(TextEffect::AnimatedGradient {
-                    gradient: ColorGradient::matrix(),
-                    speed: 0.65,
-                })
-                .effect(TextEffect::Scanline {
-                    intensity: 0.2,
-                    line_gap: 2,
-                    scroll: true,
-                    scroll_speed: 0.7,
-                    flicker: 0.05,
-                })
-                .base_color(theme::fg::PRIMARY.into())
-                .time(self.time);
-            styled.render(studio_inner, frame);
+            let visible_chars = (total_chars as f64 * progress) as usize;
+            let typed = truncate_to_grapheme_count(&preview, visible_chars);
+            let highlighted = self.highlighter.highlight(&typed, "sql");
+            Paragraph::new(highlighted).render(studio_inner, frame);
         }
 
-        // Panel 2: Live Preview
+        // Panel 2: Result Preview
         self.layout_context.set(rows[1]);
         chrome::register_pane_hit(frame, rows[1], ScreenId::CodeExplorer);
         let preview_block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Live Preview")
+            .title("Result Preview")
             .title_alignment(Alignment::Center)
             .style(theme::panel_border_style(
                 self.focus == FocusPanel::Context,
@@ -1632,50 +1690,57 @@ impl CodeExplorer {
             ));
         let preview_inner = preview_block.inner(rows[1]);
         preview_block.render(rows[1], frame);
-        let preview_idx = self
-            .query_index()
-            .min(RESULT_PREVIEWS.len().saturating_sub(1));
-        let preview = RESULT_PREVIEWS
-            .get(preview_idx)
-            .copied()
-            .unwrap_or("rows=0");
-        let preview_line = truncate_to_width(preview, preview_inner.width);
-        let preview_fx = StyledText::new(preview_line)
-            .effect(TextEffect::ColorWave {
-                color1: theme::accent::SUCCESS.into(),
-                color2: theme::accent::ACCENT_8.into(),
-                speed: 1.1,
-                wavelength: 12.0,
-            })
-            .time(self.time);
-        preview_fx.render(preview_inner, frame);
+        self.render_query_results_panel(frame, preview_inner);
 
-        // Panel 3: Index Map
-        self.layout_hotspots.set(rows[2]);
-        chrome::register_pane_hit(frame, rows[2], ScreenId::CodeExplorer);
-        let map_block = Block::new()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .title("Index Map")
-            .title_alignment(Alignment::Center)
-            .style(theme::panel_border_style(
-                self.focus == FocusPanel::Hotspots,
-                theme::screen_accent::CODE_EXPLORER,
-            ));
-        let map_inner = map_block.inner(rows[2]);
-        map_block.render(rows[2], frame);
-        let map = if self.match_density.is_empty() {
-            vec![0.2, 0.4, 0.6, 0.8, 0.5, 0.3, 0.7, 0.9, 0.4, 0.2]
+        if rows.len() == 4 {
+            // Panel 3: Schema Inspector
+            self.layout_hotspots.set(rows[2]);
+            chrome::register_pane_hit(frame, rows[2], ScreenId::CodeExplorer);
+            let schema_block = Block::new()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Schema")
+                .title_alignment(Alignment::Center)
+                .style(theme::panel_border_style(
+                    self.focus == FocusPanel::Hotspots,
+                    theme::screen_accent::CODE_EXPLORER,
+                ));
+            let schema_inner = schema_block.inner(rows[2]);
+            schema_block.render(rows[2], frame);
+            self.render_schema_panel(frame, schema_inner);
+
+            // Panel 4: Index Map
+            self.layout_radar.set(rows[3]);
+            chrome::register_pane_hit(frame, rows[3], ScreenId::CodeExplorer);
+            let map_block = Block::new()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Index Map")
+                .title_alignment(Alignment::Center)
+                .style(theme::panel_border_style(
+                    self.focus == FocusPanel::Radar,
+                    theme::screen_accent::CODE_EXPLORER,
+                ));
+            let map_inner = map_block.inner(rows[3]);
+            map_block.render(rows[3], frame);
+            self.render_index_map(frame, map_inner);
         } else {
-            self.match_density.clone()
-        };
-        Sparkline::new(&map)
-            .style(Style::new().fg(theme::accent::PRIMARY))
-            .gradient(
-                theme::accent::PRIMARY.into(),
-                theme::accent::ACCENT_8.into(),
-            )
-            .render(map_inner, frame);
+            // Panel 3: Index Map
+            self.layout_radar.set(rows[2]);
+            chrome::register_pane_hit(frame, rows[2], ScreenId::CodeExplorer);
+            let map_block = Block::new()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Index Map")
+                .title_alignment(Alignment::Center)
+                .style(theme::panel_border_style(
+                    self.focus == FocusPanel::Radar,
+                    theme::screen_accent::CODE_EXPLORER,
+                ));
+            let map_inner = map_block.inner(rows[2]);
+            map_block.render(rows[2], frame);
+            self.render_index_map(frame, map_inner);
+        }
     }
 
     fn render_sidebar_exec_plan(&self, frame: &mut Frame, area: Rect) {
@@ -1934,6 +1999,125 @@ impl CodeExplorer {
         }
     }
 
+    fn render_query_results_panel(&self, frame: &mut Frame, area: Rect) {
+        if area.is_empty() {
+            return;
+        }
+        let rows = Flex::vertical()
+            .constraints([
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
+                Constraint::Min(1),
+            ])
+            .split(area);
+
+        let preview_idx = self
+            .query_index()
+            .min(RESULT_PREVIEWS.len().saturating_sub(1));
+        let preview = RESULT_PREVIEWS
+            .get(preview_idx)
+            .copied()
+            .unwrap_or("rows=0");
+        let preview_line = truncate_to_width(preview, rows[0].width);
+        let preview_fx = StyledText::new(preview_line)
+            .effect(TextEffect::ColorWave {
+                color1: theme::accent::SUCCESS.into(),
+                color2: theme::accent::ACCENT_8.into(),
+                speed: 1.1,
+                wavelength: 12.0,
+            })
+            .time(self.time);
+        preview_fx.render(rows[0], frame);
+
+        if rows[1].is_empty() {
+            return;
+        }
+
+        let total_width = rows[1].width;
+        if total_width < 8 {
+            return;
+        }
+        let col_play = (total_width.saturating_mul(20))
+            .checked_div(100)
+            .unwrap_or(6)
+            .max(6);
+        let col_speaker = (total_width.saturating_mul(20))
+            .checked_div(100)
+            .unwrap_or(8)
+            .max(8);
+        let col_line = total_width
+            .saturating_sub(col_play)
+            .saturating_sub(col_speaker)
+            .saturating_sub(2);
+
+        let header = format!(
+            "{} {} {}",
+            pad_to_width("play", col_play),
+            pad_to_width("speaker", col_speaker),
+            truncate_to_width("line", col_line),
+        );
+        Paragraph::new(truncate_to_width(&header, rows[1].width))
+            .style(Style::new().fg(theme::accent::PRIMARY))
+            .render(rows[1], frame);
+
+        if rows[2].is_empty() {
+            return;
+        }
+
+        let results_idx = self.query_index().min(RESULT_SETS.len().saturating_sub(1));
+        let results = RESULT_SETS.get(results_idx).copied().unwrap_or(&[]);
+        let max_rows = rows[2].height as usize;
+        for (i, row) in results.iter().take(max_rows).enumerate() {
+            let y = rows[2].y + i as u16;
+            if y >= rows[2].y + rows[2].height {
+                break;
+            }
+            let line = format!(
+                "{} {} {}",
+                pad_to_width(row.play, col_play),
+                pad_to_width(row.speaker, col_speaker),
+                truncate_to_width(row.line, col_line),
+            );
+            Paragraph::new(truncate_to_width(&line, rows[2].width))
+                .style(Style::new().fg(theme::fg::SECONDARY))
+                .render(Rect::new(rows[2].x, y, rows[2].width, 1), frame);
+        }
+    }
+
+    fn render_schema_panel(&self, frame: &mut Frame, area: Rect) {
+        if area.is_empty() {
+            return;
+        }
+        let max_lines = area.height as usize;
+        for (i, line) in SCHEMA_PREVIEW.iter().take(max_lines).enumerate() {
+            let y = area.y + i as u16;
+            let text = truncate_to_width(line, area.width);
+            let fx = StyledText::new(text)
+                .effect(TextEffect::Pulse {
+                    speed: 0.7,
+                    min_alpha: 0.7,
+                })
+                .time(self.time)
+                .seed(i as u64);
+            fx.render(Rect::new(area.x, y, area.width, 1), frame);
+        }
+    }
+
+    fn render_index_map(&self, frame: &mut Frame, area: Rect) {
+        let map = if self.match_density.is_empty() {
+            vec![0.2, 0.4, 0.6, 0.8, 0.5, 0.3, 0.7, 0.9, 0.4, 0.2]
+        } else {
+            self.match_density.clone()
+        };
+        Sparkline::new(&map)
+            .style(Style::new().fg(theme::accent::PRIMARY))
+            .gradient(
+                theme::accent::PRIMARY.into(),
+                theme::accent::ACCENT_8.into(),
+            )
+            .render(area, frame);
+    }
+
     fn render_feature_spotlight(&self, frame: &mut Frame, area: Rect) {
         if area.is_empty() {
             return;
@@ -2006,15 +2190,39 @@ fn truncate_to_width(text: &str, max_width: u16) -> String {
         return String::new();
     }
     let mut out = String::new();
-    let mut width = 0usize;
     let max = max_width as usize;
-    for grapheme in graphemes(text) {
-        let w = grapheme_width(grapheme);
-        if width + w > max {
+    graphemes(text)
+        .scan(0usize, |width, grapheme| {
+            let w = grapheme_width(grapheme);
+            if *width + w > max {
+                return None;
+            }
+            *width += w;
+            Some(grapheme)
+        })
+        .for_each(|grapheme| out.push_str(grapheme));
+    out
+}
+
+fn pad_to_width(text: &str, width: u16) -> String {
+    let mut out = truncate_to_width(text, width);
+    let current = display_width(out.as_str()) as u16;
+    if current < width {
+        out.push_str(&" ".repeat((width - current) as usize));
+    }
+    out
+}
+
+fn truncate_to_grapheme_count(text: &str, max_count: usize) -> String {
+    if max_count == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (idx, grapheme) in graphemes(text).enumerate() {
+        if idx >= max_count {
             break;
         }
         out.push_str(grapheme);
-        width += w;
     }
     out
 }
@@ -2073,5 +2281,14 @@ mod tests {
         // Verify line count matches actual file
         let actual_lines = SQLITE_SOURCE.lines().count();
         assert_eq!(ce.total_lines(), actual_lines);
+    }
+
+    #[test]
+    fn truncate_grapheme_count_handles_unicode() {
+        let text = "a😀b";
+        assert_eq!(truncate_to_grapheme_count(text, 0), "");
+        assert_eq!(truncate_to_grapheme_count(text, 1), "a");
+        assert_eq!(truncate_to_grapheme_count(text, 2), "a😀");
+        assert_eq!(truncate_to_grapheme_count(text, 3), "a😀b");
     }
 }

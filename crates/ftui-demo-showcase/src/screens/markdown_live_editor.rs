@@ -9,16 +9,18 @@
 //! - Diff mode to compare raw vs rendered line widths
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use ftui_core::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEventKind,
 };
 use ftui_core::geometry::Rect;
 use ftui_extras::markdown::{MarkdownRenderer, MarkdownTheme};
+use ftui_extras::syntax::SyntaxHighlighter;
 use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
-use ftui_style::{Style, TableTheme};
+use ftui_style::Style;
 use ftui_text::CursorPosition;
 use ftui_text::search::{SearchResult, search_ascii_case_insensitive};
 use ftui_text::text::{Line, Span, Text};
@@ -111,6 +113,27 @@ fn is_table_like_line(plain: &str) -> bool {
     trimmed.chars().filter(|&c| c == '|').count() >= 2
 }
 
+fn pad_to_width(text: &str, width: u16) -> String {
+    let width = width as usize;
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for grapheme in text.graphemes(true) {
+        let g_width = display_width(grapheme);
+        if used + g_width > width {
+            break;
+        }
+        out.push_str(grapheme);
+        used += g_width;
+    }
+    if used < width {
+        out.push_str(&" ".repeat(width - used));
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Editor,
@@ -135,7 +158,9 @@ pub struct MarkdownLiveEditor {
     search_results: Vec<SearchResult>,
     current_match: Option<usize>,
     md_theme: MarkdownTheme,
+    syntax_highlighter: Arc<SyntaxHighlighter>,
     diff_mode: bool,
+    tick_count: u64,
     preview_scroll: u16,
     layout_search: Cell<Rect>,
     layout_editor: Cell<Rect>,
@@ -151,6 +176,9 @@ impl Default for MarkdownLiveEditor {
 impl MarkdownLiveEditor {
     pub fn new() -> Self {
         let md_theme = Self::build_theme();
+        let mut syntax_highlighter = SyntaxHighlighter::new();
+        syntax_highlighter.set_theme(theme::syntax_theme());
+        let syntax_highlighter = Arc::new(syntax_highlighter);
 
         let editor = TextArea::new()
             .with_text(SAMPLE_MARKDOWN)
@@ -170,7 +198,9 @@ impl MarkdownLiveEditor {
             search_results: Vec::new(),
             current_match: None,
             md_theme,
+            syntax_highlighter,
             diff_mode: false,
+            tick_count: 0,
             preview_scroll: 0,
             layout_search: Cell::new(Rect::default()),
             layout_editor: Cell::new(Rect::default()),
@@ -206,34 +236,12 @@ impl MarkdownLiveEditor {
             .with_placeholder_style(placeholder_style);
 
         self.md_theme = Self::build_theme();
+        let mut syntax_highlighter = SyntaxHighlighter::new();
+        syntax_highlighter.set_theme(theme::syntax_theme());
+        self.syntax_highlighter = Arc::new(syntax_highlighter);
     }
 
     fn build_theme() -> MarkdownTheme {
-        let table_theme = TableTheme {
-            border: Style::new().fg(theme::accent::SECONDARY),
-            header: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::ACCENT_PRIMARY)
-                .bold(),
-            row: Style::new().fg(theme::fg::PRIMARY),
-            row_alt: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::OVERLAY),
-            row_selected: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::ACCENT_PRIMARY)
-                .bold(),
-            row_hover: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::OVERLAY),
-            divider: Style::new().fg(theme::accent::SECONDARY),
-            padding: 1,
-            column_gap: 1,
-            row_height: 1,
-            effects: Vec::new(),
-            preset_id: None,
-        };
-
         MarkdownTheme {
             h1: Style::new().fg(theme::fg::PRIMARY).bold(),
             h2: Style::new().fg(theme::accent::PRIMARY).bold(),
@@ -254,7 +262,7 @@ impl MarkdownLiveEditor {
             strikethrough: Style::new().strikethrough(),
             list_bullet: Style::new().fg(theme::accent::PRIMARY),
             horizontal_rule: Style::new().fg(theme::fg::MUTED).dim(),
-            table_theme,
+            table_theme: theme::table_theme_demo(),
             task_done: Style::new().fg(theme::accent::SUCCESS),
             task_todo: Style::new().fg(theme::accent::INFO),
             math_inline: Style::new().fg(theme::accent::SECONDARY).italic(),
@@ -273,6 +281,8 @@ impl MarkdownLiveEditor {
         MarkdownRenderer::new(self.md_theme.clone())
             .rule_width(RULE_WIDTH.min(width))
             .table_max_width(width)
+            .table_effect_phase(theme::table_theme_phase(self.tick_count))
+            .with_syntax_highlighter(self.syntax_highlighter.clone())
             .render(&self.editor.text())
     }
 
@@ -396,6 +406,7 @@ impl MarkdownLiveEditor {
             let current = self.current_match.map_or(0, |i| i + 1);
             format!("{current}/{} matches", self.search_results.len())
         };
+        let match_text = pad_to_width(&match_text, cols[2].width);
         Paragraph::new(match_text)
             .style(theme::muted())
             .render(cols[2], frame);
@@ -644,10 +655,19 @@ impl Screen for MarkdownLiveEditor {
         Cmd::None
     }
 
+    fn tick(&mut self, tick_count: u64) {
+        self.tick_count = tick_count;
+    }
+
     fn view(&self, frame: &mut Frame, area: Rect) {
         if area.is_empty() {
             return;
         }
+
+        // Clear the full area to avoid stale borders in gaps.
+        Paragraph::new("")
+            .style(Style::new().bg(theme::alpha::SURFACE))
+            .render(area, frame);
 
         let outer = Block::new()
             .borders(Borders::ALL)

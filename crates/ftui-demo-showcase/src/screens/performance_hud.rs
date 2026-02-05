@@ -12,6 +12,7 @@
 
 use std::cell::Cell;
 use std::collections::VecDeque;
+use std::env;
 use std::time::Instant;
 
 use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers};
@@ -113,6 +114,8 @@ pub struct PerformanceHud {
     budget_ms: f64,
     /// Fixed tick interval for deterministic fixtures (microseconds).
     deterministic_tick_us: Option<u64>,
+    /// Optional override for views-per-tick in deterministic fixtures.
+    forced_views_per_tick: Option<f64>,
 }
 
 impl Default for PerformanceHud {
@@ -123,6 +126,10 @@ impl Default for PerformanceHud {
 
 impl PerformanceHud {
     pub fn new() -> Self {
+        let forced_views_per_tick = env::var("FTUI_DEMO_PERF_HUD_VIEWS_PER_TICK")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0);
         Self {
             tick_times_us: VecDeque::with_capacity(MAX_SAMPLES),
             last_tick: None,
@@ -134,6 +141,7 @@ impl PerformanceHud {
             sparkline_mode: SparklineMode::Intervals,
             budget_ms: 16.67, // ~60 FPS target
             deterministic_tick_us: None,
+            forced_views_per_tick,
         }
     }
 
@@ -152,7 +160,7 @@ impl PerformanceHud {
         self.last_tick = None;
         self.view_counter.set(0);
         self.prev_view_count = 0;
-        self.views_per_tick = 0.0;
+        self.views_per_tick = self.forced_views_per_tick.unwrap_or(0.0);
     }
 
     fn record_tick(&mut self) {
@@ -185,6 +193,12 @@ impl PerformanceHud {
         let delta = current.saturating_sub(self.prev_view_count);
         self.prev_view_count = current;
         self.views_per_tick = 0.7 * self.views_per_tick + 0.3 * delta as f64;
+
+        if self.deterministic_tick_us.is_some()
+            && let Some(forced) = self.forced_views_per_tick
+        {
+            self.views_per_tick = forced;
+        }
     }
 
     /// Compute (tps, avg_ms, p50_ms, p95_ms, p99_ms, min_ms, max_ms).

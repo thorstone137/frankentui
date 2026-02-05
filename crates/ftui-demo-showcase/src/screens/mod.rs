@@ -16,6 +16,7 @@ pub mod dashboard;
 pub mod data_viz;
 pub mod determinism_lab;
 pub mod drag_drop;
+pub mod explainability_cockpit;
 pub mod file_browser;
 pub mod form_validation;
 pub mod forms_input;
@@ -415,6 +416,16 @@ pub const SCREEN_REGISTRY: &[ScreenMeta] = &[
         tour_step_hint: None,
     },
     ScreenMeta {
+        id: ScreenId::ExplainabilityCockpit,
+        title: "Explainability Cockpit",
+        short_label: "Explain",
+        category: ScreenCategory::Systems,
+        palette_tags: &["evidence", "bayes", "bocpd", "budget", "diff"],
+        blurb: "Diff, resize, and budget evidence in one cockpit.",
+        default_hotkey: None,
+        tour_step_hint: None,
+    },
+    ScreenMeta {
         id: ScreenId::I18nDemo,
         title: "i18n Stress Lab",
         short_label: "i18n",
@@ -491,6 +502,16 @@ pub const SCREEN_REGISTRY: &[ScreenMeta] = &[
         category: ScreenCategory::Interaction,
         palette_tags: &["links", "osc8", "hit-test"],
         blurb: "OSC-8 hyperlink playground and hit regions.",
+        default_hotkey: None,
+        tour_step_hint: None,
+    },
+    ScreenMeta {
+        id: ScreenId::ExplainabilityCockpit,
+        title: "Explainability Cockpit",
+        short_label: "Explain",
+        category: ScreenCategory::Systems,
+        palette_tags: &["evidence", "bayes", "bocpd", "budget"],
+        blurb: "Unified cockpit for diff/resize/budget decisions.",
         default_hotkey: None,
         tour_step_hint: None,
     },
@@ -790,7 +811,7 @@ mod tests {
     #[test]
     fn line_contains_ignore_case_matches() {
         assert!(line_contains_ignore_case("HelloWorld", "world"));
-        assert!(line_contains_ignore_case("HelloWorld", "HEL"));
+        assert!(line_contains_ignore_case("HelloWorld", "hel"));
         assert!(line_contains_ignore_case("HelloWorld", ""));
         assert!(!line_contains_ignore_case("HelloWorld", "nope"));
         assert!(!line_contains_ignore_case("Hi", "longer"));

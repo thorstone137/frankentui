@@ -15,6 +15,7 @@
 
 use std::cell::Cell as StdCell;
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 
 use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
@@ -3243,7 +3244,7 @@ pub struct Dashboard {
     fps: f64,
 
     // Syntax highlighter (cached)
-    highlighter: SyntaxHighlighter,
+    highlighter: Arc<SyntaxHighlighter>,
 
     // Cached highlighted code samples
     code_cache: Vec<Text>,
@@ -3291,6 +3292,7 @@ impl Dashboard {
 
         let mut highlighter = SyntaxHighlighter::new();
         highlighter.set_theme(theme::syntax_theme());
+        let highlighter = Arc::new(highlighter);
         let code_cache = Self::build_code_cache(&highlighter);
 
         Self {
@@ -3300,9 +3302,10 @@ impl Dashboard {
             frame_times: VecDeque::with_capacity(60),
             last_frame: None,
             fps: 0.0,
-            highlighter,
+            highlighter: Arc::clone(&highlighter),
             code_cache,
-            md_renderer: MarkdownRenderer::new(MarkdownTheme::default()),
+            md_renderer: MarkdownRenderer::new(MarkdownTheme::default())
+                .with_syntax_highlighter(Arc::clone(&highlighter)),
             code_index: 0,
             md_sample_index: 0,
             md_stream_pos: 0,
@@ -3320,8 +3323,13 @@ impl Dashboard {
     }
 
     pub fn apply_theme(&mut self) {
-        self.highlighter.set_theme(theme::syntax_theme());
-        self.code_cache = Self::build_code_cache(&self.highlighter);
+        let mut highlighter = SyntaxHighlighter::new();
+        highlighter.set_theme(theme::syntax_theme());
+        let highlighter = Arc::new(highlighter);
+        self.code_cache = Self::build_code_cache(&highlighter);
+        self.highlighter = Arc::clone(&highlighter);
+        self.md_renderer =
+            MarkdownRenderer::new(MarkdownTheme::default()).with_syntax_highlighter(highlighter);
     }
 
     fn build_code_cache(highlighter: &SyntaxHighlighter) -> Vec<Text> {
@@ -5858,6 +5866,7 @@ impl Screen for Dashboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ftui_extras::syntax::SyntaxHighlighter;
     use ftui_render::grapheme_pool::GraphemePool;
 
     #[test]
@@ -6041,5 +6050,17 @@ mod tests {
         // Below medium thresholds, should use tiny layout
         state.view(&mut frame, Rect::new(0, 0, 50, 15));
         // Should not panic
+    }
+
+    #[test]
+    fn dashboard_code_samples_have_highlighters() {
+        let highlighter = SyntaxHighlighter::new();
+        for sample in CODE_SAMPLES {
+            assert!(
+                highlighter.supports_language(sample.lang),
+                "Missing syntax highlighter for language: {}",
+                sample.lang
+            );
+        }
     }
 }

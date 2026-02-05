@@ -15,9 +15,15 @@ use std::io::{BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::determinism;
+use crate::screens;
+use crate::screens::Screen;
+use crate::test_logging::{JsonlLogger, jsonl_enabled};
+use crate::theme;
+use crate::tour::{GuidedTourState, TourAdvanceReason, TourEvent, TourStep};
 use ftui_core::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -28,10 +34,7 @@ use ftui_render::cell::Cell as RenderCell;
 use ftui_render::frame::{Frame, HitGrid};
 use ftui_runtime::render_trace::checksum_buffer;
 use ftui_runtime::undo::HistoryManager;
-use ftui_runtime::{
-    Cmd, Every, FrameTiming, FrameTimingSink, InlineAutoRemeasureConfig, Model, Subscription,
-    VoiLogEntry, VoiSampler, VoiSamplerSnapshot, inline_auto_voi_snapshot,
-};
+use ftui_runtime::{Cmd, Every, FrameTiming, FrameTimingSink, Model, Subscription};
 use ftui_style::Style;
 use ftui_text::{Line, Span, Text, WrapMode};
 use ftui_widgets::Widget;
@@ -40,16 +43,6 @@ use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::command_palette::{CommandPalette, PaletteAction};
 use ftui_widgets::error_boundary::FallbackWidget;
 use ftui_widgets::paragraph::Paragraph;
-use ftui_widgets::voi_debug_overlay::{
-    VoiDebugOverlay, VoiDecisionSummary, VoiLedgerEntry, VoiObservationSummary, VoiOverlayData,
-    VoiOverlayStyle, VoiPosteriorSummary,
-};
-
-use crate::determinism;
-use crate::screens;
-use crate::screens::Screen;
-use crate::theme;
-use crate::tour::{GuidedTourState, TourAdvanceReason, TourEvent, TourStep};
 
 // ---------------------------------------------------------------------------
 // Performance HUD Diagnostics (bd-3k3x.8)
@@ -163,6 +156,89 @@ fn emit_a11y_jsonl(event: &str, fields: &[(&str, &str)]) {
     json.push('}');
 
     let _ = writeln!(std::io::stderr(), "{json}");
+}
+
+// ---------------------------------------------------------------------------
+// Screen Init Diagnostics (bd-3e1t.5.4)
+// ---------------------------------------------------------------------------
+
+fn screen_init_logger() -> Option<&'static JsonlLogger> {
+    if !jsonl_enabled() {
+        return None;
+    }
+    static LOGGER: OnceLock<JsonlLogger> = OnceLock::new();
+    Some(LOGGER.get_or_init(|| {
+        let run_id = determinism::demo_run_id().unwrap_or_else(|| "demo_screen_init".to_string());
+        let seed = determinism::demo_seed(0);
+        JsonlLogger::new(run_id)
+            .with_seed(seed)
+            .with_context("screen_mode", determinism::demo_screen_mode())
+    }))
+}
+
+fn emit_screen_init_log(
+    screen: ScreenId,
+    init_ms: u64,
+    effect_count: usize,
+    memory_estimate_bytes: Option<u64>,
+) {
+    #[cfg(test)]
+    record_screen_init_event(screen, init_ms, effect_count, memory_estimate_bytes);
+
+    let Some(logger) = screen_init_logger() else {
+        return;
+    };
+    let init_ms = init_ms.to_string();
+    let effect_count = effect_count.to_string();
+    let memory_estimate = memory_estimate_bytes
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    logger.log(
+        "screen_init",
+        &[
+            ("screen_id", screen.widget_name()),
+            ("init_ms", &init_ms),
+            ("effect_count", &effect_count),
+            ("memory_estimate_bytes", &memory_estimate),
+        ],
+    );
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct ScreenInitEvent {
+    screen: ScreenId,
+    init_ms: u64,
+    effect_count: usize,
+    memory_estimate_bytes: Option<u64>,
+}
+
+#[cfg(test)]
+static SCREEN_INIT_EVENTS: OnceLock<Mutex<Vec<ScreenInitEvent>>> = OnceLock::new();
+
+#[cfg(test)]
+fn record_screen_init_event(
+    screen: ScreenId,
+    init_ms: u64,
+    effect_count: usize,
+    memory_estimate_bytes: Option<u64>,
+) {
+    let events = SCREEN_INIT_EVENTS.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut guard) = events.lock() {
+        guard.push(ScreenInitEvent {
+            screen,
+            init_ms,
+            effect_count,
+            memory_estimate_bytes,
+        });
+    }
+}
+
+#[cfg(test)]
+fn take_screen_init_events() -> Vec<ScreenInitEvent> {
+    let events = SCREEN_INIT_EVENTS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = events.lock().expect("screen init events lock");
+    guard.drain(..).collect::<Vec<_>>()
 }
 
 /// Accessibility telemetry event types.
@@ -433,6 +509,8 @@ pub enum ScreenId {
     SnapshotPlayer,
     /// Performance HUD + Render Budget Visualizer (bd-3k3x).
     PerformanceHud,
+    /// Explainability cockpit (diff/resize/budget evidence) (bd-iuvb.4).
+    ExplainabilityCockpit,
     /// Internationalization demo (bd-ic6i.5).
     I18nDemo,
     /// VOI overlay widget demo (Galaxy-Brain).
@@ -510,6 +588,7 @@ impl ScreenId {
             Self::ThemeStudio => "ThemeStudio",
             Self::SnapshotPlayer => "TimeTravelStudio",
             Self::PerformanceHud => "PerformanceHud",
+            Self::ExplainabilityCockpit => "ExplainabilityCockpit",
             Self::I18nDemo => "I18nDemo",
             Self::VoiOverlay => "VoiOverlay",
             Self::InlineModeStory => "InlineModeStory",
@@ -536,14 +615,54 @@ impl ScreenId {
 // ScreenStates
 // ---------------------------------------------------------------------------
 
+struct LazyScreen<T> {
+    state: RefCell<Option<T>>,
+}
+
+impl<T> LazyScreen<T> {
+    fn new() -> Self {
+        Self {
+            state: RefCell::new(None),
+        }
+    }
+
+    fn with_mut<F, R>(&self, init: impl FnOnce() -> T, on_init: impl FnOnce(&T, u64), f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut guard = self.state.borrow_mut();
+        if guard.is_none() {
+            let start = Instant::now();
+            let value = init();
+            let init_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+            on_init(&value, init_ms);
+            *guard = Some(value);
+        }
+        f(guard.as_mut().expect("screen state should be initialized"))
+    }
+
+    fn with_existing_mut<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut guard = self.state.borrow_mut();
+        guard.as_mut().map(f)
+    }
+
+    #[cfg(test)]
+    fn is_initialized(&self) -> bool {
+        self.state.borrow().is_some()
+    }
+}
+
 /// Holds the state for every screen.
 pub struct ScreenStates {
     /// Dashboard screen state.
     pub dashboard: screens::dashboard::Dashboard,
     /// Shakespeare library screen state.
     pub shakespeare: screens::shakespeare::Shakespeare,
-    /// Code explorer screen state.
-    pub code_explorer: screens::code_explorer::CodeExplorer,
+    /// Code explorer screen state (lazy init).
+    code_explorer: LazyScreen<screens::code_explorer::CodeExplorer>,
     /// Widget gallery screen state.
     pub widget_gallery: screens::widget_gallery::WidgetGallery,
     /// Layout laboratory screen state.
@@ -554,8 +673,8 @@ pub struct ScreenStates {
     pub data_viz: screens::data_viz::DataViz,
     /// Table theme gallery screen state.
     pub table_theme_gallery: screens::table_theme_gallery::TableThemeGallery,
-    /// File browser screen state.
-    pub file_browser: screens::file_browser::FileBrowser,
+    /// File browser screen state (lazy init).
+    file_browser: LazyScreen<screens::file_browser::FileBrowser>,
     /// Advanced features screen state.
     pub advanced_features: screens::advanced_features::AdvancedFeatures,
     /// Terminal capability explorer screen state (bd-2sog).
@@ -566,8 +685,8 @@ pub struct ScreenStates {
     pub performance: screens::performance::Performance,
     /// Markdown and rich text screen state.
     pub markdown_rich_text: screens::markdown_rich_text::MarkdownRichText,
-    /// Visual effects screen state.
-    pub visual_effects: screens::visual_effects::VisualEffectsScreen,
+    /// Visual effects screen state (lazy init).
+    visual_effects: LazyScreen<screens::visual_effects::VisualEffectsScreen>,
     /// Responsive layout demo screen state.
     pub responsive_demo: screens::responsive_demo::ResponsiveDemo,
     /// Log search demo screen state.
@@ -592,10 +711,12 @@ pub struct ScreenStates {
     pub async_tasks: screens::async_tasks::AsyncTaskManager,
     /// Theme studio screen state (bd-vu0o).
     pub theme_studio: screens::theme_studio::ThemeStudioDemo,
-    /// Snapshot/Time Travel Player screen state (bd-3sa7).
-    pub snapshot_player: screens::snapshot_player::SnapshotPlayer,
+    /// Snapshot/Time Travel Player screen state (bd-3sa7) (lazy init).
+    snapshot_player: LazyScreen<screens::snapshot_player::SnapshotPlayer>,
     /// Performance HUD + Render Budget Visualizer screen state (bd-3k3x).
     pub performance_hud: screens::performance_hud::PerformanceHud,
+    /// Explainability cockpit screen state (bd-iuvb.4).
+    pub explainability_cockpit: screens::explainability_cockpit::ExplainabilityCockpit,
     /// Internationalization demo screen state (bd-ic6i.5).
     pub i18n_demo: screens::i18n_demo::I18nDemo,
     /// VOI overlay widget demo screen state.
@@ -615,6 +736,8 @@ pub struct ScreenStates {
     /// Tracks whether each screen has errored during rendering.
     /// Indexed by `ScreenId::index()`.
     screen_errors: Vec<Option<String>>,
+    /// Deferred deterministic tick size for Visual Effects screen.
+    visual_effects_deterministic_tick_ms: Option<u64>,
 }
 
 impl Default for ScreenStates {
@@ -622,19 +745,19 @@ impl Default for ScreenStates {
         Self {
             dashboard: Default::default(),
             shakespeare: Default::default(),
-            code_explorer: Default::default(),
+            code_explorer: LazyScreen::new(),
             widget_gallery: Default::default(),
             layout_lab: Default::default(),
             forms_input: Default::default(),
             data_viz: Default::default(),
             table_theme_gallery: Default::default(),
-            file_browser: Default::default(),
+            file_browser: LazyScreen::new(),
             advanced_features: Default::default(),
             terminal_capabilities: Default::default(),
             macro_recorder: Default::default(),
             performance: Default::default(),
             markdown_rich_text: Default::default(),
-            visual_effects: Default::default(),
+            visual_effects: LazyScreen::new(),
             responsive_demo: Default::default(),
             log_search: Default::default(),
             notifications: Default::default(),
@@ -647,8 +770,9 @@ impl Default for ScreenStates {
             virtualized_search: Default::default(),
             async_tasks: Default::default(),
             theme_studio: Default::default(),
-            snapshot_player: Default::default(),
+            snapshot_player: LazyScreen::new(),
             performance_hud: Default::default(),
+            explainability_cockpit: Default::default(),
             i18n_demo: Default::default(),
             voi_overlay: Default::default(),
             inline_mode_story: Default::default(),
@@ -658,11 +782,99 @@ impl Default for ScreenStates {
             determinism_lab: Default::default(),
             hyperlink_playground: Default::default(),
             screen_errors: vec![None; screens::screen_registry().len()],
+            visual_effects_deterministic_tick_ms: None,
         }
     }
 }
 
 impl ScreenStates {
+    fn code_explorer_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut screens::code_explorer::CodeExplorer) -> R,
+    {
+        self.code_explorer.with_mut(
+            screens::code_explorer::CodeExplorer::default,
+            |screen, init_ms| {
+                let memory_estimate = Some(std::mem::size_of_val(screen) as u64);
+                emit_screen_init_log(ScreenId::CodeExplorer, init_ms, 0, memory_estimate);
+            },
+            f,
+        )
+    }
+
+    fn file_browser_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut screens::file_browser::FileBrowser) -> R,
+    {
+        self.file_browser.with_mut(
+            screens::file_browser::FileBrowser::default,
+            |screen, init_ms| {
+                let memory_estimate = Some(std::mem::size_of_val(screen) as u64);
+                emit_screen_init_log(ScreenId::FileBrowser, init_ms, 0, memory_estimate);
+            },
+            f,
+        )
+    }
+
+    fn visual_effects_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut screens::visual_effects::VisualEffectsScreen) -> R,
+    {
+        let tick_ms = self.visual_effects_deterministic_tick_ms;
+        self.visual_effects.with_mut(
+            || {
+                let mut screen = screens::visual_effects::VisualEffectsScreen::default();
+                if let Some(tick_ms) = tick_ms {
+                    screen.enable_deterministic_mode(tick_ms);
+                }
+                screen
+            },
+            |screen, init_ms| {
+                let memory_estimate = Some(std::mem::size_of_val(screen) as u64);
+                emit_screen_init_log(
+                    ScreenId::VisualEffects,
+                    init_ms,
+                    screen.effect_count(),
+                    memory_estimate,
+                );
+            },
+            f,
+        )
+    }
+
+    fn snapshot_player_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut screens::snapshot_player::SnapshotPlayer) -> R,
+    {
+        self.snapshot_player.with_mut(
+            screens::snapshot_player::SnapshotPlayer::default,
+            |screen, init_ms| {
+                let memory_estimate = Some(std::mem::size_of_val(screen) as u64);
+                emit_screen_init_log(ScreenId::SnapshotPlayer, init_ms, 0, memory_estimate);
+            },
+            f,
+        )
+    }
+
+    fn set_visual_effects_deterministic_tick_ms(&mut self, tick_ms: u64) {
+        self.visual_effects_deterministic_tick_ms = Some(tick_ms.max(1));
+        let tick_ms = tick_ms.max(1);
+        let _ = self
+            .visual_effects
+            .with_existing_mut(|screen| screen.enable_deterministic_mode(tick_ms));
+    }
+
+    #[cfg(test)]
+    fn is_lazy_initialized(&self, id: ScreenId) -> bool {
+        match id {
+            ScreenId::CodeExplorer => self.code_explorer.is_initialized(),
+            ScreenId::FileBrowser => self.file_browser.is_initialized(),
+            ScreenId::VisualEffects => self.visual_effects.is_initialized(),
+            ScreenId::SnapshotPlayer => self.snapshot_player.is_initialized(),
+            _ => true,
+        }
+    }
+
     /// Forward an event to the screen identified by `id`.
     fn update(&mut self, id: ScreenId, event: &Event) {
         use screens::Screen;
@@ -675,7 +887,7 @@ impl ScreenStates {
                 self.shakespeare.update(event);
             }
             ScreenId::CodeExplorer => {
-                self.code_explorer.update(event);
+                self.code_explorer_mut(|screen| screen.update(event));
             }
             ScreenId::WidgetGallery => {
                 self.widget_gallery.update(event);
@@ -693,7 +905,7 @@ impl ScreenStates {
                 self.table_theme_gallery.update(event);
             }
             ScreenId::FileBrowser => {
-                self.file_browser.update(event);
+                self.file_browser_mut(|screen| screen.update(event));
             }
             ScreenId::AdvancedFeatures => {
                 self.advanced_features.update(event);
@@ -711,7 +923,7 @@ impl ScreenStates {
                 self.markdown_rich_text.update(event);
             }
             ScreenId::VisualEffects => {
-                self.visual_effects.update(event);
+                self.visual_effects_mut(|screen| screen.update(event));
             }
             ScreenId::ResponsiveDemo => {
                 self.responsive_demo.update(event);
@@ -750,10 +962,13 @@ impl ScreenStates {
                 self.theme_studio.update(event);
             }
             ScreenId::SnapshotPlayer => {
-                self.snapshot_player.update(event);
+                self.snapshot_player_mut(|screen| screen.update(event));
             }
             ScreenId::PerformanceHud => {
                 self.performance_hud.update(event);
+            }
+            ScreenId::ExplainabilityCockpit => {
+                self.explainability_cockpit.update(event);
             }
             ScreenId::I18nDemo => {
                 self.i18n_demo.update(event);
@@ -790,11 +1005,15 @@ impl ScreenStates {
     fn tick(&mut self, active: ScreenId, tick_count: u64) {
         use screens::Screen;
 
-        // Always tick performance_hud for metrics collection
+        // Always tick performance_hud and explainability_cockpit for metrics collection.
         self.performance_hud.tick(tick_count);
+        self.explainability_cockpit.tick(tick_count);
 
-        // Only tick the active screen (skip if it's performance_hud since we just ticked it)
-        if active == ScreenId::PerformanceHud {
+        // Only tick the active screen (skip if it's already ticked above).
+        if matches!(
+            active,
+            ScreenId::PerformanceHud | ScreenId::ExplainabilityCockpit
+        ) {
             return;
         }
 
@@ -802,19 +1021,19 @@ impl ScreenStates {
             ScreenId::GuidedTour => {}
             ScreenId::Dashboard => self.dashboard.tick(tick_count),
             ScreenId::Shakespeare => self.shakespeare.tick(tick_count),
-            ScreenId::CodeExplorer => self.code_explorer.tick(tick_count),
+            ScreenId::CodeExplorer => self.code_explorer_mut(|screen| screen.tick(tick_count)),
             ScreenId::WidgetGallery => self.widget_gallery.tick(tick_count),
             ScreenId::LayoutLab => self.layout_lab.tick(tick_count),
             ScreenId::FormsInput => self.forms_input.tick(tick_count),
             ScreenId::DataViz => self.data_viz.tick(tick_count),
             ScreenId::TableThemeGallery => self.table_theme_gallery.tick(tick_count),
-            ScreenId::FileBrowser => self.file_browser.tick(tick_count),
+            ScreenId::FileBrowser => self.file_browser_mut(|screen| screen.tick(tick_count)),
             ScreenId::AdvancedFeatures => self.advanced_features.tick(tick_count),
             ScreenId::TerminalCapabilities => self.terminal_capabilities.tick(tick_count),
             ScreenId::MacroRecorder => self.macro_recorder.tick(tick_count),
             ScreenId::Performance => self.performance.tick(tick_count),
             ScreenId::MarkdownRichText => self.markdown_rich_text.tick(tick_count),
-            ScreenId::VisualEffects => self.visual_effects.tick(tick_count),
+            ScreenId::VisualEffects => self.visual_effects_mut(|screen| screen.tick(tick_count)),
             ScreenId::ResponsiveDemo => self.responsive_demo.tick(tick_count),
             ScreenId::LogSearch => self.log_search.tick(tick_count),
             ScreenId::Notifications => self.notifications.tick(tick_count),
@@ -827,8 +1046,9 @@ impl ScreenStates {
             ScreenId::VirtualizedSearch => self.virtualized_search.tick(tick_count),
             ScreenId::AsyncTasks => self.async_tasks.tick(tick_count),
             ScreenId::ThemeStudio => self.theme_studio.tick(tick_count),
-            ScreenId::SnapshotPlayer => self.snapshot_player.tick(tick_count),
+            ScreenId::SnapshotPlayer => self.snapshot_player_mut(|screen| screen.tick(tick_count)),
             ScreenId::PerformanceHud => {} // Already ticked above
+            ScreenId::ExplainabilityCockpit => {} // Already ticked above
             ScreenId::I18nDemo => self.i18n_demo.tick(tick_count),
             ScreenId::VoiOverlay => self.voi_overlay.tick(tick_count),
             ScreenId::InlineModeStory => self.inline_mode_story.tick(tick_count),
@@ -842,8 +1062,12 @@ impl ScreenStates {
 
     fn apply_theme(&mut self) {
         self.dashboard.apply_theme();
-        self.file_browser.apply_theme();
-        self.code_explorer.apply_theme();
+        let _ = self
+            .file_browser
+            .with_existing_mut(|screen| screen.apply_theme());
+        let _ = self
+            .code_explorer
+            .with_existing_mut(|screen| screen.apply_theme());
         self.forms_input.apply_theme();
         self.shakespeare.apply_theme();
         self.markdown_rich_text.apply_theme();
@@ -870,19 +1094,21 @@ impl ScreenStates {
                 ScreenId::GuidedTour => {}
                 ScreenId::Dashboard => self.dashboard.view(frame, area),
                 ScreenId::Shakespeare => self.shakespeare.view(frame, area),
-                ScreenId::CodeExplorer => self.code_explorer.view(frame, area),
+                ScreenId::CodeExplorer => self.code_explorer_mut(|screen| screen.view(frame, area)),
                 ScreenId::WidgetGallery => self.widget_gallery.view(frame, area),
                 ScreenId::LayoutLab => self.layout_lab.view(frame, area),
                 ScreenId::FormsInput => self.forms_input.view(frame, area),
                 ScreenId::DataViz => self.data_viz.view(frame, area),
                 ScreenId::TableThemeGallery => self.table_theme_gallery.view(frame, area),
-                ScreenId::FileBrowser => self.file_browser.view(frame, area),
+                ScreenId::FileBrowser => self.file_browser_mut(|screen| screen.view(frame, area)),
                 ScreenId::AdvancedFeatures => self.advanced_features.view(frame, area),
                 ScreenId::TerminalCapabilities => self.terminal_capabilities.view(frame, area),
                 ScreenId::MacroRecorder => self.macro_recorder.view(frame, area),
                 ScreenId::Performance => self.performance.view(frame, area),
                 ScreenId::MarkdownRichText => self.markdown_rich_text.view(frame, area),
-                ScreenId::VisualEffects => self.visual_effects.view(frame, area),
+                ScreenId::VisualEffects => {
+                    self.visual_effects_mut(|screen| screen.view(frame, area))
+                }
                 ScreenId::ResponsiveDemo => self.responsive_demo.view(frame, area),
                 ScreenId::LogSearch => self.log_search.view(frame, area),
                 ScreenId::Notifications => self.notifications.view(frame, area),
@@ -895,8 +1121,11 @@ impl ScreenStates {
                 ScreenId::VirtualizedSearch => self.virtualized_search.view(frame, area),
                 ScreenId::AsyncTasks => self.async_tasks.view(frame, area),
                 ScreenId::ThemeStudio => self.theme_studio.view(frame, area),
-                ScreenId::SnapshotPlayer => self.snapshot_player.view(frame, area),
+                ScreenId::SnapshotPlayer => {
+                    self.snapshot_player_mut(|screen| screen.view(frame, area))
+                }
                 ScreenId::PerformanceHud => self.performance_hud.view(frame, area),
+                ScreenId::ExplainabilityCockpit => self.explainability_cockpit.view(frame, area),
                 ScreenId::I18nDemo => self.i18n_demo.view(frame, area),
                 ScreenId::VoiOverlay => self.voi_overlay.view(frame, area),
                 ScreenId::InlineModeStory => self.inline_mode_story.view(frame, area),
@@ -954,7 +1183,7 @@ pub enum AppMsg {
     ToggleDebug,
     /// Toggle the performance HUD overlay.
     TogglePerfHud,
-    /// Toggle the evidence ledger / Galaxy-Brain debug overlay.
+    /// Toggle the explainability cockpit overlay.
     ToggleEvidenceLedger,
     /// Toggle the accessibility panel overlay.
     ToggleA11yPanel,
@@ -1494,10 +1723,8 @@ pub struct AppModel {
     pub debug_visible: bool,
     /// Whether the performance HUD overlay is visible.
     pub perf_hud_visible: bool,
-    /// Whether the evidence ledger (Galaxy-Brain) overlay is visible.
+    /// Whether the explainability cockpit overlay is visible.
     pub evidence_ledger_visible: bool,
-    /// VOI sampler driving the evidence ledger overlay.
-    pub voi_sampler: VoiSampler,
     /// Accessibility settings (high contrast, reduced motion, large text).
     pub a11y: theme::A11ySettings,
     /// Whether the accessibility panel is visible.
@@ -1569,10 +1796,6 @@ impl AppModel {
             theme::set_large_text(false);
         }
         let palette = CommandPalette::new().with_max_visible(12);
-        let mut voi_config = InlineAutoRemeasureConfig::default().voi;
-        voi_config.enable_logging = true;
-        voi_config.max_log_entries = 96;
-        let voi_sampler = VoiSampler::new(voi_config);
         let deterministic_mode = determinism::is_demo_deterministic();
         let deterministic_tick_ms = determinism::demo_tick_ms_override();
         let exit_after_ticks = determinism::demo_exit_after_ticks();
@@ -1584,7 +1807,6 @@ impl AppModel {
             debug_visible: false,
             perf_hud_visible: false,
             evidence_ledger_visible: false,
-            voi_sampler,
             a11y: theme::A11ySettings::default(),
             a11y_panel_visible: false,
             base_theme,
@@ -1622,8 +1844,7 @@ impl AppModel {
                 .performance_hud
                 .enable_deterministic_mode(perf_tick_ms);
             app.screens
-                .visual_effects
-                .enable_deterministic_mode(vfx_tick_ms);
+                .set_visual_effects_deterministic_tick_ms(vfx_tick_ms);
         }
         app
     }
@@ -1884,10 +2105,13 @@ impl AppModel {
                 .with_category("View"),
         );
         actions.push(
-            ActionItem::new("cmd:toggle_evidence_ledger", "Toggle Evidence Ledger")
-                .with_description("Show VOI decisions with posterior math (Galaxy-Brain)")
-                .with_tags(&["evidence", "bayes", "voi", "debug", "galaxy-brain"])
-                .with_category("View"),
+            ActionItem::new(
+                "cmd:toggle_evidence_ledger",
+                "Toggle Explainability Cockpit",
+            )
+            .with_description("Show diff/resize/budget decision evidence cockpit")
+            .with_tags(&["explain", "evidence", "bocpd", "budget", "diff"])
+            .with_category("View"),
         );
         actions.push(
             ActionItem::new("cmd:cycle_theme", "Cycle Theme")
@@ -2072,14 +2296,14 @@ impl AppModel {
                 };
                 self.screens.action_timeline.record_command_event(
                     self.tick_count,
-                    "Toggle evidence ledger",
+                    "Toggle explainability cockpit",
                     vec![("state".to_string(), state.to_string())],
                 );
                 tracing::info!(
-                    target: "ftui.evidence_ledger",
+                    target: "ftui.explainability_cockpit",
                     visible = self.evidence_ledger_visible,
                     tick = self.tick_count,
-                    "Evidence ledger (Galaxy-Brain) toggled"
+                    "Explainability cockpit toggled"
                 );
                 Cmd::None
             }
@@ -2160,8 +2384,7 @@ impl AppModel {
                 let tick_ms = self.tick_interval_ms();
                 if self.deterministic_mode {
                     self.screens
-                        .visual_effects
-                        .enable_deterministic_mode(tick_ms);
+                        .set_visual_effects_deterministic_tick_ms(tick_ms);
                     self.screens
                         .performance_hud
                         .enable_deterministic_mode(tick_ms);
@@ -2173,7 +2396,6 @@ impl AppModel {
                     self.tick_last_seen = Some(Instant::now());
                 }
                 self.record_tick_timing();
-                self.update_voi_ledger();
                 if !self.a11y.reduced_motion {
                     self.screens.tick(self.display_screen(), self.tick_count);
                 }
@@ -2694,7 +2916,7 @@ impl Model for AppModel {
             self.render_perf_hud(frame, area);
         }
 
-        // Evidence Ledger (Galaxy-Brain) overlay
+        // Explainability cockpit overlay
         if self.evidence_ledger_visible {
             self.render_evidence_ledger(frame, area);
         }
@@ -2759,19 +2981,23 @@ impl AppModel {
             ],
             ScreenId::Dashboard => self.screens.dashboard.keybindings(),
             ScreenId::Shakespeare => self.screens.shakespeare.keybindings(),
-            ScreenId::CodeExplorer => self.screens.code_explorer.keybindings(),
+            ScreenId::CodeExplorer => self
+                .screens
+                .code_explorer_mut(|screen| screen.keybindings()),
             ScreenId::WidgetGallery => self.screens.widget_gallery.keybindings(),
             ScreenId::LayoutLab => self.screens.layout_lab.keybindings(),
             ScreenId::FormsInput => self.screens.forms_input.keybindings(),
             ScreenId::DataViz => self.screens.data_viz.keybindings(),
             ScreenId::TableThemeGallery => self.screens.table_theme_gallery.keybindings(),
-            ScreenId::FileBrowser => self.screens.file_browser.keybindings(),
+            ScreenId::FileBrowser => self.screens.file_browser_mut(|screen| screen.keybindings()),
             ScreenId::AdvancedFeatures => self.screens.advanced_features.keybindings(),
             ScreenId::TerminalCapabilities => self.screens.terminal_capabilities.keybindings(),
             ScreenId::MacroRecorder => self.screens.macro_recorder.keybindings(),
             ScreenId::Performance => self.screens.performance.keybindings(),
             ScreenId::MarkdownRichText => self.screens.markdown_rich_text.keybindings(),
-            ScreenId::VisualEffects => self.screens.visual_effects.keybindings(),
+            ScreenId::VisualEffects => self
+                .screens
+                .visual_effects_mut(|screen| screen.keybindings()),
             ScreenId::ResponsiveDemo => self.screens.responsive_demo.keybindings(),
             ScreenId::LogSearch => self.screens.log_search.keybindings(),
             ScreenId::Notifications => self.screens.notifications.keybindings(),
@@ -2784,8 +3010,11 @@ impl AppModel {
             ScreenId::VirtualizedSearch => self.screens.virtualized_search.keybindings(),
             ScreenId::AsyncTasks => self.screens.async_tasks.keybindings(),
             ScreenId::ThemeStudio => self.screens.theme_studio.keybindings(),
-            ScreenId::SnapshotPlayer => self.screens.snapshot_player.keybindings(),
+            ScreenId::SnapshotPlayer => self
+                .screens
+                .snapshot_player_mut(|screen| screen.keybindings()),
             ScreenId::PerformanceHud => self.screens.performance_hud.keybindings(),
+            ScreenId::ExplainabilityCockpit => self.screens.explainability_cockpit.keybindings(),
             ScreenId::I18nDemo => self.screens.i18n_demo.keybindings(),
             ScreenId::VoiOverlay => self.screens.voi_overlay.keybindings(),
             ScreenId::InlineModeStory => self.screens.inline_mode_story.keybindings(),
@@ -2995,7 +3224,7 @@ impl AppModel {
                         };
                         self.screens.action_timeline.record_command_event(
                             self.tick_count,
-                            "Toggle evidence ledger (palette)",
+                            "Toggle explainability cockpit (palette)",
                             vec![("state".to_string(), state.to_string())],
                         );
                     }
@@ -3085,17 +3314,6 @@ impl AppModel {
                 fps_status,
                 "Performance HUD stats"
             );
-        }
-    }
-
-    /// Update the VOI sampler that powers the Galaxy-Brain evidence ledger.
-    fn update_voi_ledger(&mut self) {
-        let now = Instant::now();
-        let decision = self.voi_sampler.decide(now);
-        if decision.should_sample {
-            // Deterministic, visible pattern for demo purposes.
-            let violated = (self.tick_count % 23) < 4;
-            self.voi_sampler.observe_at(violated, now);
         }
     }
 
@@ -3474,178 +3692,20 @@ impl AppModel {
             .render(debug_inner, frame);
     }
 
-    /// Render the Evidence Ledger (Galaxy-Brain) debug overlay.
+    /// Render the Explainability Cockpit overlay.
     ///
-    /// Shows VOI sampling decisions with posterior math, Bayes factors,
-    /// and e-process evidence. This implements bd-1rz0.27.
-    ///
-    /// The overlay displays:
-    /// - Current posterior (alpha/beta, mean, variance)
-    /// - VOI calculation and decision equation
-    /// - E-process confidence values
-    /// - Recent decision/observation ledger entries
+    /// Shows diff strategy, BOCPD resize regime, and budget decisions
+    /// in a single panel (bd-iuvb.4).
     fn render_evidence_ledger(&self, frame: &mut Frame, area: Rect) {
         let _span = tracing::debug_span!(
-            target: "ftui.evidence_ledger",
-            "render_evidence_ledger",
+            target: "ftui.explainability_cockpit",
+            "render_explainability_cockpit",
             tick = self.tick_count,
         )
         .entered();
-
-        // Size the overlay to fit substantial content
-        let overlay_width = 62u16.min(area.width.saturating_sub(4));
-        let overlay_height = 22u16.min(area.height.saturating_sub(4));
-
-        if overlay_width < 34 || overlay_height < 10 {
-            tracing::trace!(
-                target: "ftui.evidence_ledger",
-                overlay_width,
-                overlay_height,
-                "Evidence ledger gracefully degraded: area too small"
-            );
-            return; // Graceful degradation: too small to render
-        }
-
-        // Position in bottom-left to avoid overlap with other HUDs
-        let x = area.x + 1;
-        let y = area.y + area.height.saturating_sub(overlay_height).saturating_sub(2);
-        let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
-
-        let (data, source) = if let Some(snapshot) = inline_auto_voi_snapshot() {
-            (
-                self.voi_overlay_data_from_snapshot(&snapshot, "runtime:inline-auto"),
-                "runtime:inline-auto",
-            )
-        } else {
-            (self.voi_overlay_data_from_sampler("demo:voi"), "demo:voi")
-        };
-
-        let overlay_style = VoiOverlayStyle {
-            border: Style::new().fg(theme::accent::SUCCESS).bg(theme::bg::DEEP),
-            text: Style::new().fg(theme::fg::PRIMARY),
-            background: Some(theme::bg::DEEP.into()),
-            border_type: BorderType::Rounded,
-        };
-
-        let overlay = VoiDebugOverlay::new(data).with_style(overlay_style);
-        tracing::trace!(
-            target: "ftui.evidence_ledger",
-            source,
-            "Rendering VOI overlay"
-        );
-        overlay.render(overlay_area, frame);
-    }
-
-    fn voi_overlay_data_from_snapshot(
-        &self,
-        snapshot: &VoiSamplerSnapshot,
-        source: &str,
-    ) -> VoiOverlayData {
-        VoiOverlayData {
-            title: "VOI Evidence Ledger".to_string(),
-            tick: Some(self.tick_count),
-            source: Some(source.to_string()),
-            posterior: VoiPosteriorSummary {
-                alpha: snapshot.alpha,
-                beta: snapshot.beta,
-                mean: snapshot.posterior_mean,
-                variance: snapshot.posterior_variance,
-                expected_variance_after: snapshot.expected_variance_after,
-                voi_gain: snapshot.voi_gain,
-            },
-            decision: snapshot
-                .last_decision
-                .as_ref()
-                .map(|decision| VoiDecisionSummary {
-                    event_idx: decision.event_idx,
-                    should_sample: decision.should_sample,
-                    reason: decision.reason.to_string(),
-                    score: decision.score,
-                    cost: decision.cost,
-                    log_bayes_factor: decision.log_bayes_factor,
-                    e_value: decision.e_value,
-                    e_threshold: decision.e_threshold,
-                    boundary_score: decision.boundary_score,
-                }),
-            observation: snapshot
-                .last_observation
-                .as_ref()
-                .map(|obs| VoiObservationSummary {
-                    sample_idx: obs.sample_idx,
-                    violated: obs.violated,
-                    posterior_mean: obs.posterior_mean,
-                    alpha: obs.alpha,
-                    beta: obs.beta,
-                }),
-            ledger: Self::ledger_entries_from_logs(snapshot.recent_logs.iter().rev().take(6).rev()),
-        }
-    }
-
-    fn voi_overlay_data_from_sampler(&self, source: &str) -> VoiOverlayData {
-        let (alpha, beta) = self.voi_sampler.posterior_params();
-        let variance = self.voi_sampler.posterior_variance();
-        let expected_after = self.voi_sampler.expected_variance_after();
-        VoiOverlayData {
-            title: "VOI Evidence Ledger".to_string(),
-            tick: Some(self.tick_count),
-            source: Some(source.to_string()),
-            posterior: VoiPosteriorSummary {
-                alpha,
-                beta,
-                mean: self.voi_sampler.posterior_mean(),
-                variance,
-                expected_variance_after: expected_after,
-                voi_gain: (variance - expected_after).max(0.0),
-            },
-            decision: self
-                .voi_sampler
-                .last_decision()
-                .map(|decision| VoiDecisionSummary {
-                    event_idx: decision.event_idx,
-                    should_sample: decision.should_sample,
-                    reason: decision.reason.to_string(),
-                    score: decision.score,
-                    cost: decision.cost,
-                    log_bayes_factor: decision.log_bayes_factor,
-                    e_value: decision.e_value,
-                    e_threshold: decision.e_threshold,
-                    boundary_score: decision.boundary_score,
-                }),
-            observation: self
-                .voi_sampler
-                .last_observation()
-                .map(|obs| VoiObservationSummary {
-                    sample_idx: obs.sample_idx,
-                    violated: obs.violated,
-                    posterior_mean: obs.posterior_mean,
-                    alpha: obs.alpha,
-                    beta: obs.beta,
-                }),
-            ledger: Self::ledger_entries_from_logs(
-                self.voi_sampler.logs().iter().rev().take(6).rev(),
-            ),
-        }
-    }
-
-    fn ledger_entries_from_logs<'a, I>(logs: I) -> Vec<VoiLedgerEntry>
-    where
-        I: IntoIterator<Item = &'a VoiLogEntry>,
-    {
-        logs.into_iter()
-            .map(|entry| match entry {
-                VoiLogEntry::Decision(decision) => VoiLedgerEntry::Decision {
-                    event_idx: decision.event_idx,
-                    should_sample: decision.should_sample,
-                    voi_gain: decision.voi_gain,
-                    log_bayes_factor: decision.log_bayes_factor,
-                },
-                VoiLogEntry::Observation(obs) => VoiLedgerEntry::Observation {
-                    sample_idx: obs.sample_idx,
-                    violated: obs.violated,
-                    posterior_mean: obs.posterior_mean,
-                },
-            })
-            .collect()
+        self.screens
+            .explainability_cockpit
+            .render_overlay(frame, area);
     }
 }
 
@@ -3965,6 +4025,80 @@ mod tests {
         assert!(!states.has_error(ScreenId::Dashboard));
     }
 
+    #[test]
+    fn lazy_screens_initialize_on_first_use() {
+        let mut states = ScreenStates::default();
+        let _ = take_screen_init_events();
+        let event = Event::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: Modifiers::NONE,
+            kind: KeyEventKind::Press,
+        });
+
+        assert!(!states.is_lazy_initialized(ScreenId::CodeExplorer));
+        states.update(ScreenId::CodeExplorer, &event);
+        assert!(states.is_lazy_initialized(ScreenId::CodeExplorer));
+
+        assert!(!states.is_lazy_initialized(ScreenId::VisualEffects));
+        states.update(ScreenId::VisualEffects, &event);
+        assert!(states.is_lazy_initialized(ScreenId::VisualEffects));
+
+        let events = take_screen_init_events();
+        let mut code_explorer_events = 0;
+        let mut visual_effects_events = 0;
+        for entry in events {
+            if entry.screen == ScreenId::CodeExplorer {
+                code_explorer_events += 1;
+            }
+            if entry.screen == ScreenId::VisualEffects {
+                visual_effects_events += 1;
+            }
+        }
+        assert_eq!(
+            code_explorer_events, 1,
+            "expected one init log for CodeExplorer"
+        );
+        assert_eq!(
+            visual_effects_events, 1,
+            "expected one init log for VisualEffects"
+        );
+    }
+
+    #[test]
+    fn lazy_screen_init_logs_once_per_screen() {
+        let mut app = AppModel::new();
+        let _ = take_screen_init_events();
+
+        let screens = [
+            ScreenId::CodeExplorer,
+            ScreenId::FileBrowser,
+            ScreenId::VisualEffects,
+            ScreenId::SnapshotPlayer,
+        ];
+
+        for screen in screens {
+            app.update(AppMsg::SwitchScreen(screen));
+
+            let mut pool = GraphemePool::new();
+            let mut frame = Frame::new(120, 40, &mut pool);
+            app.view(&mut frame);
+
+            let mut pool = GraphemePool::new();
+            let mut frame = Frame::new(120, 40, &mut pool);
+            app.view(&mut frame);
+        }
+
+        let mut counts = std::collections::HashMap::new();
+        for entry in take_screen_init_events() {
+            *counts.entry(entry.screen).or_insert(0usize) += 1;
+        }
+
+        for screen in screens {
+            let count = counts.get(&screen).copied().unwrap_or(0);
+            assert_eq!(count, 1, "expected exactly one init log for {:?}", screen);
+        }
+    }
+
     /// Verify Tab cycles forward through all screens.
     #[test]
     fn integration_tab_cycles_all_screens() {
@@ -3991,7 +4125,7 @@ mod tests {
     /// Verify all screens have the expected count.
     #[test]
     fn all_screens_count() {
-        assert_eq!(screens::screen_registry().len(), 38);
+        assert_eq!(screens::screen_registry().len(), 40);
     }
 
     // -----------------------------------------------------------------------
@@ -4368,8 +4502,8 @@ mod tests {
         let app = AppModel::new();
         // The palette should have the perf HUD action registered.
         // Previous test counted ALL.len() + 4 global commands.
-        // Now we have 6 global commands (quit, help, theme, debug, perf_hud, evidence_ledger).
-        let expected = screens::screen_registry().len() + 6;
+        // Now we have 7 global commands (quit, help, theme, debug, perf_hud, evidence_ledger, explainability).
+        let expected = screens::screen_registry().len() + 7;
         assert_eq!(app.command_palette.action_count(), expected);
     }
 

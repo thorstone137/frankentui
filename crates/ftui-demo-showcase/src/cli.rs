@@ -70,14 +70,16 @@ SCREENS:
    28  Theme Studio       Live palette editor and theme inspector
    29  Time-Travel Studio A/B compare + diff heatmap of recorded snapshots
    30  Performance HUD    Real-time render budget and frame diagnostics
-   31  i18n Stress Lab    Unicode width, RTL, emoji, and truncation
-   32  VOI Overlay        Galaxy-Brain VOI debug overlay
-   33  Inline Mode        Inline scrollback + chrome story
-   34  Accessibility      Accessibility control panel + contrast checks
-   35  Widget Builder     Interactive widget composition sandbox
-   36  Palette Evidence   Command palette evidence lab
-   37  Determinism Lab    Checksum equivalence + determinism proofs
-   38  Links              OSC-8 hyperlink playground + hit regions
+   31  Explainability     Diff/resize/budget evidence cockpit
+   32  i18n Stress Lab    Unicode width, RTL, emoji, and truncation
+   33  VOI Overlay        Galaxy-Brain VOI debug overlay
+   34  Inline Mode        Inline scrollback + chrome story
+   35  Accessibility      Accessibility control panel + contrast checks
+   36  Widget Builder     Interactive widget composition sandbox
+   37  Palette Evidence   Command palette evidence lab
+   38  Determinism Lab    Checksum equivalence + determinism proofs
+   39  Links              OSC-8 hyperlink playground + hit regions
+   40  Explainability     Diff/resize/budget evidence cockpit
 
 KEYBINDINGS:
     1-9, 0          Switch to screens 1-10 by number
@@ -114,7 +116,8 @@ ENVIRONMENT VARIABLES:
     FTUI_DEMO_VFX_SEED        Deterministic seed for VFX harness logs
     FTUI_DEMO_VFX_RUN_ID      Run id for VFX JSONL logs
     FTUI_DEMO_VFX_JSONL       Path for VFX JSONL logs (or '-' for stderr)
-    FTUI_DEMO_VFX_PERF        Enable VFX timing JSONL (1/true)";
+    FTUI_DEMO_VFX_PERF        Enable VFX timing JSONL (1/true)
+    FTUI_DEMO_EVIDENCE_JSONL  Path for evidence JSONL logs (diff/resize/budget)";
 
 /// Parsed command-line options.
 #[derive(Debug, Clone)]

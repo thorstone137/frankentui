@@ -23,7 +23,8 @@
 
 use ftui_core::glyph_policy::GlyphPolicy;
 use ftui_extras::theme as core_theme;
-use ftui_style::{Style, StyleFlags};
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Style, StyleFlags, TableEffect, TableEffectRule, TableEffectTarget, TableTheme};
 
 pub use core_theme::{
     AlphaColor, BadgeSpec, ColorToken, IntentStyles, IssueTypeStyles, PriorityBadge,
@@ -37,6 +38,10 @@ pub use core_theme::{ScopedThemeLock, palette, set_theme};
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+const TABLE_HIGHLIGHT_PHASE_STEP: f32 = 0.02;
+const TABLE_HIGHLIGHT_INTENSITY: f32 = 0.22;
+const TABLE_HIGHLIGHT_ASYMMETRY: f32 = 0.12;
 
 // ---------------------------------------------------------------------------
 // Accessibility Settings
@@ -125,6 +130,39 @@ pub fn set_motion_scale(scale: f32) {
 /// Get the current global motion scale (0.0..=1.0).
 pub fn motion_scale() -> f32 {
     MOTION_SCALE_PERCENT.load(Ordering::Relaxed) as f32 / 100.0
+}
+
+/// Demo preset for tables with a subtle animated row highlight.
+pub fn table_theme_demo() -> TableTheme {
+    let mut theme = TableTheme::aurora();
+    let highlight_fg = theme.row_hover.fg.unwrap_or(PackedRgba::rgb(240, 245, 255));
+    let highlight_bg = theme.row_hover.bg.unwrap_or(PackedRgba::rgb(40, 70, 110));
+
+    theme.effects = vec![
+        TableEffectRule::new(
+            TableEffectTarget::Row(0),
+            TableEffect::BreathingGlow {
+                fg: highlight_fg,
+                bg: highlight_bg,
+                intensity: TABLE_HIGHLIGHT_INTENSITY,
+                speed: 1.0,
+                phase_offset: 0.25,
+                asymmetry: TABLE_HIGHLIGHT_ASYMMETRY,
+            },
+        )
+        .priority(1),
+    ];
+
+    theme
+}
+
+/// Deterministic phase for table effects derived from the global tick count.
+pub fn table_theme_phase(tick_count: u64) -> f32 {
+    let scale = motion_scale();
+    if scale <= 0.0 {
+        return 0.0;
+    }
+    (tick_count as f32 * TABLE_HIGHLIGHT_PHASE_STEP * scale).rem_euclid(1.0)
 }
 
 /// Apply large text adjustments to a style if large text mode is enabled.

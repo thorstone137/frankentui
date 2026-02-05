@@ -973,6 +973,7 @@ pub fn accent_for(id: ScreenId) -> theme::ColorToken {
         ScreenId::HyperlinkPlayground => theme::screen_accent::ADVANCED,
         ScreenId::DeterminismLab => theme::screen_accent::PERFORMANCE,
         ScreenId::TableThemeGallery => theme::screen_accent::DATA_VIZ,
+        ScreenId::ExplainabilityCockpit => theme::screen_accent::PERFORMANCE,
     }
 }
 

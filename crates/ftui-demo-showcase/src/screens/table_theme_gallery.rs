@@ -785,3 +785,128 @@ impl Screen for TableThemeGallery {
         "Tables"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ftui_render::grapheme_pool::GraphemePool;
+
+    fn key_press(code: KeyCode) -> Event {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: Default::default(),
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    #[test]
+    fn gallery_defaults() {
+        let gallery = TableThemeGallery::with_log_path(None);
+        assert_eq!(gallery.selected, 0);
+        assert_eq!(gallery.preview_mode, PreviewMode::Markdown);
+        assert!(!gallery.header_emphasis);
+        assert_eq!(gallery.zebra_strength, ZebraStrength::Subtle);
+        assert_eq!(gallery.border_style, BorderStyle::Preset);
+        assert!(!gallery.highlight_row);
+    }
+
+    #[test]
+    fn gallery_toggles_and_cycles() {
+        let mut gallery = TableThemeGallery::with_log_path(None);
+
+        gallery.update(&key_press(KeyCode::Char('v')));
+        assert_eq!(gallery.preview_mode, PreviewMode::Widget);
+        gallery.update(&key_press(KeyCode::Char('m')));
+        assert_eq!(gallery.preview_mode, PreviewMode::Markdown);
+        gallery.update(&key_press(KeyCode::Char('w')));
+        assert_eq!(gallery.preview_mode, PreviewMode::Widget);
+
+        gallery.update(&key_press(KeyCode::Char('h')));
+        assert!(gallery.header_emphasis);
+
+        gallery.update(&key_press(KeyCode::Char('z')));
+        assert_eq!(gallery.zebra_strength, ZebraStrength::Strong);
+        gallery.update(&key_press(KeyCode::Char('z')));
+        assert_eq!(gallery.zebra_strength, ZebraStrength::Off);
+        gallery.update(&key_press(KeyCode::Char('z')));
+        assert_eq!(gallery.zebra_strength, ZebraStrength::Subtle);
+
+        gallery.update(&key_press(KeyCode::Char('b')));
+        assert_eq!(gallery.border_style, BorderStyle::Subtle);
+        gallery.update(&key_press(KeyCode::Char('b')));
+        assert_eq!(gallery.border_style, BorderStyle::High);
+        gallery.update(&key_press(KeyCode::Char('b')));
+        assert_eq!(gallery.border_style, BorderStyle::Preset);
+
+        gallery.update(&key_press(KeyCode::Char('l')));
+        assert!(gallery.highlight_row);
+    }
+
+    #[test]
+    fn gallery_selection_navigation_and_wrap() {
+        let mut gallery = TableThemeGallery::with_log_path(None);
+        gallery.grid_columns.set(3);
+        gallery.selected = 0;
+
+        gallery.update(&key_press(KeyCode::Right));
+        assert_eq!(gallery.selected, 1);
+        gallery.update(&key_press(KeyCode::Down));
+        assert_eq!(gallery.selected, 4);
+        gallery.update(&key_press(KeyCode::Left));
+        assert_eq!(gallery.selected, 3);
+        gallery.update(&key_press(KeyCode::Up));
+        assert_eq!(gallery.selected, 0);
+
+        gallery.selected = PRESETS.len().saturating_sub(1);
+        gallery.update(&key_press(KeyCode::Tab));
+        assert_eq!(gallery.selected, 0);
+
+        gallery.selected = 3;
+        gallery.update(&key_press(KeyCode::Home));
+        assert_eq!(gallery.selected, 0);
+        gallery.update(&key_press(KeyCode::End));
+        assert_eq!(gallery.selected, PRESETS.len().saturating_sub(1));
+    }
+
+    #[test]
+    fn gallery_reset_restores_defaults_without_touching_selection() {
+        let mut gallery = TableThemeGallery::with_log_path(None);
+        gallery.selected = 2;
+        gallery.preview_mode = PreviewMode::Widget;
+        gallery.header_emphasis = true;
+        gallery.zebra_strength = ZebraStrength::Strong;
+        gallery.border_style = BorderStyle::High;
+        gallery.highlight_row = true;
+
+        gallery.update(&key_press(KeyCode::Char('r')));
+
+        assert_eq!(gallery.selected, 2);
+        assert_eq!(gallery.preview_mode, PreviewMode::Markdown);
+        assert!(!gallery.header_emphasis);
+        assert_eq!(gallery.zebra_strength, ZebraStrength::Subtle);
+        assert_eq!(gallery.border_style, BorderStyle::Preset);
+        assert!(!gallery.highlight_row);
+    }
+
+    #[test]
+    fn gallery_view_preserves_state_across_renders() {
+        let mut gallery = TableThemeGallery::with_log_path(None);
+        gallery.selected = 4;
+        gallery.preview_mode = PreviewMode::Widget;
+        gallery.header_emphasis = true;
+        gallery.zebra_strength = ZebraStrength::Strong;
+        gallery.border_style = BorderStyle::High;
+        gallery.highlight_row = true;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(120, 40, &mut pool);
+        gallery.view(&mut frame, Rect::new(0, 0, 120, 40));
+
+        assert_eq!(gallery.selected, 4);
+        assert_eq!(gallery.preview_mode, PreviewMode::Widget);
+        assert!(gallery.header_emphasis);
+        assert_eq!(gallery.zebra_strength, ZebraStrength::Strong);
+        assert_eq!(gallery.border_style, BorderStyle::High);
+        assert!(gallery.highlight_row);
+    }
+}

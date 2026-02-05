@@ -975,6 +975,16 @@ impl Shakespeare {
                 continue;
             }
 
+            if is_any_match {
+                let mut fill = RenderCell::from_char(' ');
+                fill.bg = if is_current_match {
+                    theme::alpha::HIGHLIGHT.into()
+                } else {
+                    theme::alpha::SURFACE.into()
+                };
+                frame.buffer.fill(content_area, fill);
+            }
+
             if !is_any_match || query.is_empty() {
                 Paragraph::new(line)
                     .style(Style::new().fg(theme::fg::SECONDARY))
@@ -1230,9 +1240,14 @@ impl Shakespeare {
                             .render(row_area, frame);
                     }
                 } else {
-                    Paragraph::new(format!("  {label}"))
-                        .style(Style::new().fg(theme::fg::SECONDARY))
-                        .render(row_area, frame);
+                    let subtle = StyledText::new(format!("  {label}"))
+                        .effect(TextEffect::Pulse {
+                            speed: 0.6,
+                            min_alpha: 0.7,
+                        })
+                        .time(self.time)
+                        .seed(*match_idx as u64);
+                    subtle.render(row_area, frame);
                 }
             }
         }
@@ -1470,9 +1485,24 @@ impl Shakespeare {
             truncate_to_width(query, 18),
             self.search_matches.len()
         );
-        Paragraph::new(truncate_to_width(&summary, rows[1].width))
-            .style(theme::muted())
-            .render(rows[1], frame);
+        let summary = truncate_to_width(&summary, rows[1].width);
+        if query.len() >= 2 {
+            let summary_fx = StyledText::new(summary)
+                .effect(TextEffect::AnimatedGradient {
+                    gradient: ColorGradient::sunset(),
+                    speed: 0.55,
+                })
+                .effect(TextEffect::Pulse {
+                    speed: 0.9,
+                    min_alpha: 0.6,
+                })
+                .time(self.time);
+            summary_fx.render(rows[1], frame);
+        } else {
+            Paragraph::new(summary)
+                .style(theme::muted())
+                .render(rows[1], frame);
+        }
 
         if rows[2].is_empty() {
             return;

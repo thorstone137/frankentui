@@ -586,7 +586,9 @@ impl WidgetGallery {
         Widget::render(
             &Table::new(table_rows, widths)
                 .header(header)
-                .style(Style::new().fg(theme::fg::SECONDARY)),
+                .style(Style::new().fg(theme::fg::SECONDARY))
+                .theme(theme::table_theme_demo())
+                .theme_phase(theme::table_theme_phase(self.tick_count)),
             inner,
             frame,
         );

@@ -4433,7 +4433,12 @@ fn build_doom_lines() -> Vec<DoomLine> {
     lines
 }
 
-static RAND_STATE: AtomicU64 = AtomicU64::new(12345);
+const RAND_SEED: u64 = 12345;
+static RAND_STATE: AtomicU64 = AtomicU64::new(RAND_SEED);
+
+fn reset_rand_state(seed: u64) {
+    RAND_STATE.store(seed, Ordering::Relaxed);
+}
 
 fn rand_simple() -> f64 {
     let old = RAND_STATE
@@ -4552,6 +4557,7 @@ fn fx_stride_for_area(quality: FxQuality, width: u16, height: u16, max_samples: 
 
 impl Default for VisualEffectsScreen {
     fn default() -> Self {
+        reset_rand_state(RAND_SEED);
         let plasma_palette = PlasmaPalette::Sunset;
         let markdown_panel = render_markdown(MARKDOWN_OVERLAY);
         let effect = initial_effect_from_env().unwrap_or(EffectType::Metaballs);
@@ -4665,6 +4671,10 @@ impl VisualEffectsScreen {
 
     pub(crate) fn effect_key(&self) -> &'static str {
         self.effect.key()
+    }
+
+    pub fn effect_count(&self) -> usize {
+        EffectType::ALL.len()
     }
 
     pub(crate) fn enable_deterministic_mode(&mut self, tick_ms: u64) {

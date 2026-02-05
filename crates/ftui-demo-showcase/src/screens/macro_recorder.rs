@@ -174,7 +174,7 @@ impl MacroRecorderScreen {
             FocusPanel::Scenarios => "Scenarios",
         };
         self.status_note = Some(format!(
-            "Focus: {label} (Tab or Ctrl/Alt+Arrows: \u{2191}Controls \u{2190}Timeline \u{2192}Scenarios)"
+            "Focus: {label} (Tab or Alt+Arrows: \u{2191}Controls \u{2190}Timeline \u{2192}Scenarios; Ctrl+\u{2190}/\u{2192} jumps timeline)"
         ));
     }
 
@@ -407,9 +407,9 @@ impl MacroRecorderScreen {
 
         let (code, modifiers) = (*code, *modifiers);
 
-        if modifiers
-            .intersects(Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::SUPER)
-        {
+        let focus_jump = modifiers.intersects(Modifiers::ALT | Modifiers::SHIFT | Modifiers::SUPER)
+            || (modifiers.contains(Modifiers::CTRL) && self.focus != FocusPanel::Timeline);
+        if focus_jump {
             match code {
                 KeyCode::Up => {
                     self.set_focus(FocusPanel::Controls);
@@ -446,6 +446,31 @@ impl MacroRecorderScreen {
         }
 
         if self.focus == FocusPanel::Timeline {
+            if modifiers.contains(Modifiers::CTRL) {
+                match code {
+                    KeyCode::Up => {
+                        self.move_timeline_cursor(-(MAX_EVENT_LINES as i32 / 2).max(1));
+                        return;
+                    }
+                    KeyCode::Down => {
+                        self.move_timeline_cursor((MAX_EVENT_LINES as i32 / 2).max(1));
+                        return;
+                    }
+                    KeyCode::Left => {
+                        self.timeline_cursor = 0;
+                        return;
+                    }
+                    KeyCode::Right => {
+                        if let Some(macro_data) = &self.macro_data
+                            && !macro_data.is_empty()
+                        {
+                            self.timeline_cursor = macro_data.len() - 1;
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             match code {
                 KeyCode::Up => {
                     self.move_timeline_cursor(-1);
@@ -1161,8 +1186,16 @@ impl Screen for MacroRecorderScreen {
                 action: "Play / Pause",
             },
             HelpEntry {
-                key: "Ctrl/Alt+\u{2191}/\u{2190}/\u{2192}",
+                key: "Alt+\u{2191}/\u{2190}/\u{2192}",
                 action: "Jump focus (Controls/Timeline/Scenarios)",
+            },
+            HelpEntry {
+                key: "Ctrl+\u{2191}/\u{2193}",
+                action: "Timeline page scroll",
+            },
+            HelpEntry {
+                key: "Ctrl+\u{2190}/\u{2192}",
+                action: "Timeline jump start/end",
             },
             HelpEntry {
                 key: "Tab/Shift+Tab",
@@ -1340,6 +1373,14 @@ mod tests {
         })
     }
 
+    fn ctrl_key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: Modifiers::CTRL,
+            kind: KeyEventKind::Press,
+        })
+    }
+
     fn macro_with_delays(name: &str, items: &[(char, u64)]) -> InputMacro {
         let mut events = Vec::with_capacity(items.len());
         let mut total = std::time::Duration::ZERO;
@@ -1418,6 +1459,23 @@ mod tests {
             .expect("macro_data should be present after stop_recording")
             .bare_events();
         assert_eq!(recorded, vec![key_event('a')]);
+    }
+
+    #[test]
+    fn ctrl_arrows_jump_timeline_when_focused() {
+        let mut screen = MacroRecorderScreen::new();
+        screen.macro_data = Some(InputMacro::from_events(
+            "jump",
+            vec![key_event('a'), key_event('b'), key_event('c')],
+        ));
+        screen.focus = FocusPanel::Timeline;
+        screen.timeline_cursor = 1;
+
+        screen.update(&ctrl_key(KeyCode::Left));
+        assert_eq!(screen.timeline_cursor, 0);
+
+        screen.update(&ctrl_key(KeyCode::Right));
+        assert_eq!(screen.timeline_cursor, 2);
     }
 
     // ====================================================================

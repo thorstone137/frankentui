@@ -18,6 +18,7 @@ use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::paragraph::Paragraph;
+use std::cell::Cell;
 
 use super::{HelpEntry, Screen};
 use crate::theme;
@@ -28,7 +29,7 @@ pub struct Performance {
     items: Vec<String>,
     selected: usize,
     scroll_offset: usize,
-    viewport_height: usize,
+    viewport_height: Cell<usize>,
     tick_count: u64,
 }
 
@@ -69,17 +70,24 @@ impl Performance {
             items,
             selected: 0,
             scroll_offset: 0,
-            viewport_height: 20,
+            viewport_height: Cell::new(20),
             tick_count: 0,
         }
     }
 
     fn ensure_visible(&mut self) {
+        if self.items.is_empty() {
+            self.selected = 0;
+            self.scroll_offset = 0;
+            return;
+        }
+
+        let viewport_height = self.viewport_height.get().max(1);
         if self.selected < self.scroll_offset {
             self.scroll_offset = self.selected;
         }
-        if self.selected >= self.scroll_offset + self.viewport_height {
-            self.scroll_offset = self.selected.saturating_sub(self.viewport_height - 1);
+        if self.selected >= self.scroll_offset + viewport_height {
+            self.scroll_offset = self.selected.saturating_sub(viewport_height - 1);
         }
     }
 
@@ -102,6 +110,7 @@ impl Performance {
         }
 
         let viewport = inner.height as usize;
+        self.viewport_height.set(viewport.max(1));
         let end = (self.scroll_offset + viewport).min(self.items.len());
 
         for (row, idx) in (self.scroll_offset..end).enumerate() {
@@ -149,17 +158,20 @@ impl Performance {
 
         let progress = if self.items.is_empty() {
             0.0
+        } else if self.items.len() == 1 {
+            1.0
         } else {
             self.selected as f64 / (self.items.len() - 1) as f64
         };
 
-        let visible_end = (self.scroll_offset + self.viewport_height).min(self.items.len());
+        let viewport_height = self.viewport_height.get().max(1);
+        let visible_end = (self.scroll_offset + viewport_height).min(self.items.len());
 
         let stats = [
             format!("Total items:  {}", self.items.len()),
             format!("Selected:     {} / {}", self.selected + 1, self.items.len()),
             format!("Scroll:       {}", self.scroll_offset),
-            format!("Viewport:     {} rows", self.viewport_height),
+            format!("Viewport:     {} rows", viewport_height),
             format!("Visible:      {}..{}", self.scroll_offset, visible_end),
             format!("Progress:     {:.1}%", progress * 100.0),
             format!("Tick:         {}", self.tick_count),
@@ -218,6 +230,7 @@ impl Screen for Performance {
             ..
         }) = event
         {
+            let viewport_height = self.viewport_height.get().max(1);
             match (*code, *modifiers) {
                 // Vim: k or Up for move up
                 (KeyCode::Up, _) | (KeyCode::Char('k'), Modifiers::NONE) => {
@@ -233,13 +246,13 @@ impl Screen for Performance {
                 }
                 // Vim: Ctrl+U or PageUp for page up
                 (KeyCode::PageUp, _) | (KeyCode::Char('u'), Modifiers::CTRL) => {
-                    self.selected = self.selected.saturating_sub(self.viewport_height);
+                    self.selected = self.selected.saturating_sub(viewport_height);
                     self.ensure_visible();
                 }
                 // Vim: Ctrl+D or PageDown for page down
                 (KeyCode::PageDown, _) | (KeyCode::Char('d'), Modifiers::CTRL) => {
-                    self.selected = (self.selected + self.viewport_height)
-                        .min(self.items.len().saturating_sub(1));
+                    self.selected =
+                        (self.selected + viewport_height).min(self.items.len().saturating_sub(1));
                     self.ensure_visible();
                 }
                 // Vim: g or Home for first item
@@ -276,8 +289,6 @@ impl Screen for Performance {
             .constraints([Constraint::Min(40), Constraint::Fixed(35)])
             .split(main[0]);
 
-        // Store viewport height for scroll calculation (can't mutate self here)
-        // We use the stored value from last render
         self.render_list_panel(frame, cols[0]);
         self.render_stats_panel(frame, cols[1]);
 
@@ -367,7 +378,7 @@ mod tests {
     fn page_navigation() {
         let mut screen = Performance::new();
         screen.update(&press(KeyCode::PageDown));
-        assert_eq!(screen.selected, screen.viewport_height);
+        assert_eq!(screen.selected, screen.viewport_height.get());
         screen.update(&press(KeyCode::PageUp));
         assert_eq!(screen.selected, 0);
     }
@@ -414,7 +425,7 @@ mod tests {
     #[test]
     fn ensure_visible_adjusts_scroll_offset() {
         let mut screen = Performance::new();
-        screen.viewport_height = 5;
+        screen.viewport_height.set(5);
         screen.selected = 10;
         screen.scroll_offset = 0;
         screen.ensure_visible();

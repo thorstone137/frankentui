@@ -535,6 +535,7 @@ pub struct TerminalCapabilitiesScreen {
     env_override: Option<EnvSnapshot>,
     diagnostic_log: DiagnosticLog,
     last_report: Option<ReportStatus>,
+    tick_count: u64,
 }
 
 impl Default for TerminalCapabilitiesScreen {
@@ -559,6 +560,7 @@ impl TerminalCapabilitiesScreen {
             env_override: None,
             diagnostic_log,
             last_report: None,
+            tick_count: 0,
         }
     }
 
@@ -999,7 +1001,9 @@ impl TerminalCapabilitiesScreen {
         Widget::render(
             &Table::new(table_rows, widths)
                 .header(header)
-                .style(Style::new().fg(theme::fg::SECONDARY)),
+                .style(Style::new().fg(theme::fg::SECONDARY))
+                .theme(theme::table_theme_demo())
+                .theme_phase(theme::table_theme_phase(self.tick_count)),
             inner,
             frame,
         );
@@ -1063,7 +1067,9 @@ impl TerminalCapabilitiesScreen {
         Widget::render(
             &Table::new(table_rows, widths)
                 .header(header)
-                .style(Style::new().fg(theme::fg::SECONDARY)),
+                .style(Style::new().fg(theme::fg::SECONDARY))
+                .theme(theme::table_theme_demo())
+                .theme_phase(theme::table_theme_phase(self.tick_count)),
             inner,
             frame,
         );
@@ -1637,6 +1643,10 @@ impl Screen for TerminalCapabilitiesScreen {
             }
         }
         Cmd::None
+    }
+
+    fn tick(&mut self, tick_count: u64) {
+        self.tick_count = tick_count;
     }
 
     fn view(&self, frame: &mut Frame, area: Rect) {

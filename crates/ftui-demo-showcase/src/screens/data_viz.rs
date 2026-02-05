@@ -338,11 +338,19 @@ impl DataViz {
             .enumerate()
             .map(|(i, &v)| (i as f64, v))
             .collect();
+        let noise_points: Vec<(f64, f64)> = self
+            .chart_data
+            .random_series
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (i as f64, v))
+            .collect();
 
         let line_colors = line_palette();
         let series = vec![
             Series::new("sin(t)", &sine_points, line_colors[0]),
             Series::new("cos(t)", &cos_points, line_colors[1]),
+            Series::new("noise", &noise_points, line_colors[2]),
         ];
 
         let n = self.chart_data.sine_series.len() as f64;
@@ -462,15 +470,30 @@ impl DataViz {
             return;
         }
 
-        let cols = Flex::horizontal()
-            .gap(theme::spacing::XS)
-            .constraints([
-                Constraint::Percentage(25.0),
-                Constraint::Percentage(25.0),
-                Constraint::Percentage(25.0),
-                Constraint::Percentage(25.0),
-            ])
-            .split(area);
+        let use_six = area.width >= 120;
+        let cols = if use_six {
+            Flex::horizontal()
+                .gap(theme::spacing::XS)
+                .constraints([
+                    Constraint::Percentage(16.5),
+                    Constraint::Percentage(16.5),
+                    Constraint::Percentage(16.5),
+                    Constraint::Percentage(16.5),
+                    Constraint::Percentage(17.0),
+                    Constraint::Percentage(17.0),
+                ])
+                .split(area)
+        } else {
+            Flex::horizontal()
+                .gap(theme::spacing::XS)
+                .constraints([
+                    Constraint::Percentage(25.0),
+                    Constraint::Percentage(25.0),
+                    Constraint::Percentage(25.0),
+                    Constraint::Percentage(25.0),
+                ])
+                .split(area)
+        };
 
         let sine_data: Vec<f64> = self.chart_data.sine_series.iter().copied().collect();
         let cos_data: Vec<f64> = self.chart_data.cosine_series.iter().copied().collect();
@@ -480,14 +503,35 @@ impl DataViz {
             .zip(cos_data.iter())
             .map(|(a, b)| (a + b) * 0.5)
             .collect();
+        let phase_data: Vec<f64> = sine_data
+            .iter()
+            .zip(cos_data.iter())
+            .map(|(a, b)| a * b)
+            .collect();
+        let blend_data: Vec<f64> = sine_data
+            .iter()
+            .zip(rand_data.iter())
+            .map(|(a, b)| (a + b) * 0.5)
+            .collect();
         let colors = chart_palette();
 
-        let panels = [
-            ("Sine", &sine_data, colors[0]),
-            ("Cos", &cos_data, colors[1]),
-            ("Noise", &rand_data, colors[2]),
-            ("Mix", &mix_data, theme::accent::ACCENT_8.into()),
-        ];
+        let panels = if use_six {
+            vec![
+                ("Sine", &sine_data, colors[0]),
+                ("Cos", &cos_data, colors[1]),
+                ("Noise", &rand_data, colors[2]),
+                ("Mix", &mix_data, theme::accent::ACCENT_8.into()),
+                ("Phase", &phase_data, theme::accent::ACCENT_6.into()),
+                ("Blend", &blend_data, theme::accent::ACCENT_4.into()),
+            ]
+        } else {
+            vec![
+                ("Sine", &sine_data, colors[0]),
+                ("Cos", &cos_data, colors[1]),
+                ("Noise", &rand_data, colors[2]),
+                ("Mix", &mix_data, theme::accent::ACCENT_8.into()),
+            ]
+        };
 
         for (area, (label, data, color)) in cols.iter().zip(panels.iter()) {
             let block = Block::new()
@@ -605,10 +649,11 @@ fn sparkline_gradients() -> [(PackedRgba, PackedRgba); 3] {
     ]
 }
 
-fn line_palette() -> [PackedRgba; 2] {
+fn line_palette() -> [PackedRgba; 3] {
     [
         theme::accent::PRIMARY.into(),
         theme::accent::SECONDARY.into(),
+        theme::accent::WARNING.into(),
     ]
 }
 

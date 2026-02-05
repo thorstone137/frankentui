@@ -6,7 +6,7 @@ use ftui_demo_showcase::app::{AppModel, ScreenId, VfxHarnessConfig, VfxHarnessMo
 use ftui_demo_showcase::cli;
 use ftui_demo_showcase::screens;
 use ftui_render::budget::{FrameBudgetConfig, PhaseBudgets};
-use ftui_runtime::{FrameTimingConfig, Program, ProgramConfig, ScreenMode};
+use ftui_runtime::{EvidenceSinkConfig, FrameTimingConfig, Program, ProgramConfig, ScreenMode};
 use std::time::Duration;
 
 fn main() {
@@ -64,6 +64,7 @@ fn main() {
             forced_size: Some((opts.vfx_cols.max(1), opts.vfx_rows.max(1))),
             ..ProgramConfig::default()
         };
+        let config = apply_evidence_config(config);
         match Program::with_config(model, config) {
             Ok(mut program) => {
                 if let Err(e) = program.run() {
@@ -117,6 +118,7 @@ fn main() {
         budget,
         ..ProgramConfig::default()
     };
+    let config = apply_evidence_config(config);
     match Program::with_config(model, config) {
         Ok(mut program) => {
             if let Err(e) = program.run() {
@@ -129,4 +131,15 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn apply_evidence_config(mut config: ProgramConfig) -> ProgramConfig {
+    if let Ok(path) = std::env::var("FTUI_DEMO_EVIDENCE_JSONL") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            config = config.with_evidence_sink(EvidenceSinkConfig::enabled_file(trimmed));
+            config.resize_coalescer = config.resize_coalescer.with_logging(true).with_bocpd();
+        }
+    }
+    config
 }

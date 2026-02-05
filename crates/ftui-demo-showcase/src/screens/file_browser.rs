@@ -897,6 +897,11 @@ impl Screen for FileBrowser {
             return;
         }
 
+        // Clear the full area so panel gaps don't show stale borders.
+        Paragraph::new("")
+            .style(Style::new().bg(theme::alpha::SURFACE))
+            .render(area, frame);
+
         let main = Flex::vertical()
             .constraints([Constraint::Min(1), Constraint::Fixed(1)])
             .split(area);
@@ -931,7 +936,8 @@ impl Screen for FileBrowser {
             "{} | h/l: panels | j/k: navigate | g/G: first/last | Enter: open | Backspace: up | .: hidden",
             entry_info
         );
-        Paragraph::new(&*status)
+        let status_line = fit_to_width(&status, main[1].width);
+        Paragraph::new(status_line)
             .style(Style::new().fg(theme::fg::MUTED).bg(theme::alpha::SURFACE))
             .render(main[1], frame);
     }

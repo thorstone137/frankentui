@@ -11,15 +11,17 @@
 //! - `WrapMode` and `Alignment` cycling
 
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ftui_core::geometry::Rect;
 use ftui_extras::markdown::{MarkdownRenderer, MarkdownTheme, is_likely_markdown};
+use ftui_extras::syntax::SyntaxHighlighter;
 use ftui_extras::visual_fx::{Backdrop, PlasmaFx, PlasmaPalette, Scrim, ThemeInputs};
 use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
-use ftui_style::{Style, TableTheme};
+use ftui_style::Style;
 use ftui_text::WrapMode;
 use ftui_text::text::{Line, Span, Text};
 use ftui_widgets::Widget;
@@ -284,6 +286,8 @@ const ALIGNMENTS: &[Alignment] = &[Alignment::Left, Alignment::Center, Alignment
 const STREAM_CHARS_PER_TICK: usize = 3;
 /// Global speed multiplier for the streaming demo.
 const STREAM_SPEED_MULTIPLIER: usize = 81;
+/// Turbo multiplier for fast streaming playback.
+const STREAM_TURBO_MULTIPLIER: usize = 2;
 /// Horizontal rule width for markdown rendering.
 const RULE_WIDTH: u16 = 36;
 
@@ -291,7 +295,9 @@ struct MarkdownPanel<'a> {
     markdown: &'a str,
     scroll: u16,
     theme: MarkdownTheme,
+    table_phase: f32,
     border_style: Style,
+    syntax_highlighter: Arc<SyntaxHighlighter>,
 }
 
 fn wrap_markdown_for_panel(text: &Text, width: u16) -> Text {
@@ -369,7 +375,9 @@ impl Widget for MarkdownPanel<'_> {
         let max_width = inner.width.saturating_sub(1).max(1);
         let renderer = MarkdownRenderer::new(self.theme.clone())
             .rule_width(RULE_WIDTH.min(max_width))
-            .table_max_width(max_width);
+            .table_max_width(max_width)
+            .table_effect_phase(self.table_phase)
+            .with_syntax_highlighter(self.syntax_highlighter.clone());
         let rendered = renderer.render(self.markdown);
         let wrapped = wrap_markdown_for_panel(&rendered, max_width);
         Paragraph::new(wrapped)
@@ -386,8 +394,10 @@ pub struct MarkdownRichText {
     // Streaming simulation state
     stream_position: usize,
     stream_paused: bool,
+    stream_turbo: bool,
     stream_scroll: u16,
     md_theme: MarkdownTheme,
+    syntax_highlighter: Arc<SyntaxHighlighter>,
     tick_count: u64,
     markdown_backdrop: RefCell<Backdrop>,
     focus: FocusPanel,
@@ -415,6 +425,9 @@ impl MarkdownRichText {
             Backdrop::new(Box::new(PlasmaFx::new(PlasmaPalette::Ocean)), theme_inputs);
         markdown_backdrop.set_effect_opacity(0.25);
         markdown_backdrop.set_scrim(Scrim::uniform(0.7));
+        let mut syntax_highlighter = SyntaxHighlighter::new();
+        syntax_highlighter.set_theme(theme::syntax_theme());
+        let syntax_highlighter = Arc::new(syntax_highlighter);
 
         Self {
             md_scroll: 0,
@@ -423,8 +436,10 @@ impl MarkdownRichText {
             // Streaming starts active
             stream_position: 0,
             stream_paused: false,
+            stream_turbo: false,
             stream_scroll: 0,
             md_theme,
+            syntax_highlighter,
             tick_count: 0,
             markdown_backdrop: RefCell::new(markdown_backdrop),
             focus: FocusPanel::Markdown,
@@ -437,34 +452,12 @@ impl MarkdownRichText {
         self.md_theme = Self::build_theme();
         let theme_inputs = Self::current_fx_theme();
         self.markdown_backdrop.borrow_mut().set_theme(theme_inputs);
+        let mut syntax_highlighter = SyntaxHighlighter::new();
+        syntax_highlighter.set_theme(theme::syntax_theme());
+        self.syntax_highlighter = Arc::new(syntax_highlighter);
     }
 
     fn build_theme() -> MarkdownTheme {
-        let table_theme = TableTheme {
-            border: Style::new().fg(theme::accent::SECONDARY),
-            header: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::ACCENT_PRIMARY)
-                .bold(),
-            row: Style::new().fg(theme::fg::PRIMARY),
-            row_alt: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::OVERLAY),
-            row_selected: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::ACCENT_PRIMARY)
-                .bold(),
-            row_hover: Style::new()
-                .fg(theme::fg::PRIMARY)
-                .bg(theme::alpha::OVERLAY),
-            divider: Style::new().fg(theme::accent::SECONDARY),
-            padding: 1,
-            column_gap: 1,
-            row_height: 1,
-            effects: Vec::new(),
-            preset_id: None,
-        };
-
         MarkdownTheme {
             h1: Style::new().fg(theme::fg::PRIMARY).bold(),
             h2: Style::new().fg(theme::accent::PRIMARY).bold(),
@@ -485,7 +478,7 @@ impl MarkdownRichText {
             strikethrough: Style::new().strikethrough(),
             list_bullet: Style::new().fg(theme::accent::PRIMARY),
             horizontal_rule: Style::new().fg(theme::fg::MUTED).dim(),
-            table_theme,
+            table_theme: theme::table_theme_demo(),
             // GFM extensions - use themed colors
             task_done: Style::new().fg(theme::accent::SUCCESS),
             task_todo: Style::new().fg(theme::accent::INFO),
@@ -515,7 +508,10 @@ impl MarkdownRichText {
         let max_len = STREAMING_MARKDOWN.len();
         if self.stream_position < max_len {
             // Calculate variable speed based on content
-            let speed = self.calculate_typing_speed();
+            let mut speed = self.calculate_typing_speed();
+            if self.stream_turbo {
+                speed = speed.saturating_mul(STREAM_TURBO_MULTIPLIER);
+            }
 
             // Advance by calculated characters, ensuring we land on a char boundary
             let mut new_pos = self.stream_position.saturating_add(speed);
@@ -587,7 +583,9 @@ impl MarkdownRichText {
         let fragment = self.current_stream_fragment();
         let renderer = MarkdownRenderer::new(self.md_theme.clone())
             .rule_width(RULE_WIDTH.min(width))
-            .table_max_width(width);
+            .table_max_width(width)
+            .table_effect_phase(theme::table_theme_phase(self.tick_count))
+            .with_syntax_highlighter(self.syntax_highlighter.clone());
         let mut text = renderer.render_streaming(fragment);
 
         // Add blinking cursor at end if still streaming
@@ -643,10 +641,12 @@ impl MarkdownRichText {
             markdown: SAMPLE_MARKDOWN,
             scroll: self.md_scroll,
             theme: self.md_theme.clone(),
+            table_phase: theme::table_theme_phase(self.tick_count),
             border_style: theme::panel_border_style(
                 self.focus == FocusPanel::Markdown,
                 theme::screen_accent::MARKDOWN,
             ),
+            syntax_highlighter: self.syntax_highlighter.clone(),
         };
 
         // Quality is now derived automatically from frame.buffer.degradation
@@ -754,6 +754,8 @@ impl MarkdownRichText {
         Table::new(rows, widths)
             .header(header)
             .style(Style::new().fg(theme::fg::SECONDARY))
+            .theme(theme::table_theme_demo())
+            .theme_phase(theme::table_theme_phase(self.tick_count))
             .column_spacing(theme::spacing::XS)
             .render(inner, frame);
     }
@@ -811,6 +813,8 @@ impl MarkdownRichText {
             "Complete".to_string()
         } else if self.stream_paused {
             format!("Paused ({progress_pct}%)")
+        } else if self.stream_turbo {
+            format!("Turbo... {progress_pct}%")
         } else {
             format!("Streaming... {progress_pct}%")
         };
@@ -883,7 +887,7 @@ impl MarkdownRichText {
             self.stream_position,
             STREAMING_MARKDOWN.len()
         );
-        let det_line3 = "Space: play/pause | r: restart | ↑↓: scroll stream";
+        let det_line3 = "Space: play/pause | r: restart | f: turbo | ↑↓: scroll stream";
 
         let detection_text = Text::from_lines([
             Line::from_spans([
@@ -1001,6 +1005,9 @@ impl Screen for MarkdownRichText {
                 KeyCode::Char(' ') => {
                     self.stream_paused = !self.stream_paused;
                 }
+                KeyCode::Char('f') => {
+                    self.stream_turbo = !self.stream_turbo;
+                }
                 KeyCode::Char('r') => {
                     // Reset streaming
                     self.stream_position = 0;
@@ -1085,6 +1092,10 @@ impl Screen for MarkdownRichText {
             HelpEntry {
                 key: "r",
                 action: "Restart stream",
+            },
+            HelpEntry {
+                key: "f",
+                action: "Toggle turbo",
             },
             HelpEntry {
                 key: "w/a",
