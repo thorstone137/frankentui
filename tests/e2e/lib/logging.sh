@@ -591,6 +591,94 @@ jsonl_step_end() {
     fi
 }
 
+jsonl_case_step_start() {
+    local case_name="$1"
+    local step="$2"
+    local action="$3"
+    local details="${4:-}"
+    local ts
+    ts="$(e2e_timestamp)"
+    local mode="${E2E_CONTEXT_MODE:-}"
+    local cols="${E2E_CONTEXT_COLS:-}"
+    local rows="${E2E_CONTEXT_ROWS:-}"
+    local seed="${E2E_CONTEXT_SEED:-}"
+    local hash_key=""
+    if [[ -n "$mode" && -n "$cols" && -n "$rows" ]]; then
+        hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed")"
+    fi
+    local cols_json="null"
+    local rows_json="null"
+    local seed_json="null"
+    if [[ -n "$cols" ]]; then cols_json="$cols"; fi
+    if [[ -n "$rows" ]]; then rows_json="$rows"; fi
+    if [[ -n "$seed" ]]; then seed_json="$seed"; fi
+    if command -v jq >/dev/null 2>&1; then
+        jsonl_emit "$(jq -nc \
+            --arg schema_version "$E2E_JSONL_SCHEMA_VERSION" \
+            --arg type "case_step_start" \
+            --arg timestamp "$ts" \
+            --arg run_id "$E2E_RUN_ID" \
+            --arg case "$case_name" \
+            --arg step "$step" \
+            --arg action "$action" \
+            --arg details "$details" \
+            --arg mode "$mode" \
+            --arg hash_key "$hash_key" \
+            --argjson cols "$cols_json" \
+            --argjson rows "$rows_json" \
+            --argjson seed "$seed_json" \
+            '{schema_version:$schema_version,type:$type,timestamp:$timestamp,run_id:$run_id,case:$case,step:$step,action:$action,details:$details,mode:$mode,hash_key:$hash_key,cols:$cols,rows:$rows,seed:$seed}')"
+    else
+        jsonl_emit "{\"schema_version\":\"${E2E_JSONL_SCHEMA_VERSION}\",\"type\":\"case_step_start\",\"timestamp\":\"$(json_escape "$ts")\",\"run_id\":\"$(json_escape "$E2E_RUN_ID")\",\"case\":\"$(json_escape "$case_name")\",\"step\":\"$(json_escape "$step")\",\"action\":\"$(json_escape "$action")\",\"details\":\"$(json_escape "$details")\",\"mode\":\"$(json_escape "$mode")\",\"hash_key\":\"$(json_escape "$hash_key")\",\"cols\":${cols_json},\"rows\":${rows_json},\"seed\":${seed_json}}"
+    fi
+}
+
+jsonl_case_step_end() {
+    local case_name="$1"
+    local step="$2"
+    local status="$3"
+    local duration_ms="$4"
+    local action="${5:-}"
+    local details="${6:-}"
+    local ts
+    ts="$(e2e_timestamp)"
+    local mode="${E2E_CONTEXT_MODE:-}"
+    local cols="${E2E_CONTEXT_COLS:-}"
+    local rows="${E2E_CONTEXT_ROWS:-}"
+    local seed="${E2E_CONTEXT_SEED:-}"
+    local hash_key=""
+    if [[ -n "$mode" && -n "$cols" && -n "$rows" ]]; then
+        hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed")"
+    fi
+    local cols_json="null"
+    local rows_json="null"
+    local seed_json="null"
+    if [[ -n "$cols" ]]; then cols_json="$cols"; fi
+    if [[ -n "$rows" ]]; then rows_json="$rows"; fi
+    if [[ -n "$seed" ]]; then seed_json="$seed"; fi
+    if command -v jq >/dev/null 2>&1; then
+        jsonl_emit "$(jq -nc \
+            --arg schema_version "$E2E_JSONL_SCHEMA_VERSION" \
+            --arg type "case_step_end" \
+            --arg timestamp "$ts" \
+            --arg run_id "$E2E_RUN_ID" \
+            --arg case "$case_name" \
+            --arg step "$step" \
+            --arg status "$status" \
+            --argjson duration_ms "$duration_ms" \
+            --arg action "$action" \
+            --arg details "$details" \
+            --arg mode "$mode" \
+            --arg hash_key "$hash_key" \
+            --argjson cols "$cols_json" \
+            --argjson rows "$rows_json" \
+            --argjson seed "$seed_json" \
+            '{schema_version:$schema_version,type:$type,timestamp:$timestamp,run_id:$run_id,case:$case,step:$step,status:$status,duration_ms:$duration_ms,action:$action,details:$details,mode:$mode,hash_key:$hash_key,cols:$cols,rows:$rows,seed:$seed}')"
+    else
+        jsonl_emit "{\"schema_version\":\"${E2E_JSONL_SCHEMA_VERSION}\",\"type\":\"case_step_end\",\"timestamp\":\"$(json_escape "$ts")\",\"run_id\":\"$(json_escape "$E2E_RUN_ID")\",\"case\":\"$(json_escape "$case_name")\",\"step\":\"$(json_escape "$step")\",\"status\":\"$(json_escape "$status")\",\"duration_ms\":${duration_ms},\"action\":\"$(json_escape "$action")\",\"details\":\"$(json_escape "$details")\",\"mode\":\"$(json_escape "$mode")\",\"hash_key\":\"$(json_escape "$hash_key")\",\"cols\":${cols_json},\"rows\":${rows_json},\"seed\":${seed_json}}"
+    fi
+}
+
 jsonl_pty_capture() {
     local output_file="$1"
     local cols="$2"

@@ -70,6 +70,50 @@ All env vars use the `FTUI_MERMAID_*` prefix:
   `max_label_chars`, and `max_label_lines` must be >= 1.
 - If `enable_links=false`, `link_mode` must be `off`.
 
+## Init Directives (Supported Subset)
+
+When `enable_init_directives=true`, `%%{init: {...}}%%` blocks are parsed into a
+small, deterministic subset and then merged (last directive wins):
+
+Supported keys:
+- `theme` (string) — mapped to Mermaid theme id.
+- `themeVariables` (object) — string/number/bool values only.
+- `flowchart.direction` (string) — one of `TB`, `TD`, `LR`, `RL`, `BT`.
+
+Unsupported keys or invalid types are ignored with
+`mermaid/unsupported/directive` warnings. If `enable_init_directives=false`,
+init directives are ignored with the same warning.
+
+## Compatibility Matrix (Parser-Only)
+
+Current engine status is **parser‑only** for all diagram types. Rendering is
+expected to be **partial** until the TME renderer is complete.
+
+| Diagram Type | Support | Notes |
+| --- | --- | --- |
+| Graph / Flowchart | partial | Parsed into AST; renderer pending |
+| Sequence | partial | Parsed into AST; renderer pending |
+| State | partial | Parsed into AST; renderer pending |
+| Gantt | partial | Parsed into AST; renderer pending |
+| Class | partial | Parsed into AST; renderer pending |
+| ER | partial | Parsed into AST; renderer pending |
+| Mindmap | partial | Parsed into AST; renderer pending |
+| Pie | partial | Parsed into AST; renderer pending |
+
+If a diagram type is **unsupported**, the fallback policy is to show an error
+panel (fatal compatibility report).
+
+## Warning Codes (Fallback Policy)
+
+Warnings are deterministic and use stable codes:
+
+- `mermaid/unsupported/diagram` — diagram type not supported
+- `mermaid/unsupported/directive` — init/raw directive ignored
+- `mermaid/unsupported/style` — style/class directives ignored
+- `mermaid/unsupported/link` — links ignored
+- `mermaid/unsupported/feature` — unknown statement ignored
+- `mermaid/sanitized/input` — input sanitized (strict mode)
+
 ## Compatibility Matrix
 
 The parser is intentionally minimal and deterministic. Supported headers are:
@@ -104,6 +148,10 @@ When encountering unsupported input, the engine degrades in a predictable order:
    tier `rich → normal → compact → outline`, emitting `MERMAID_BUDGET_EXCEEDED`.
 6. **Security violations** (HTML/JS, unsafe links) → strip and emit
    `MERMAID_SANITIZED`.
+
+Implementation note:
+- `ftui_extras::mermaid::validate_ast` applies the compatibility matrix plus
+  `MermaidFallbackPolicy` to emit deterministic warnings/errors before layout.
 
 The **outline** fallback renders a deterministic, sorted list of nodes and
 edges (stable ordering by insertion + lexicographic tie‑break).

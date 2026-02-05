@@ -18,6 +18,7 @@ RUN_LARGE=true
 RUN_BUDGETED=true
 RUN_SPAN=true
 RUN_TILE=true
+RUN_SELECTOR=true
 ARGS=()
 
 for arg in "$@"; do
@@ -41,8 +42,11 @@ for arg in "$@"; do
         --no-tile)
             RUN_TILE=false
             ;;
+        --no-selector)
+            RUN_SELECTOR=false
+            ;;
         --help|-h)
-            echo "Usage: $0 [--verbose] [--quick] [--no-large] [--no-budget] [--no-span] [--no-tile]"
+            echo "Usage: $0 [--verbose] [--quick] [--no-large] [--no-budget] [--no-span] [--no-tile] [--no-selector]"
             echo ""
             echo "Options:"
             echo "  --verbose, -v   Enable debug logging"
@@ -51,6 +55,7 @@ for arg in "$@"; do
             echo "  --no-budget     Skip budgeted refresh scenario"
             echo "  --no-span       Skip span-diff scenario"
             echo "  --no-tile       Skip tile-skip scenario"
+            echo "  --no-selector   Skip selector-storm scenario"
             echo "  --help, -h      Show this help"
             exit 0
             ;;
@@ -63,6 +68,7 @@ if $QUICK; then
     RUN_BUDGETED=false
     RUN_SPAN=false
     RUN_TILE=false
+    RUN_SELECTOR=false
 fi
 
 e2e_fixture_init "e2e"
@@ -400,6 +406,26 @@ span_diff_hash() {
     fi
 }
 
+selector_decision_hash() {
+    local evidence_jsonl="$1"
+    local hash_cmd=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash_cmd="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        hash_cmd="shasum -a 256"
+    else
+        hash_cmd=""
+    fi
+
+    if [[ -n "$hash_cmd" ]]; then
+        rg '"event":"diff_decision"' "$evidence_jsonl" \
+            | eval "$hash_cmd" \
+            | awk '{print $1}'
+    else
+        rg '"event":"diff_decision"' "$evidence_jsonl" | cksum | awk '{print $1}'
+    fi
+}
+
 extract_diff_decision_lines() {
     local source="$1"
     local dest="$2"
@@ -500,6 +526,89 @@ check_tile_evidence() {
     return 1
 }
 
+check_selector_evidence() {
+    local evidence_jsonl="$1"
+    local case_name="$2"
+    local phase_len="${3:-6}"
+    local missing=0
+
+    if ! rg -q '"event":"diff_decision"' "$evidence_jsonl"; then
+        log_test_fail "$case_name" "missing diff_decision evidence"
+        missing=1
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        if ! jq -e -s 'map(select(.event=="diff_decision")) | length > 0' \
+            "$evidence_jsonl" >/dev/null; then
+            log_test_fail "$case_name" "diff_decision never emitted"
+            missing=1
+        fi
+        if ! jq -e -s 'map(select(.event=="diff_decision") | .bayesian_enabled) | all(. == true)' \
+            "$evidence_jsonl" >/dev/null; then
+            log_test_fail "$case_name" "bayesian selector not enabled"
+            missing=1
+        fi
+        if ! jq -e -s 'map(select(.event=="diff_decision") | .posterior_mean) | all(. >= 0 and . <= 1)' \
+            "$evidence_jsonl" >/dev/null; then
+            log_test_fail "$case_name" "posterior_mean out of [0,1]"
+            missing=1
+        fi
+        if ! jq -e -s 'map(select(.event=="diff_decision") | .posterior_variance) | all(. >= 0)' \
+            "$evidence_jsonl" >/dev/null; then
+            log_test_fail "$case_name" "posterior_variance negative"
+            missing=1
+        fi
+        if ! jq -e -s 'map(select(.event=="diff_decision") | [.cost_full, .cost_dirty, .cost_redraw]) | all(all(. >= 0))' \
+            "$evidence_jsonl" >/dev/null; then
+            log_test_fail "$case_name" "negative cost estimates"
+            missing=1
+        fi
+
+        local phase_mismatch
+        phase_mismatch="$(jq -c --argjson phase_len "$phase_len" 'def phase: (.event_idx / $phase_len | floor) % 2; def sparse_ok: .dirty_rows <= 3; def dense_ok: .dirty_rows >= (.total_rows - 2); map(select(.event=="diff_decision")) | map(. + {phase: phase}) | map(select((.phase == 0 and (sparse_ok | not)) or (.phase == 1 and (dense_ok | not)))) | first // empty' "$evidence_jsonl")"
+        if [[ -n "$phase_mismatch" ]]; then
+            log_test_fail "$case_name" "sparse/dense phase mismatch"
+            log_error "  Selector phase mismatch: $phase_mismatch"
+            missing=1
+        fi
+
+        local strategy_mismatch
+        strategy_mismatch="$(jq -c 'def best_strategy: if .cost_dirty <= .cost_full and .cost_dirty <= .cost_redraw then "DirtyRows" elif .cost_full <= .cost_redraw then "Full" else "FullRedraw" end; map(select(.event=="diff_decision")) | map(. + {best_strategy: best_strategy}) | map(select(.strategy != .best_strategy and (.hysteresis_applied | not) and .guard_reason == "none")) | first // empty' "$evidence_jsonl")"
+        if [[ -n "$strategy_mismatch" ]]; then
+            log_test_fail "$case_name" "strategy not aligned to expected costs"
+            log_error "  Selector cost mismatch: $strategy_mismatch"
+            missing=1
+        fi
+    else
+        if ! rg -q '"posterior_mean":' "$evidence_jsonl"; then
+            log_test_fail "$case_name" "missing posterior_mean field"
+            missing=1
+        fi
+        if ! rg -q '"posterior_variance":' "$evidence_jsonl"; then
+            log_test_fail "$case_name" "missing posterior_variance field"
+            missing=1
+        fi
+        if ! rg -q '"cost_full":' "$evidence_jsonl"; then
+            log_test_fail "$case_name" "missing cost_full field"
+            missing=1
+        fi
+        if ! rg -q '"cost_dirty":' "$evidence_jsonl"; then
+            log_test_fail "$case_name" "missing cost_dirty field"
+            missing=1
+        fi
+        if ! rg -q '"cost_redraw":' "$evidence_jsonl"; then
+            log_test_fail "$case_name" "missing cost_redraw field"
+            missing=1
+        fi
+        if ! rg -q '"strategy":' "$evidence_jsonl"; then
+            log_test_fail "$case_name" "missing strategy field"
+            missing=1
+        fi
+    fi
+
+    return "$missing"
+}
+
 write_span_case_meta() {
     local jsonl="$1"
     local case_name="$2"
@@ -578,6 +687,49 @@ write_tile_case_meta() {
             "$(escape_json "$case_name")" "$(escape_json "$status")" "$(e2e_timestamp)" "$(escape_json "$run_id")" \
             "$seed" "$(escape_json "$screen_mode")" "$cols" "$rows" \
             "$(escape_json "$evidence_jsonl")" "$(escape_json "$pty_out")" "$duration_ms" "$(escape_json "$diff_hash")" \
+            >> "$jsonl"
+    fi
+}
+
+write_selector_case_meta() {
+    local jsonl="$1"
+    local case_name="$2"
+    local status="$3"
+    local seed="$4"
+    local screen_mode="$5"
+    local cols="$6"
+    local rows="$7"
+    local evidence_jsonl="$8"
+    local pty_out="$9"
+    local duration_ms="${10}"
+    local run_id="${11}"
+    local decision_hash="${12}"
+    local phase_len="${13}"
+
+    if command -v jq >/dev/null 2>&1; then
+        jq -nc \
+            --arg schema_version "${E2E_JSONL_SCHEMA_VERSION:-e2e-jsonl-v1}" \
+            --arg case "$case_name" \
+            --arg status "$status" \
+            --arg timestamp "$(e2e_timestamp)" \
+            --arg run_id "$run_id" \
+            --argjson seed "$seed" \
+            --arg screen_mode "$screen_mode" \
+            --argjson cols "$cols" \
+            --argjson rows "$rows" \
+            --arg evidence_jsonl "$evidence_jsonl" \
+            --arg pty_output "$pty_out" \
+            --argjson duration_ms "$duration_ms" \
+            --arg decision_hash "$decision_hash" \
+            --argjson phase_len "$phase_len" \
+            '{schema_version:$schema_version,type:"selector_case",event:"selector_case",case:$case,status:$status,timestamp:$timestamp,run_id:$run_id,seed:$seed,screen_mode:$screen_mode,cols:$cols,rows:$rows,evidence_jsonl:$evidence_jsonl,pty_output:$pty_output,duration_ms:$duration_ms,decision_hash:$decision_hash,phase_len:$phase_len}' \
+            >> "$jsonl"
+    else
+        printf '{"schema_version":"%s","type":"selector_case","event":"selector_case","case":"%s","status":"%s","timestamp":"%s","run_id":"%s","seed":%s,"screen_mode":"%s","cols":%s,"rows":%s,"evidence_jsonl":"%s","pty_output":"%s","duration_ms":%s,"decision_hash":"%s","phase_len":%s}\n' \
+            "$(escape_json "${E2E_JSONL_SCHEMA_VERSION:-e2e-jsonl-v1}")" \
+            "$(escape_json "$case_name")" "$(escape_json "$status")" "$(e2e_timestamp)" "$(escape_json "$run_id")" \
+            "$seed" "$(escape_json "$screen_mode")" "$cols" "$rows" \
+            "$(escape_json "$evidence_jsonl")" "$(escape_json "$pty_out")" "$duration_ms" "$(escape_json "$decision_hash")" "$phase_len" \
             >> "$jsonl"
     fi
 }
@@ -849,6 +1001,103 @@ run_tile_case() {
     write_tile_case_meta "$jsonl" "$case_name" "passed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "$diff_hash"
 }
 
+run_selector_case() {
+    local case_name="$1"
+    local screen_mode="$2"
+    local cols="$3"
+    local rows="$4"
+    local seed="$5"
+    local jsonl="$6"
+    local run_id="$7"
+    local phase_len="$8"
+
+    LOG_FILE="$E2E_LOG_DIR/${case_name}.log"
+    local output_file="$E2E_LOG_DIR/${case_name}.pty"
+    local evidence_jsonl="$E2E_LOG_DIR/${case_name}_evidence.jsonl"
+    local trace_jsonl="$E2E_LOG_DIR/${case_name}_trace.jsonl"
+    local trace_replay_log="$E2E_LOG_DIR/${case_name}_trace_replay.log"
+
+    log_test_start "$case_name"
+
+    local start_ms
+    start_ms="$(e2e_now_ms)"
+
+    FTUI_HARNESS_SCREEN_MODE="$screen_mode" \
+    FTUI_HARNESS_VIEW="selector-storm" \
+    FTUI_HARNESS_EXIT_AFTER_MS=1800 \
+    FTUI_HARNESS_LOG_LINES=0 \
+    FTUI_HARNESS_SUPPRESS_WELCOME=1 \
+    FTUI_HARNESS_SEED="$seed" \
+    FTUI_HARNESS_DIFF_BAYESIAN=1 \
+    FTUI_HARNESS_BOCPD=0 \
+    FTUI_HARNESS_CONFORMAL=0 \
+    FTUI_HARNESS_EVIDENCE_JSONL="$evidence_jsonl" \
+    FTUI_HARNESS_RENDER_TRACE_JSONL="$trace_jsonl" \
+    FTUI_HARNESS_RENDER_TRACE_RUN_ID="${run_id}_${case_name}" \
+    FTUI_HARNESS_RENDER_TRACE_SEED="$seed" \
+    FTUI_HARNESS_RENDER_TRACE_MODULE="$case_name" \
+    PTY_COLS="$cols" \
+    PTY_ROWS="$rows" \
+    PTY_TIMEOUT=6 \
+    PTY_CANONICALIZE=1 \
+    PTY_TEST_NAME="$case_name" \
+        pty_run "$output_file" "$E2E_HARNESS_BIN"
+
+    local end_ms
+    end_ms="$(e2e_now_ms)"
+    local duration_ms=$((end_ms - start_ms))
+
+    local size
+    size=$(wc -c < "$output_file" | tr -d ' ')
+    if [[ "$size" -lt 800 ]]; then
+        log_test_fail "$case_name" "insufficient PTY output ($size bytes)"
+        record_result "$case_name" "failed" "$duration_ms" "$LOG_FILE" "insufficient output"
+        write_selector_case_meta "$jsonl" "$case_name" "failed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "" "$phase_len"
+        return 1
+    fi
+
+    if [[ ! -s "$evidence_jsonl" ]]; then
+        log_test_fail "$case_name" "missing evidence log"
+        record_result "$case_name" "failed" "$duration_ms" "$LOG_FILE" "missing evidence log"
+        write_selector_case_meta "$jsonl" "$case_name" "failed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "" "$phase_len"
+        return 1
+    fi
+
+    if [[ ! -s "$trace_jsonl" ]]; then
+        log_test_fail "$case_name" "missing render trace"
+        record_result "$case_name" "failed" "$duration_ms" "$LOG_FILE" "missing render trace"
+        write_selector_case_meta "$jsonl" "$case_name" "failed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "" "$phase_len"
+        return 1
+    fi
+
+    if ! check_selector_evidence "$evidence_jsonl" "$case_name" "$phase_len"; then
+        record_result "$case_name" "failed" "$duration_ms" "$LOG_FILE" "selector evidence mismatch"
+        write_selector_case_meta "$jsonl" "$case_name" "failed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "" "$phase_len"
+        return 1
+    fi
+
+    if ! run_trace_replay "$case_name" "$trace_jsonl" "$trace_replay_log"; then
+        record_result "$case_name" "failed" "$duration_ms" "$LOG_FILE" "${TRACE_REPLAY_ERR:-trace replay failed}"
+        write_selector_case_meta "$jsonl" "$case_name" "failed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "" "$phase_len"
+        return 1
+    fi
+
+    local decision_hash
+    decision_hash="$(selector_decision_hash "$evidence_jsonl")"
+    if [[ -z "$decision_hash" ]]; then
+        log_test_fail "$case_name" "empty selector decision hash"
+        record_result "$case_name" "failed" "$duration_ms" "$LOG_FILE" "empty selector decision hash"
+        write_selector_case_meta "$jsonl" "$case_name" "failed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "" "$phase_len"
+        return 1
+    fi
+
+    printf '%s\n' "$decision_hash" > "$E2E_LOG_DIR/${case_name}_selector_decision.sha"
+
+    log_test_pass "$case_name"
+    record_result "$case_name" "passed" "$duration_ms" "$LOG_FILE"
+    write_selector_case_meta "$jsonl" "$case_name" "passed" "$seed" "$screen_mode" "$cols" "$rows" "$evidence_jsonl" "$output_file" "$duration_ms" "$run_id" "$decision_hash" "$phase_len"
+}
+
 run_budget_case() {
     local case_name="$1"
     local screen_mode="$2"
@@ -1096,6 +1345,65 @@ if $RUN_TILE; then
             else
                 log_test_pass "tile_skip_determinism"
                 record_result "tile_skip_determinism" "passed" 0 "$LOG_FILE"
+            fi
+        else
+            RUN_ALL_STATUS=1
+        fi
+    fi
+fi
+
+if $RUN_SELECTOR; then
+    log_info "Running selector-storm scenario"
+
+    TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_ROOT/target}"
+    E2E_HARNESS_BIN="${E2E_HARNESS_BIN:-$TARGET_DIR/debug/ftui-harness}"
+    export E2E_HARNESS_BIN
+
+    if [[ ! -x "$E2E_HARNESS_BIN" ]]; then
+        log_test_skip "selector_storm" "ftui-harness binary missing"
+        record_result "selector_storm" "skipped" 0 "$LOG_FILE" "missing harness binary"
+    else
+        SELECTOR_JSONL="$E2E_LOG_DIR/selector_storm.jsonl"
+        SEED="${FTUI_HARNESS_SEED:-${E2E_SEED:-0}}"
+        jsonl_set_context "altscreen" 160 60 "$SEED" 2>/dev/null || true
+        RUN_ID="selector_storm_${TIMESTAMP}"
+        PHASE_LEN="${FTUI_HARNESS_SELECTOR_PHASE_LEN:-6}"
+
+        SELECTOR_FAILURES=0
+        run_selector_case "selector_storm_run1" "altscreen" 160 60 "$SEED" "$SELECTOR_JSONL" "$RUN_ID" "$PHASE_LEN" || SELECTOR_FAILURES=1
+        run_selector_case "selector_storm_run2" "altscreen" 160 60 "$SEED" "$SELECTOR_JSONL" "$RUN_ID" "$PHASE_LEN" || SELECTOR_FAILURES=1
+
+        if [[ "$SELECTOR_FAILURES" -eq 0 ]]; then
+            local_a="$E2E_LOG_DIR/selector_storm_run1_diff_decision.jsonl"
+            local_b="$E2E_LOG_DIR/selector_storm_run2_diff_decision.jsonl"
+            extract_diff_decision_lines "$E2E_LOG_DIR/selector_storm_run1_evidence.jsonl" "$local_a"
+            extract_diff_decision_lines "$E2E_LOG_DIR/selector_storm_run2_evidence.jsonl" "$local_b"
+
+            if ! diff -u "$local_a" "$local_b" >/dev/null 2>&1; then
+                log_test_fail "selector_storm_determinism" "diff_decision evidence mismatch"
+                if command -v diff >/dev/null 2>&1; then
+                    diff -u "$local_a" "$local_b" | head -40 >> "$LOG_FILE" 2>&1 || true
+                fi
+                if command -v jq >/dev/null 2>&1; then
+                    mismatch_lines="$(awk 'NR==FNR {a[NR]=$0; next} { if ($0 != a[FNR]) { print a[FNR]; print $0; exit 0 } } END { if (FNR != NR) { if (FNR < NR) print a[FNR+1]; else print $0 } }' "$local_a" "$local_b")"
+                    if [[ -n "$mismatch_lines" ]]; then
+                        left_line="$(printf '%s\n' "$mismatch_lines" | sed -n '1p')"
+                        right_line="$(printf '%s\n' "$mismatch_lines" | sed -n '2p')"
+                        left_idx="$(printf '%s' "$left_line" | jq -r '.event_idx // empty')"
+                        left_strategy="$(printf '%s' "$left_line" | jq -r '.strategy // empty')"
+                        left_costs="$(printf '%s' "$left_line" | jq -r '[.cost_full, .cost_dirty, .cost_redraw] | join(\",\")')"
+                        left_posterior="$(printf '%s' "$left_line" | jq -r '[.posterior_mean, .posterior_variance] | join(\",\")')"
+                        printf 'Selector mismatch event_idx=%s strategy=%s costs=%s posterior=%s\n' \
+                            "$left_idx" "$left_strategy" "$left_costs" "$left_posterior" >> "$LOG_FILE"
+                        printf 'Selector mismatch line A: %s\nSelector mismatch line B: %s\n' \
+                            "$left_line" "$right_line" >> "$LOG_FILE"
+                    fi
+                fi
+                record_result "selector_storm_determinism" "failed" 0 "$LOG_FILE" "diff_decision evidence mismatch"
+                RUN_ALL_STATUS=1
+            else
+                log_test_pass "selector_storm_determinism"
+                record_result "selector_storm_determinism" "passed" 0 "$LOG_FILE"
             fi
         else
             RUN_ALL_STATUS=1

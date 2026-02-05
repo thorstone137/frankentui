@@ -117,6 +117,8 @@ Common optional fields (depending on event type) include `mode`, `cols`,
 | `run_end` | Suite end | `status`, `duration_ms`, `failed_count` |
 | `step_start` | Step begin | `step`, `description` |
 | `step_end` | Step end | `step`, `status`, `duration_ms` |
+| `case_step_start` | Case step begin | `case`, `step`, `action`, `details` |
+| `case_step_end` | Case step end | `case`, `step`, `status`, `duration_ms` |
 | `input` | Input injection | `input_type`, `encoding`, `bytes_b64`, `input_hash` |
 | `frame` | Render frame | `frame_idx`, `frame_hash`, `hash_algo`, `render_ms`, `present_ms` |
 | `pty_capture` | PTY metadata | `output_file`, `output_sha256`, `output_bytes` |

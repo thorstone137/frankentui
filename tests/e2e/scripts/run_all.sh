@@ -164,6 +164,15 @@ else
     if [[ -x "$SCRIPT_DIR/test_terminal_quirks.sh" ]]; then
         run_suite "terminal_quirks" "$SCRIPT_DIR/test_terminal_quirks.sh"
     fi
+    if [[ -x "$SCRIPT_DIR/test_visual_fx_extras.sh" ]]; then
+        run_suite "visual_fx_extras" "$SCRIPT_DIR/test_visual_fx_extras.sh"
+    fi
+    if [[ -x "$SCRIPT_DIR/test_text_effects_sweep.sh" ]]; then
+        run_suite "text_effects_sweep" "$SCRIPT_DIR/test_text_effects_sweep.sh"
+    fi
+    if [[ -x "$SCRIPT_DIR/test_bidi_voi_overlay.sh" ]]; then
+        run_suite "bidi_voi_overlay" "$SCRIPT_DIR/test_bidi_voi_overlay.sh"
+    fi
     if [[ -x "$SCRIPT_DIR/test_pty_canonicalize.sh" ]]; then
         run_suite "pty_canonicalize" "$SCRIPT_DIR/test_pty_canonicalize.sh"
     fi

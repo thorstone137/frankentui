@@ -157,6 +157,66 @@ Preset requirements:
 - Deterministic, tasteful effects (no flashing).
 - No reliance on terminal truecolor; degrade gracefully to nearest palette.
 
+## Cookbook: Practical Overrides
+
+### 1) Override Header + Zebra Colors
+```rust
+use ftui_style::{Style, TableTheme};
+use ftui_render::cell::PackedRgba;
+
+let theme = TableTheme::terminal_classic()
+    .with_header(Style::new().fg(PackedRgba::rgb(235, 240, 255)).bold())
+    .with_row_alt(Style::new().bg(PackedRgba::rgb(24, 28, 36)))
+    .with_divider(Style::new().fg(PackedRgba::rgb(70, 80, 95)));
+```
+
+### 2) Subtle Breathing Highlight for a Single Row
+```rust
+use ftui_style::{TableEffect, TableEffectRule, TableEffectTarget, TableTheme};
+use ftui_render::cell::PackedRgba;
+
+let theme = TableTheme::aurora().with_effect(TableEffectRule::new(
+    TableEffectTarget::Row(2),
+    TableEffect::BreathingGlow {
+        fg: PackedRgba::rgb(235, 245, 255),
+        bg: PackedRgba::rgb(30, 40, 58),
+        intensity: 0.35,
+        speed: 0.6,
+        phase_offset: 0.0,
+        asymmetry: 0.15,
+    },
+));
+// Supply an explicit phase at render time (deterministic):
+// table.theme(theme).theme_phase(0.25);
+```
+
+For markdown tables, apply the same theme through `MarkdownTheme` and pass an
+explicit phase to the renderer:
+
+```rust
+use ftui_extras::markdown::{MarkdownRenderer, MarkdownTheme};
+use ftui_style::TableTheme;
+
+let theme = TableTheme::aurora();
+let md_theme = MarkdownTheme {
+    table_theme: theme,
+    ..MarkdownTheme::default()
+};
+let renderer = MarkdownRenderer::new(md_theme).table_effect_phase(0.25);
+```
+
+### 3) Preset Selection Guidance
+```rust
+use ftui_style::{ColorProfile, TableTheme};
+
+let theme = TableTheme::terminal_classic_for(ColorProfile::Ansi16);
+```
+- `TableTheme::terminal_classic_for(ColorProfile::Ansi16)` for ANSI-only terminals.
+- `TableTheme::terminal_classic_for(ColorProfile::Ansi256)` when you want ANSI-safe colors but a bit more range.
+- `TableTheme::graphite()` for dense data and maximum legibility.
+- `TableTheme::midnight()` for dark terminals; `TableTheme::paper()` for light themes.
+- `TableTheme::aurora()` or `TableTheme::neon()` when you want visual emphasis.
+
 ## Performance Constraints
 - `resolve_style` must be O(number_of_effect_rules) with **no allocations**.
 - No string operations in hot paths.

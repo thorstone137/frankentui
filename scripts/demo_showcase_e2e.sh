@@ -26,6 +26,7 @@
 # 15. Determinism lab report (bd-iuvb.2)
 # 16. Hyperlink playground JSONL (bd-iuvb.14)
 # 17. Command palette JSONL (bd-iuvb.16)
+# 18. Explainability cockpit evidence JSONL (bd-iuvb.4)
 #
 # Usage:
 #   ./scripts/demo_showcase_e2e.sh              # Run all tests
@@ -278,7 +279,7 @@ run_in_pty() {
 if $QUICK; then
     TOTAL_STEPS=3
 else
-    TOTAL_STEPS=23  # Updated: added terminal caps + inline story coverage
+    TOTAL_STEPS=24  # Updated: added explainability cockpit evidence step
 fi
 
 echo "=============================================="
@@ -395,23 +396,26 @@ if $CAN_SMOKE; then
     # ────────────────────────────────────────────────────────────────────────
     # Step 7: Screen Navigation
     #
-    # Launch the demo on each screen (--screen=1..38) with a
+    # Launch the demo on each screen (--screen=1..40) with a
     # short auto-exit. If any screen panics on startup, this catches it.
-    # Updated for 38 screens (bd-iuvb.2 + palette evidence + links)
+    # Updated for 40 screens (bd-iuvb.4 explainability cockpit + prior additions)
     # ────────────────────────────────────────────────────────────────────────
-    log_step "Screen navigation (all 38 screens)"
+    log_step "Screen navigation (all 40 screens)"
     log_info "Starting demo on each screen to verify no panics..."
     NAV_LOG="$LOG_DIR/07_navigation.log"
-    STEP_NAMES+=("Screen navigation (all 36)")
+    STEP_NAMES+=("Screen navigation (all 40)")
 
-    jsonl_step_start "Screen navigation (all 36)"
+    jsonl_set_context "alt" 80 24 "${E2E_SEED:-}" 2>/dev/null || true
+    jsonl_step_start "Screen navigation (all 40)"
     nav_start_ms="$(e2e_now_ms)"
     {
         NAV_FAILURES=0
-        for screen_num in $(seq 1 38); do
+        for screen_num in $(seq 1 40); do
+            screen_log="$LOG_DIR/07_screen_${screen_num}.log"
             echo "--- Screen $screen_num ---"
-            if run_in_pty "FTUI_DEMO_EXIT_AFTER_MS=1500 timeout 8 $DEMO_BIN --screen=$screen_num" 2>&1; then
+            if run_in_pty "stty rows 24 cols 80 2>/dev/null; FTUI_DEMO_EXIT_AFTER_MS=1500 timeout 8 $DEMO_BIN --screen=$screen_num" > "$screen_log" 2>&1; then
                 echo "  Screen $screen_num: OK"
+                sc_exit=0
             else
                 sc_exit=$?
                 # 124 = timeout (acceptable if exit_after_ms didn't fire)
@@ -422,6 +426,21 @@ if $CAN_SMOKE; then
                     NAV_FAILURES=$((NAV_FAILURES + 1))
                 fi
             fi
+
+            if [ "$sc_exit" -eq 124 ] || [ "$sc_exit" -eq 0 ]; then
+                outcome="pass"
+                status="pass"
+            else
+                outcome="fail"
+                status="fail"
+            fi
+
+            hash=$(sha256sum "$screen_log" | awk '{print $1}')
+            seed_val="${E2E_CONTEXT_SEED:-${E2E_SEED:-0}}"
+            mode="${E2E_CONTEXT_MODE:-alt}"
+            hash_key="$(e2e_hash_key "$mode" 80 24 "$seed_val")"
+            jsonl_assert "screen_sweep_${screen_num}" "$status" \
+                "screen_num=${screen_num} mode=${mode} cols=80 rows=24 seed=${seed_val} hash_key=${hash_key} hash=${hash} exit=${sc_exit} outcome=${outcome}"
         done
         echo ""
         echo "Screens with failures: $NAV_FAILURES"
@@ -436,12 +455,12 @@ if $CAN_SMOKE; then
         log_pass "Screen navigation passed in ${nav_dur_s}s"
         PASS_COUNT=$((PASS_COUNT + 1))
         STEP_STATUSES+=("PASS")
-        jsonl_step_end "Screen navigation (all 38)" "success" "$nav_dur_ms"
+        jsonl_step_end "Screen navigation (all 40)" "success" "$nav_dur_ms"
     else
         log_fail "Screen navigation failed. See: $NAV_LOG"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         STEP_STATUSES+=("FAIL")
-        jsonl_step_end "Screen navigation (all 38)" "failed" "$nav_dur_ms"
+        jsonl_step_end "Screen navigation (all 40)" "failed" "$nav_dur_ms"
     fi
 
     # ────────────────────────────────────────────────────────────────────────
@@ -785,8 +804,12 @@ if $CAN_SMOKE; then
             keys_display="$(printf '%q' "$keys")"
             local cmd="stty rows ${rows} cols ${cols} 2>/dev/null; (sleep 0.6; printf \"$keys\" > /dev/tty) & FTUI_DEMO_EXIT_AFTER_MS=2200 FTUI_DEMO_SCREEN=${screen_num} timeout 8 $DEMO_BIN"
             local start_ms dur_ms exit_code outcome status hash
+            local case_name="core_navigation"
+            local action="inject_keys"
+            local details="screen=${screen_num} keys=${keys_display} cols=${cols} rows=${rows}"
 
             echo "--- ${label} (screen ${screen_num}, keys=${keys_display}) ---"
+            jsonl_case_step_start "$case_name" "$label" "$action" "$details"
             start_ms=$(e2e_now_ms)
             if run_in_pty "$cmd" > "$log_file" 2>&1; then
                 exit_code=0
@@ -809,6 +832,7 @@ if $CAN_SMOKE; then
             local mode="${E2E_CONTEXT_MODE:-alt}"
             local hash_key
             hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
+            jsonl_case_step_end "$case_name" "$label" "$status" "$dur_ms" "$action" "$details"
             jsonl_assert "core_screen_${label}" "$status" \
                 "screen=${label} screen_num=${screen_num} keys=${keys_display} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} duration_ms=${dur_ms} exit=${exit_code} outcome=${outcome}"
         }
@@ -872,8 +896,12 @@ if $CAN_SMOKE; then
             keys_display="$(printf '%q' "$keys")"
             local cmd="stty rows ${rows} cols ${cols} 2>/dev/null; (sleep 0.6; printf \"$keys\" > /dev/tty) & FTUI_DEMO_EXIT_AFTER_MS=2400 FTUI_DEMO_SCREEN=${screen_num} timeout 10 $DEMO_BIN"
             local start_ms dur_ms exit_code outcome status hash
+            local case_name="editors_markdown_logsearch"
+            local action="inject_keys"
+            local details="screen=${screen_num} keys=${keys_display} cols=${cols} rows=${rows}"
 
             echo "--- ${label} (screen ${screen_num}, keys=${keys_display}) ---"
+            jsonl_case_step_start "$case_name" "$label" "$action" "$details"
             start_ms=$(e2e_now_ms)
             if run_in_pty "$cmd" > "$log_file" 2>&1; then
                 exit_code=0
@@ -896,6 +924,7 @@ if $CAN_SMOKE; then
             local mode="${E2E_CONTEXT_MODE:-alt}"
             local hash_key
             hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
+            jsonl_case_step_end "$case_name" "$label" "$status" "$dur_ms" "$action" "$details"
             jsonl_assert "editor_screen_${label}" "$status" \
                 "screen=${label} screen_num=${screen_num} keys=${keys_display} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} duration_ms=${dur_ms} exit=${exit_code} outcome=${outcome}"
         }
@@ -958,8 +987,12 @@ if $CAN_SMOKE; then
             keys_display="$(printf '%q' "$keys")"
             local cmd="stty rows ${rows} cols ${cols} 2>/dev/null; (sleep 0.6; printf \"$keys\" > /dev/tty) & FTUI_DEMO_EXIT_AFTER_MS=2200 FTUI_DEMO_SCREEN=${screen_num} timeout 8 $DEMO_BIN"
             local start_ms dur_ms exit_code outcome status hash
+            local case_name="data_viz_tables"
+            local action="inject_keys"
+            local details="screen=${screen_num} keys=${keys_display} cols=${cols} rows=${rows}"
 
             echo "--- ${label} (screen ${screen_num}, keys=${keys_display}) ---"
+            jsonl_case_step_start "$case_name" "$label" "$action" "$details"
             start_ms=$(e2e_now_ms)
             if run_in_pty "$cmd" > "$log_file" 2>&1; then
                 exit_code=0
@@ -982,6 +1015,7 @@ if $CAN_SMOKE; then
             local mode="${E2E_CONTEXT_MODE:-alt}"
             local hash_key
             hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
+            jsonl_case_step_end "$case_name" "$label" "$status" "$dur_ms" "$action" "$details"
             jsonl_assert "data_screen_${label}" "$status" \
                 "screen=${label} screen_num=${screen_num} keys=${keys_display} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} duration_ms=${dur_ms} exit=${exit_code} outcome=${outcome}"
         }
@@ -1044,8 +1078,12 @@ if $CAN_SMOKE; then
             keys_display="$(printf '%q' "$keys")"
             local cmd="stty rows ${rows} cols ${cols} 2>/dev/null; (sleep 0.6; printf \"$keys\" > /dev/tty) & ${env_prefix} FTUI_DEMO_EXIT_AFTER_MS=2400 FTUI_DEMO_SCREEN=${screen_num} timeout 10 $DEMO_BIN"
             local start_ms dur_ms exit_code outcome status hash
+            local case_name="vfx_determinism"
+            local action="inject_keys"
+            local details="screen=${screen_num} keys=${keys_display} env=${env_prefix} cols=${cols} rows=${rows}"
 
             echo "--- ${label} (screen ${screen_num}, keys=${keys_display}) ---"
+            jsonl_case_step_start "$case_name" "$label" "$action" "$details"
             start_ms=$(e2e_now_ms)
             if run_in_pty "$cmd" > "$log_file" 2>&1; then
                 exit_code=0
@@ -1068,6 +1106,7 @@ if $CAN_SMOKE; then
             local mode="${E2E_CONTEXT_MODE:-alt}"
             local hash_key
             hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
+            jsonl_case_step_end "$case_name" "$label" "$status" "$dur_ms" "$action" "$details"
             jsonl_assert "vfx_screen_${label}" "$status" \
                 "screen=${label} screen_num=${screen_num} keys=${keys_display} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} duration_ms=${dur_ms} exit=${exit_code} outcome=${outcome}"
         }
@@ -1131,8 +1170,12 @@ if $CAN_SMOKE; then
             keys_display="$(printf '%q' "$keys")"
             local cmd="stty rows ${rows} cols ${cols} 2>/dev/null; (sleep 0.6; printf \"$keys\" > /dev/tty) & FTUI_DEMO_EXIT_AFTER_MS=2400 FTUI_DEMO_SCREEN=${screen_num} timeout 10 $DEMO_BIN"
             local start_ms dur_ms exit_code outcome status hash
+            local case_name="forms_virtualized"
+            local action="inject_keys"
+            local details="screen=${screen_num} keys=${keys_display} cols=${cols} rows=${rows}"
 
             echo "--- ${label} (screen ${screen_num}, keys=${keys_display}) ---"
+            jsonl_case_step_start "$case_name" "$label" "$action" "$details"
             start_ms=$(e2e_now_ms)
             if run_in_pty "$cmd" > "$log_file" 2>&1; then
                 exit_code=0
@@ -1155,6 +1198,7 @@ if $CAN_SMOKE; then
             local mode="${E2E_CONTEXT_MODE:-alt}"
             local hash_key
             hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
+            jsonl_case_step_end "$case_name" "$label" "$status" "$dur_ms" "$action" "$details"
             jsonl_assert "forms_screen_${label}" "$status" \
                 "screen=${label} screen_num=${screen_num} keys=${keys_display} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} duration_ms=${dur_ms} exit=${exit_code} outcome=${outcome}"
         }
@@ -1217,8 +1261,12 @@ if $CAN_SMOKE; then
             keys_display="$(printf '%q' "$keys")"
             local cmd="stty rows ${rows} cols ${cols} 2>/dev/null; (sleep 0.6; printf \"$keys\" > /dev/tty) & ${env_prefix} FTUI_DEMO_EXIT_AFTER_MS=2400 FTUI_DEMO_SCREEN=${screen_num} timeout 10 $DEMO_BIN"
             local start_ms dur_ms exit_code outcome status hash
+            local case_name="terminal_inline"
+            local action="inject_keys"
+            local details="screen=${screen_num} keys=${keys_display} env=${env_prefix} cols=${cols} rows=${rows}"
 
             echo "--- ${label} (screen ${screen_num}, keys=${keys_display}) ---"
+            jsonl_case_step_start "$case_name" "$label" "$action" "$details"
             start_ms=$(e2e_now_ms)
             if run_in_pty "$cmd" > "$log_file" 2>&1; then
                 exit_code=0
@@ -1241,6 +1289,7 @@ if $CAN_SMOKE; then
             local mode="${E2E_CONTEXT_MODE:-alt}"
             local hash_key
             hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
+            jsonl_case_step_end "$case_name" "$label" "$status" "$dur_ms" "$action" "$details"
             jsonl_assert "terminal_screen_${label}" "$status" \
                 "screen=${label} screen_num=${screen_num} keys=${keys_display} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} duration_ms=${dur_ms} exit=${exit_code} outcome=${outcome}"
         }

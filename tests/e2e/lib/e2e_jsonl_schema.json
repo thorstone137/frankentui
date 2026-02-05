@@ -106,6 +106,58 @@
         "rows": ["number", "null"]
       }
     },
+    "case_step_start": {
+      "required": [
+        "case",
+        "step",
+        "action"
+      ],
+      "optional": [
+        "details",
+        "mode",
+        "hash_key",
+        "cols",
+        "rows"
+      ],
+      "types": {
+        "case": "string",
+        "step": "string",
+        "action": "string",
+        "details": "string",
+        "mode": "string",
+        "hash_key": "string",
+        "cols": ["number", "null"],
+        "rows": ["number", "null"]
+      }
+    },
+    "case_step_end": {
+      "required": [
+        "case",
+        "step",
+        "status",
+        "duration_ms"
+      ],
+      "optional": [
+        "action",
+        "details",
+        "mode",
+        "hash_key",
+        "cols",
+        "rows"
+      ],
+      "types": {
+        "case": "string",
+        "step": "string",
+        "status": "string",
+        "duration_ms": "number",
+        "action": "string",
+        "details": "string",
+        "mode": "string",
+        "hash_key": "string",
+        "cols": ["number", "null"],
+        "rows": ["number", "null"]
+      }
+    },
     "pty_capture": {
       "required": [
         "output_file",
@@ -296,6 +348,33 @@
         "pty_output": "string",
         "duration_ms": "number",
         "diff_hash": "string"
+      }
+    },
+    "selector_case": {
+      "required": [
+        "case",
+        "status",
+        "screen_mode",
+        "cols",
+        "rows",
+        "evidence_jsonl",
+        "pty_output",
+        "duration_ms",
+        "decision_hash",
+        "phase_len"
+      ],
+      "optional": [],
+      "types": {
+        "case": "string",
+        "status": "string",
+        "screen_mode": "string",
+        "cols": "number",
+        "rows": "number",
+        "evidence_jsonl": "string",
+        "pty_output": "string",
+        "duration_ms": "number",
+        "decision_hash": "string",
+        "phase_len": "number"
       }
     }
   }
