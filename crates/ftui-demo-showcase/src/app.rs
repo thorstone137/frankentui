@@ -213,8 +213,57 @@ struct ScreenInitEvent {
     memory_estimate_bytes: Option<u64>,
 }
 
+// Thread-local storage for screen init events.
+// Each thread has its own event list, avoiding cross-thread interference.
 #[cfg(test)]
-static SCREEN_INIT_EVENTS: OnceLock<Mutex<Vec<ScreenInitEvent>>> = OnceLock::new();
+thread_local! {
+    static SCREEN_INIT_EVENTS: std::cell::RefCell<Vec<ScreenInitEvent>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static SCREEN_INIT_RECORDING_ACTIVE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Serialization lock for tests that need exclusive access to screen init events.
+/// Only one guard can exist at a time to prevent test interference between
+/// the two tests that use this mechanism.
+#[cfg(test)]
+static SCREEN_INIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Guard that enables screen init event recording for its lifetime.
+/// Only events recorded on the same thread while a guard exists are stored.
+/// Guards are serialized globally to prevent the two lazy-screen tests
+/// from interfering with each other when they happen to run on the same thread.
+#[cfg(test)]
+struct ScreenInitEventGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl ScreenInitEventGuard {
+    /// Start recording screen init events. Clears any existing events on this thread.
+    /// Blocks until exclusive access is available.
+    fn new() -> Self {
+        // Acquire exclusive access first - this serializes the two lazy-screen tests
+        let lock = SCREEN_INIT_TEST_LOCK.lock().unwrap();
+        // Clear any existing events on this thread
+        SCREEN_INIT_EVENTS.with(|events| events.borrow_mut().clear());
+        // Enable recording on this thread
+        SCREEN_INIT_RECORDING_ACTIVE.with(|active| active.set(true));
+        Self { _lock: lock }
+    }
+
+    /// Take all events recorded since this guard was created.
+    fn take_events(&self) -> Vec<ScreenInitEvent> {
+        SCREEN_INIT_EVENTS.with(|events| events.borrow_mut().drain(..).collect())
+    }
+}
+
+#[cfg(test)]
+impl Drop for ScreenInitEventGuard {
+    fn drop(&mut self) {
+        SCREEN_INIT_RECORDING_ACTIVE.with(|active| active.set(false));
+    }
+}
 
 #[cfg(test)]
 fn record_screen_init_event(
@@ -223,22 +272,24 @@ fn record_screen_init_event(
     effect_count: usize,
     memory_estimate_bytes: Option<u64>,
 ) {
-    let events = SCREEN_INIT_EVENTS.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut guard) = events.lock() {
-        guard.push(ScreenInitEvent {
+    // Only record if this thread is actively recording
+    let should_record = SCREEN_INIT_RECORDING_ACTIVE.with(|active| active.get());
+    if !should_record {
+        return;
+    }
+    SCREEN_INIT_EVENTS.with(|events| {
+        events.borrow_mut().push(ScreenInitEvent {
             screen,
             init_ms,
             effect_count,
             memory_estimate_bytes,
         });
-    }
+    });
 }
 
 #[cfg(test)]
 fn take_screen_init_events() -> Vec<ScreenInitEvent> {
-    let events = SCREEN_INIT_EVENTS.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = events.lock().expect("screen init events lock");
-    guard.drain(..).collect::<Vec<_>>()
+    SCREEN_INIT_EVENTS.with(|events| events.borrow_mut().drain(..).collect())
 }
 
 /// Accessibility telemetry event types.
@@ -4151,6 +4202,7 @@ mod tests {
 
     /// Render each screen at 120x40 to verify none panic.
     #[test]
+    #[serial]
     fn integration_all_screens_render() {
         let app = AppModel::new();
         for &id in screens::screen_ids() {
@@ -4164,6 +4216,7 @@ mod tests {
 
     /// Render each screen at 40x10 (tiny) to verify graceful degradation.
     #[test]
+    #[serial]
     fn integration_resize_small() {
         let app = AppModel::new();
         for &id in screens::screen_ids() {
@@ -4176,6 +4229,7 @@ mod tests {
 
     /// Switch through all screens and verify each renders.
     #[test]
+    #[serial]
     fn integration_screen_cycle() {
         let mut app = AppModel::new();
         for &id in screens::screen_ids() {
@@ -4218,10 +4272,11 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn lazy_screens_initialize_on_first_use() {
+        // Acquire exclusive access to screen init events for this test
+        let guard = ScreenInitEventGuard::new();
+
         let mut states = ScreenStates::default();
-        let _ = take_screen_init_events();
         let event = Event::Key(KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: Modifiers::NONE,
@@ -4236,7 +4291,7 @@ mod tests {
         states.update(ScreenId::VisualEffects, &event);
         assert!(states.is_lazy_initialized(ScreenId::VisualEffects));
 
-        let events = take_screen_init_events();
+        let events = guard.take_events();
         let mut code_explorer_events = 0;
         let mut visual_effects_events = 0;
         for entry in events {
@@ -4258,10 +4313,11 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn lazy_screen_init_logs_once_per_screen() {
+        // Acquire exclusive access to screen init events for this test
+        let guard = ScreenInitEventGuard::new();
+
         let mut app = AppModel::new();
-        let _ = take_screen_init_events();
 
         let screens = [
             ScreenId::CodeExplorer,
@@ -4283,7 +4339,7 @@ mod tests {
         }
 
         let mut counts = std::collections::HashMap::new();
-        for entry in take_screen_init_events() {
+        for entry in guard.take_events() {
             *counts.entry(entry.screen).or_insert(0usize) += 1;
         }
 
