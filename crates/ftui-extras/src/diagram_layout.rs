@@ -364,6 +364,9 @@ fn remove_cycles(graph: &mut LayoutGraph, budget: &mut usize) -> CycleRemoval {
 // ---------------------------------------------------------------------------
 
 fn assign_layers(graph: &LayoutGraph, budget: &mut usize) -> Vec<usize> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
     let n = graph.num_nodes;
     if n == 0 {
         return Vec::new();
@@ -376,14 +379,18 @@ fn assign_layers(graph: &LayoutGraph, budget: &mut usize) -> Vec<usize> {
         }
     }
 
-    // Topological sort (Kahn's algorithm)
-    let mut queue: Vec<usize> = (0..n).filter(|&v| in_deg[v] == 0).collect();
-    queue.sort_unstable(); // deterministic ordering
+    // Topological sort (Kahn's algorithm) — BinaryHeap<Reverse> gives
+    // O(log n) push/pop with deterministic min-first ordering.
+    let mut queue = BinaryHeap::new();
+    for (v, &deg) in in_deg.iter().enumerate() {
+        if deg == 0 {
+            queue.push(Reverse(v));
+        }
+    }
     let mut topo = Vec::with_capacity(n);
     let mut visited = vec![false; n];
 
-    while let Some(u) = queue.first().copied() {
-        queue.remove(0);
+    while let Some(Reverse(u)) = queue.pop() {
         *budget = budget.saturating_sub(1);
         if *budget == 0 {
             break;
@@ -393,9 +400,7 @@ fn assign_layers(graph: &LayoutGraph, budget: &mut usize) -> Vec<usize> {
         for &v in &graph.adj[u] {
             in_deg[v] -= 1;
             if in_deg[v] == 0 {
-                // Insert in sorted position for determinism
-                let pos = queue.partition_point(|&x| x < v);
-                queue.insert(pos, v);
+                queue.push(Reverse(v));
             }
         }
     }
@@ -450,7 +455,9 @@ fn count_crossings(layers: &[Vec<usize>], adj: &[Vec<usize>]) -> usize {
             }
         }
 
-        // Collect all edges between layer_a and layer_b as (pos_in_a, pos_in_b)
+        // Collect all edges between layer_a and layer_b as (pos_in_a, pos_in_b).
+        // Edges are naturally sorted by pos_in_a since we iterate layer_a in order;
+        // ties are broken by adjacency-list order (deterministic).
         let mut edge_pairs: Vec<(usize, usize)> = Vec::new();
         for (pa, &u) in layer_a.iter().enumerate() {
             for &v in &adj[u] {
@@ -463,18 +470,55 @@ fn count_crossings(layers: &[Vec<usize>], adj: &[Vec<usize>]) -> usize {
             }
         }
 
-        // Count inversions
-        for i_idx in 0..edge_pairs.len() {
-            for j_idx in (i_idx + 1)..edge_pairs.len() {
-                let (a1, b1) = edge_pairs[i_idx];
-                let (a2, b2) = edge_pairs[j_idx];
-                if (a1 < a2 && b1 > b2) || (a1 > a2 && b1 < b2) {
-                    crossings += 1;
-                }
-            }
-        }
+        // Sort by first element (stable sort preserves insertion order for ties),
+        // then count inversions in the second-element sequence via merge sort.
+        edge_pairs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let mut seq: Vec<usize> = edge_pairs.iter().map(|&(_, b)| b).collect();
+        let mut buf = vec![0usize; seq.len()];
+        crossings += merge_sort_count_inversions(&mut seq, &mut buf);
     }
     crossings
+}
+
+/// Count inversions in a slice using merge sort. O(n log n).
+/// An inversion is a pair (i, j) where i < j but seq[i] > seq[j].
+/// `buf` is a pre-allocated scratch buffer at least as large as `seq`.
+fn merge_sort_count_inversions(seq: &mut [usize], buf: &mut [usize]) -> usize {
+    let n = seq.len();
+    if n <= 1 {
+        return 0;
+    }
+    let mid = n / 2;
+    let mut count = 0;
+    count += merge_sort_count_inversions(&mut seq[..mid], &mut buf[..mid]);
+    count += merge_sort_count_inversions(&mut seq[mid..], &mut buf[mid..n]);
+
+    // Merge step: count split inversions using pre-allocated buffer
+    buf[..n].copy_from_slice(&seq[..n]);
+    let (left, right) = buf[..n].split_at(mid);
+    let (mut li, mut ri, mut wi) = (0, 0, 0);
+    while li < left.len() && ri < right.len() {
+        if left[li] <= right[ri] {
+            seq[wi] = left[li];
+            li += 1;
+        } else {
+            count += left.len() - li;
+            seq[wi] = right[ri];
+            ri += 1;
+        }
+        wi += 1;
+    }
+    while li < left.len() {
+        seq[wi] = left[li];
+        li += 1;
+        wi += 1;
+    }
+    while ri < right.len() {
+        seq[wi] = right[ri];
+        ri += 1;
+        wi += 1;
+    }
+    count
 }
 
 fn minimize_crossings(
@@ -501,7 +545,12 @@ fn minimize_crossings(
     }
 
     let mut best_crossings = count_crossings(&layers, adj);
-    let mut best_layers = layers.clone();
+    // Lazy clone: only allocate best_layers when we find an improvement
+    let mut best_layers: Option<Vec<Vec<usize>>> = None;
+
+    // Scratch buffers reused across all barycenter_sort calls
+    let mut scratch_pos: Vec<usize> = Vec::new();
+    let mut scratch_member: Vec<bool> = Vec::new();
 
     for iter in 0..max_iterations {
         if *budget == 0 {
@@ -512,19 +561,37 @@ fn minimize_crossings(
         if iter % 2 == 0 {
             // Forward sweep
             for i in 1..num_layers {
-                barycenter_sort(&mut layers, i, adj, radj, true, budget);
+                barycenter_sort(
+                    &mut layers,
+                    i,
+                    adj,
+                    radj,
+                    true,
+                    budget,
+                    &mut scratch_pos,
+                    &mut scratch_member,
+                );
             }
         } else {
             // Backward sweep
             for i in (0..num_layers.saturating_sub(1)).rev() {
-                barycenter_sort(&mut layers, i, adj, radj, false, budget);
+                barycenter_sort(
+                    &mut layers,
+                    i,
+                    adj,
+                    radj,
+                    false,
+                    budget,
+                    &mut scratch_pos,
+                    &mut scratch_member,
+                );
             }
         }
 
         let c = count_crossings(&layers, adj);
         if c < best_crossings {
             best_crossings = c;
-            best_layers = layers.clone();
+            best_layers = Some(layers.clone());
         }
 
         if best_crossings == 0 {
@@ -532,9 +599,10 @@ fn minimize_crossings(
         }
     }
 
-    best_layers
+    best_layers.unwrap_or(layers)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn barycenter_sort(
     layers: &mut [Vec<usize>],
     layer_idx: usize,
@@ -542,6 +610,8 @@ fn barycenter_sort(
     radj: &[Vec<usize>],
     forward: bool,
     budget: &mut usize,
+    scratch_pos: &mut Vec<usize>,
+    scratch_member: &mut Vec<bool>,
 ) {
     if layers.is_empty() || layer_idx >= layers.len() {
         return;
@@ -549,12 +619,10 @@ fn barycenter_sort(
 
     let ref_layer_idx = if forward {
         layer_idx.checked_sub(1)
+    } else if layer_idx + 1 < layers.len() {
+        Some(layer_idx + 1)
     } else {
-        if layer_idx + 1 < layers.len() {
-            Some(layer_idx + 1)
-        } else {
-            None
-        }
+        None
     };
 
     let ref_layer_idx = match ref_layer_idx {
@@ -562,15 +630,19 @@ fn barycenter_sort(
         None => return,
     };
 
-    // Build position map for reference layer
+    // Build position map for reference layer using scratch buffers
     let ref_layer = &layers[ref_layer_idx];
     let max_ref = ref_layer.iter().copied().max().unwrap_or(0) + 1;
-    let mut ref_pos = vec![0usize; max_ref];
-    let mut ref_member = vec![false; max_ref];
+
+    scratch_pos.clear();
+    scratch_pos.resize(max_ref, 0);
+    scratch_member.clear();
+    scratch_member.resize(max_ref, false);
+
     for (p, &v) in ref_layer.iter().enumerate() {
         if v < max_ref {
-            ref_pos[v] = p;
-            ref_member[v] = true;
+            scratch_pos[v] = p;
+            scratch_member[v] = true;
         }
     }
 
@@ -580,19 +652,22 @@ fn barycenter_sort(
 
     for &v in layer {
         *budget = budget.saturating_sub(1);
-        let neighbors: &Vec<usize> = if forward { &radj[v] } else { &adj[v] };
-        let relevant: Vec<usize> = neighbors
-            .iter()
-            .copied()
-            .filter(|&u| u < max_ref && ref_member[u])
-            .collect();
+        let neighbors: &[usize] = if forward { &radj[v] } else { &adj[v] };
 
-        if relevant.is_empty() {
+        // Compute sum and count inline to avoid allocating a `relevant` Vec
+        let mut sum = 0.0f64;
+        let mut count = 0usize;
+        for &u in neighbors {
+            if u < max_ref && scratch_member[u] {
+                sum += scratch_pos[u] as f64;
+                count += 1;
+            }
+        }
+
+        if count == 0 {
             bary.push((v, f64::MAX));
         } else {
-            let sum: f64 = relevant.iter().map(|&u| ref_pos[u] as f64).sum();
-            let avg = sum / relevant.len() as f64;
-            bary.push((v, avg));
+            bary.push((v, sum / count as f64));
         }
     }
 
@@ -631,38 +706,42 @@ fn assign_coordinates(
         }
     }
 
-    // Median refinement passes
+    // Median refinement passes — reuse buffers across iterations
     let passes = 4.min(config.max_crossing_iterations);
+    let mut neighbor_buf: Vec<f64> = Vec::new();
+    let mut sorted_layer_buf: Vec<usize> = Vec::new();
     for _ in 0..passes {
         if *budget == 0 {
             break;
         }
         *budget = budget.saturating_sub(1);
 
-        for layer in layers {
+        for layer in layers.iter() {
             for &v in layer {
-                let neighbors: Vec<f64> = graph.adj[v]
-                    .iter()
-                    .chain(graph.radj[v].iter())
-                    .map(|&u| x[u])
-                    .collect();
-                if !neighbors.is_empty() {
-                    let mut sorted = neighbors;
-                    sorted.sort_by(|a, b| a.total_cmp(b));
-                    let median = sorted[sorted.len() / 2];
+                neighbor_buf.clear();
+                neighbor_buf.extend(
+                    graph.adj[v]
+                        .iter()
+                        .chain(graph.radj[v].iter())
+                        .map(|&u| x[u]),
+                );
+                if !neighbor_buf.is_empty() {
+                    neighbor_buf.sort_by(|a, b| a.total_cmp(b));
+                    let median = neighbor_buf[neighbor_buf.len() / 2];
                     x[v] = (x[v] + median) / 2.0;
                 }
             }
         }
 
         // Resolve overlaps within layers
-        for layer in layers {
-            let mut sorted_layer: Vec<usize> = layer.clone();
-            sorted_layer.sort_by(|&a, &b| x[a].total_cmp(&x[b]).then_with(|| a.cmp(&b)));
+        for layer in layers.iter() {
+            sorted_layer_buf.clear();
+            sorted_layer_buf.extend_from_slice(layer);
+            sorted_layer_buf.sort_by(|&a, &b| x[a].total_cmp(&x[b]).then_with(|| a.cmp(&b)));
 
-            for i in 1..sorted_layer.len() {
-                let prev = sorted_layer[i - 1];
-                let curr = sorted_layer[i];
+            for i in 1..sorted_layer_buf.len() {
+                let prev = sorted_layer_buf[i - 1];
+                let curr = sorted_layer_buf[i];
                 let min_gap =
                     (graph.node_widths[prev] + graph.node_widths[curr]) / 2.0 + config.node_spacing;
                 if x[curr] - x[prev] < min_gap {
@@ -913,27 +992,9 @@ impl LayoutQuality {
             .map(|e| e.waypoints.len().saturating_sub(2))
             .sum();
 
-        // Variance of x-positions within layers
+        // Single pass: compute mean once per layer, use for both variance and asymmetry
         let mut variance = 0.0;
         let mut layer_count = 0;
-        for layer in layers {
-            if layer.len() <= 1 {
-                continue;
-            }
-            let mean: f64 = layer.iter().map(|&v| x[v]).sum::<f64>() / layer.len() as f64;
-            let var: f64 = layer
-                .iter()
-                .map(|&v| (x[v] - mean) * (x[v] - mean))
-                .sum::<f64>()
-                / layer.len() as f64;
-            variance += var;
-            layer_count += 1;
-        }
-        if layer_count > 0 {
-            variance /= layer_count as f64;
-        }
-
-        // Asymmetry: mean absolute deviation from center
         let mut asymmetry = 0.0;
         let mut asym_count = 0;
         for layer in layers {
@@ -941,10 +1002,26 @@ impl LayoutQuality {
                 continue;
             }
             let mean: f64 = layer.iter().map(|&v| x[v]).sum::<f64>() / layer.len() as f64;
+
+            // Asymmetry: mean absolute deviation from center
             for &v in layer {
                 asymmetry += (x[v] - mean).abs();
                 asym_count += 1;
             }
+
+            // Variance (only for layers with >1 node)
+            if layer.len() > 1 {
+                let var: f64 = layer
+                    .iter()
+                    .map(|&v| (x[v] - mean) * (x[v] - mean))
+                    .sum::<f64>()
+                    / layer.len() as f64;
+                variance += var;
+                layer_count += 1;
+            }
+        }
+        if layer_count > 0 {
+            variance /= layer_count as f64;
         }
         if asym_count > 0 {
             asymmetry /= asym_count as f64;
@@ -1752,5 +1829,73 @@ mod tests {
             assert!(n.top() >= by0 - 1e-9);
             assert!(n.bottom() <= by1 + 1e-9);
         }
+    }
+
+    // -- Golden output determinism --
+
+    fn assert_close(actual: f64, expected: f64, label: &str) {
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "{label}: expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn golden_output_determinism() {
+        // Graph 1: 5-node linear chain
+        let ir1 = make_test_ir(
+            &["A", "B", "C", "D", "E"],
+            &[(0, 1), (1, 2), (2, 3), (3, 4)],
+            GraphDirection::TB,
+        );
+        let l1 = layout_diagram(&ir1);
+        let expected_cx1 = [0.0, 0.0, 0.0, 0.0, 0.0];
+        let expected_cy1 = [0.0, 100.0, 200.0, 300.0, 400.0];
+        for (i, n) in l1.nodes.iter().enumerate() {
+            assert_close(n.cx, expected_cx1[i], &format!("g1 node[{i}].cx"));
+            assert_close(n.cy, expected_cy1[i], &format!("g1 node[{i}].cy"));
+        }
+        assert_eq!(l1.quality.crossings, 0);
+        assert_eq!(l1.quality.bends, 0);
+        assert_close(l1.quality.total_score, 0.0, "g1 total_score");
+
+        // Graph 2: Diamond
+        let ir2 = make_test_ir(
+            &["A", "B", "C", "D"],
+            &[(0, 1), (0, 2), (1, 3), (2, 3)],
+            GraphDirection::TB,
+        );
+        let l2 = layout_diagram(&ir2);
+        let expected_cx2 = [134.4921875, 97.75390625, 207.75390625, 117.841796875];
+        let expected_cy2 = [0.0, 100.0, 100.0, 200.0];
+        for (i, n) in l2.nodes.iter().enumerate() {
+            assert_close(n.cx, expected_cx2[i], &format!("g2 node[{i}].cx"));
+            assert_close(n.cy, expected_cy2[i], &format!("g2 node[{i}].cy"));
+        }
+        assert_eq!(l2.quality.crossings, 0);
+        assert_close(l2.quality.total_score, 316.25, "g2 total_score");
+
+        // Graph 3: Wide graph
+        let ir3 = make_test_ir(
+            &["A", "B", "C", "D", "E", "F"],
+            &[(0, 2), (0, 3), (1, 3), (1, 4), (2, 5), (3, 5), (4, 5)],
+            GraphDirection::TB,
+        );
+        let l3 = layout_diagram(&ir3);
+        let expected_cx3 = [
+            88.515625,
+            198.515625,
+            51.9921875,
+            161.9921875,
+            271.9921875,
+            75.41015625,
+        ];
+        let expected_cy3 = [0.0, 0.0, 100.0, 100.0, 100.0, 200.0];
+        for (i, n) in l3.nodes.iter().enumerate() {
+            assert_close(n.cx, expected_cx3[i], &format!("g3 node[{i}].cx"));
+            assert_close(n.cy, expected_cy3[i], &format!("g3 node[{i}].cy"));
+        }
+        assert_eq!(l3.quality.crossings, 0);
+        assert_close(l3.quality.total_score, 582.0833333333334, "g3 total_score");
     }
 }
