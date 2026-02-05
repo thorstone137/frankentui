@@ -1,0 +1,40 @@
+Mermaid Showcase | Flow Basic (1/22) | Layout: Auto | Score: 0.8 | Viewport: 88x26 (override) | OK                      
+╭───────────Samples───────────╮╭──────────────────────────Viewport──────────────────────────╮╭────────Controls────────╮ 
+│> Flow Basic [flow, S, branch││                                                            ││Layout: Auto (l)        │ 
+│  Flow Subgraphs [flow, M, su││                                                            ││Tier: auto (t)          │ 
+│  Flow Dense [flow, L, dense,││                                                            ││Glyphs: unicode (g)     │ 
+│  Flow Long Labels [flow, M, ││                                                            ││Render: auto (b)        │ 
+│  Flow Unicode [flow, S, unic││                                                            ││Wrap: wordchar (w)      │ 
+│  Flow Styles [flow, M, class││                                                            ││Styles: on (s)          │ 
+│  Sequence Mini [sequence, S,││                                                            ││Zoom: 100% (+/-)        │ 
+│  Sequence Checkout [sequence││                                                            ││Fit: f                  │ 
+│  Sequence Dense [sequence, L││                                                            ││Metrics: on (m)         │ 
+│  Class Basic [class, S, inhe││                                                            ││                        │ 
+│  Class Members [class, M, fi││                                                            ││                        │ 
+│  State Basic [state, S, star││                                                   Yes      ││                        │ 
+│  State Composite [state, M, ││                                                            ││                        │ 
+│  ER Basic [er, M, cardinalit││                                                  ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿││                        │ 
+│  Gantt Basic [gantt, M, sect││                                                ⢀⣀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿││                        │ 
+│  Mindmap Seed [mindmap, S, t││                                               ⣀⠔⠹⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿││                        │ 
+│  Mindmap Deep [mindmap, L, d││⣶⣶⣶⣶⣶⣶⣶⣶⣶⡆                ⣀⣀⣤⣴⣶⣤⣄⣀          ⢀⡠⠊   ⠈⠉⠉⠉⠉⠉⠉⠉⠉⠉││                        │ 
+│  Pie Basic [pie, S, title, s││t⣿⣿⣿⣿⣿⣿⣿⣿⡇      ⢠⣀ ⢀⣀⣤⣤⣶⣾⣿⣿Check⣿⣿⣿⣷⣶⣦⣤⣀⡀ ⡠⠔⠁               ││                        │ 
+│  Pie Many [pie, M, many-slic││⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⠉⠉⠉⠉⠉⠉⠹⠛⠉⠙⠛⠻⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠟⠛⠋⠉⠢⢄                ││                        │ 
+│  Gitgraph Basic [unsupported││⠿⠿⠿⠿⠿⠿⠿⠿⠿⠇               ⠈⠉⠙⠛⠻⠿⠛⠛⠉⠉         ⠑⠢⡀   ⢀⣀⣀⣀⣀⣀⣀⣀⣀⣀│╰────────────────────────╯ 
+│  Journey Basic [unsupported,││                                              ⠈⠒⢄⢠⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿│╭────────Metrics─────────╮ 
+│  Requirement Basic [unsuppor││                                                ⠐⠛⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿││Parse: 0.05 ms          │ 
+│                             ││                                                  ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿││Layout: 0.04 ms         │ 
+│                             ││                                                            ││Render: 0.00 ms         │ 
+│                             ││                                                            ││Viewport: 88x26         │ 
+│                             ││                                                   No       ││Zoom: 100%              │ 
+│                             ││                                                            ││Iters: 1                │ 
+│                             ││                                                            ││Score: 0.77             │ 
+│                             ││                                                            ││Cross: 0                │ 
+│                             ││                                                            ││Bends: 0                │ 
+│                             ││                                                            ││Sym: 0.67               │ 
+│                             ││                                                            ││Comp: 0.35              │ 
+│                             ││                                                            ││Edge var: 0.47          │ 
+│                             ││                                                            ││Label col: 0            │ 
+│                             ││                                                            ││                        │ 
+│                             ││                                                            ││                        │ 
+╰─────────────────────────────╯╰────────────────────────────────────────────────────────────╯╰────────────────────────╯ 
+j/k sample  l layout  r relayout  b render  +/- zoom  []/{} size  o reset  m metrics  t tier | parse 0.047169ms | layout

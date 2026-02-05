@@ -1,0 +1,60 @@
+Mermaid Showcase | Flow Basic (1/22) | Layout: Auto | Score: 0.8 | Viewport: auto | OK                                                                                                                  
+╭─────────────────────Samples──────────────────────╮╭───────────────────────────────────────────────Viewport───────────────────────────────────────────────╮╭─────────────────Controls─────────────────╮
+│> Flow Basic [flow, S, branch, decision]          ││                                                                                                      ││Layout: Auto (l)                          │
+│  Flow Subgraphs [flow, M, subgraph, clusters]    ││                                                                                                      ││Tier: auto (t)                            │
+│  Flow Dense [flow, L, dense, dag]                ││                                                                                                      ││Glyphs: unicode (g)                       │
+│  Flow Long Labels [flow, M, labels, wrap]        ││                                                                                                      ││Render: auto (b)                          │
+│  Flow Unicode [flow, S, unicode, labels]         ││                                                                                                      ││Wrap: wordchar (w)                        │
+│  Flow Styles [flow, M, classdef, style]          ││                                                                                                      ││Styles: on (s)                            │
+│  Sequence Mini [sequence, S, compact]            ││                                                                                                      ││Zoom: 100% (+/-)                          │
+│  Sequence Checkout [sequence, M, multi-hop, api] ││                                                                                                      ││Fit: f                                    │
+│  Sequence Dense [sequence, L, dense, timing]     ││                                                                                                      ││Metrics: on (m)                           │
+│  Class Basic [class, S, inheritance, association]││                                                                                                      ││                                          │
+│  Class Members [class, M, fields, methods]       ││                                                                                                      ││                                          │
+│  State Basic [state, S, start-end]               ││                                                                                                      ││                                          │
+│  State Composite [state, M, composite, notes]    ││                                                                                                      ││                                          │
+│  ER Basic [er, M, cardinality, relations]        ││                                                                                                      ││                                          │
+│  Gantt Basic [gantt, M, sections, tasks]         ││                                                                                                      ││                                          │
+│  Mindmap Seed [mindmap, S, tree]                 ││                                                                                                      ││                                          │
+│  Mindmap Deep [mindmap, L, deep, wide]           ││                                                                                                      ││                                          │
+│  Pie Basic [pie, S, title, showdata]             ││                                                                                                      ││                                          │
+│  Pie Many [pie, M, many-slices]                  ││                                                                                                      ││                                          │
+│  Gitgraph Basic [unsupported, M, unsupported]    ││                                                                                       OK             ││                                          │
+│  Journey Basic [unsupported, M, unsupported]     ││                                                                            Yes                       ││                                          │
+│  Requirement Basic [unsupported, M, unsupported] ││                                                                                                      ││                                          │
+│                                                  ││                                                                          ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││                                          │
+│                                                  ││                                                                          ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││                                          │
+│                                                  ││                                                                        ⢐⢶⢾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││                                          │
+│                                                  ││                                                                      ⡠⠒⠁⠈⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││                                          │
+│                                                  ││ ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇                 ⢀⣀⣤⣤⣶⣾⣿⣶⣦⣤⣀⡀          ⣀⠔⠉                                ││                                          │
+│                                                  ││ ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿Start⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇        ⣄⡀ ⣀⣠⣤⣴⣶⣿⣿⣿⣿Check⣿⣿⣿⣿⣿⣷⣶⣤⣄⣀ ⢀⠤⠊                                   ││                                          │
+│                                                  ││ ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⠉⠉⠉⠉⠉⠉⠉⠉⠟⠋⠉⠛⠛⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠛⠉⠑⠤⡀                                   ││                                          │
+│                                                  ││ ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇                 ⠉⠙⠛⠻⠿⢿⣿⠿⠿⠛⠋⠉⠁        ⠈⠒⢄                                 ││                                          │
+│                                                  ││                                                                     ⠉⠢⣀  ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ │╰──────────────────────────────────────────╯
+│                                                  ││                                                                        ⢑⣼⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ │╭─────────────────Metrics──────────────────╮
+│                                                  ││                                                                          ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││Parse: 0.12 ms                            │
+│                                                  ││                                                                          ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││Layout: 0.04 ms                           │
+│                                                  ││                                                                                                      ││Render: 0.00 ms                           │
+│                                                  ││                                                                                      Fix             ││Viewport: auto                            │
+│                                                  ││                                                                            No                        ││Zoom: 100%                                │
+│                                                  ││                                                                                                      ││Iters: 1                                  │
+│                                                  ││                                                                                                      ││Score: 0.77                               │
+│                                                  ││                                                                                                      ││Cross: 0                                  │
+│                                                  ││                                                                                                      ││Bends: 0                                  │
+│                                                  ││                                                                                                      ││Sym: 0.67                                 │
+│                                                  ││                                                                                                      ││Comp: 0.35                                │
+│                                                  ││                                                                                                      ││Edge var: 0.47                            │
+│                                                  ││                                                                                                      ││Label col: 0                              │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+│                                                  ││                                                                                                      ││                                          │
+╰──────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────╯
+j/k sample  l layout  r relayout  b render  +/- zoom  []/{} size  o reset  m metrics  t tier | parse 0.11709ms | layout 0.044554ms | render 0ms                                                         
