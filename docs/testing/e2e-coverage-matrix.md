@@ -16,6 +16,10 @@ Legend:
 - "Sweep" means the screen starts without panic (no interaction flow).
 - Gaps list the next concrete fix or the script that needs updating.
 
+Screen sweep details:
+- `scripts/demo_showcase_e2e.sh` now emits per-screen JSONL assertions with
+  hash, seed, mode, and size (alt 80x24) for screens 1–38.
+
 | # | ScreenId | Category | Current E2E Coverage | Gaps / Notes |
 | --- | --- | --- | --- | --- |
 | 1 | GuidedTour | Tour | `scripts/e2e_demo_tour.sh` (guided tour JSONL); `scripts/demo_showcase_e2e.sh` sweep | OK |
@@ -24,7 +28,7 @@ Legend:
 | 4 | CodeExplorer | Text | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic keyflow |
 | 5 | WidgetGallery | Core | `scripts/demo_showcase_e2e.sh` data-viz group | OK |
 | 6 | LayoutLab | Core | `scripts/demo_showcase_e2e.sh` core nav (keys `2d+`) | OK |
-| 7 | FormsInput | Interaction | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic input flow |
+| 7 | FormsInput | Interaction | `scripts/demo_showcase_e2e.sh` inputs/forms step (bd-1av4o.14.5) | OK |
 | 8 | DataViz | Visuals | `scripts/demo_showcase_e2e.sh` data-viz group | OK |
 | 9 | FileBrowser | Interaction | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic navigation flow |
 | 10 | AdvancedFeatures | Core | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic keyflow |
@@ -42,15 +46,15 @@ Legend:
 | 22 | LayoutInspector | Core | `scripts/demo_showcase_e2e.sh` layout inspector step + sweep | OK |
 | 23 | AdvancedTextEditor | Text | `scripts/demo_showcase_e2e.sh` editors group | OK |
 | 24 | MousePlayground | Interaction | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic mouse script |
-| 25 | FormValidation | Interaction | `scripts/demo_showcase_e2e.sh` sweep | Add validation flow |
-| 26 | VirtualizedSearch | Systems | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic search flow |
+| 25 | FormValidation | Interaction | `scripts/demo_showcase_e2e.sh` inputs/forms step (bd-1av4o.14.5) | OK |
+| 26 | VirtualizedSearch | Systems | `scripts/demo_showcase_e2e.sh` inputs/forms step (bd-1av4o.14.5) | OK |
 | 27 | AsyncTasks | Systems | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic task flow |
 | 28 | ThemeStudio | Visuals | `scripts/demo_showcase_e2e.sh` sweep | Add deterministic theme edits |
 | 29 | SnapshotPlayer | Visuals | `scripts/demo_showcase_e2e.sh` sweep | Add snapshot playback flow |
 | 30 | PerformanceHud | Systems | `scripts/demo_showcase_e2e.sh` core nav (keys `pm`) | OK |
 | 31 | I18nDemo | Text | `scripts/demo_showcase_e2e.sh` i18n report + sweep | OK |
 | 32 | VoiOverlay | Systems | `scripts/demo_showcase_e2e.sh` VFX sweep | OK |
-| 33 | InlineModeStory | Tour | `scripts/demo_showcase_e2e.sh` sweep | Add inline-mode story flow |
+| 33 | InlineModeStory | Tour | `scripts/demo_showcase_e2e.sh` terminal/inline step (bd-1av4o.14.6) | OK |
 | 34 | AccessibilityPanel | Systems | `scripts/demo_showcase_e2e.sh` sweep | Add accessibility toggles flow |
 | 35 | WidgetBuilder | Core | `scripts/demo_showcase_e2e.sh` widget builder export + sweep | OK |
 | 36 | CommandPaletteLab | Interaction | `scripts/demo_showcase_e2e.sh` editors group; `scripts/command_palette_e2e.sh` | OK |
