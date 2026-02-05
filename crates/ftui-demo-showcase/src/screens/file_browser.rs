@@ -680,14 +680,13 @@ fn tree_file_label(name: &str) -> String {
 
 mod icons {
     use super::{FileEntry, FileKind};
-    use std::sync::OnceLock;
 
     use crate::theme;
 
     #[inline]
     fn use_emoji() -> bool {
-        static USE_EMOJI: OnceLock<bool> = OnceLock::new();
-        *USE_EMOJI.get_or_init(theme::supports_emoji_icons)
+        // Demo requirement: always show emoji in the file browser.
+        true
     }
 
     pub fn directory_icon() -> &'static str {

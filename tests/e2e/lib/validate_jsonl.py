@@ -2,11 +2,12 @@
 import argparse
 import json
 import sys
+import tempfile
 import textwrap
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 TYPE_MAP = {
     "string": str,
@@ -19,6 +20,9 @@ TYPE_MAP = {
 }
 
 
+REGISTRY_VERSION = "e2e-hash-registry-v1"
+
+
 @dataclass
 class Schema:
     version: str
@@ -29,6 +33,31 @@ class Schema:
 
 class ValidationError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class HashRegistryEntry:
+    event_type: str
+    hash_key: str
+    field: str
+    value: str
+    case: Optional[str] = None
+    step: Optional[str] = None
+    note: Optional[str] = None
+
+
+@dataclass
+class HashRegistry:
+    version: str
+    entries: List[HashRegistryEntry]
+
+
+REGISTRY_FIELDS: Dict[str, List[str]] = {
+    "span_diff_case": ["diff_hash"],
+    "tile_skip_case": ["diff_hash"],
+    "selector_case": ["decision_hash"],
+    "budgeted_refresh_case": ["widget_refresh_hash"],
+}
 
 
 def load_schema(path: str) -> Schema:
@@ -54,6 +83,60 @@ def load_schema(path: str) -> Schema:
         common_types=common_types,
         events=events,
     )
+
+
+def load_registry(path: str) -> HashRegistry:
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValidationError("registry root must be an object")
+    version = data.get("registry_version")
+    if not isinstance(version, str):
+        raise ValidationError("registry_version must be a string")
+    if version != REGISTRY_VERSION:
+        raise ValidationError(
+            f"registry_version must be {REGISTRY_VERSION}, got {version}"
+        )
+    entries_raw = data.get("entries")
+    if not isinstance(entries_raw, list):
+        raise ValidationError("entries must be a list")
+    entries: List[HashRegistryEntry] = []
+    for idx, item in enumerate(entries_raw, start=1):
+        if not isinstance(item, dict):
+            raise ValidationError(f"registry entry {idx} must be an object")
+        event_type = item.get("event_type")
+        hash_key = item.get("hash_key")
+        field = item.get("field")
+        value = item.get("value")
+        if not isinstance(event_type, str) or not event_type:
+            raise ValidationError(f"registry entry {idx} missing event_type")
+        if not isinstance(hash_key, str) or not hash_key:
+            raise ValidationError(f"registry entry {idx} missing hash_key")
+        if not isinstance(field, str) or not field:
+            raise ValidationError(f"registry entry {idx} missing field")
+        if not isinstance(value, str):
+            raise ValidationError(f"registry entry {idx} value must be a string")
+        case = item.get("case")
+        if case is not None and not isinstance(case, str):
+            raise ValidationError(f"registry entry {idx} case must be a string")
+        step = item.get("step")
+        if step is not None and not isinstance(step, str):
+            raise ValidationError(f"registry entry {idx} step must be a string")
+        note = item.get("note")
+        if note is not None and not isinstance(note, str):
+            raise ValidationError(f"registry entry {idx} note must be a string")
+        entries.append(
+            HashRegistryEntry(
+                event_type=event_type,
+                hash_key=hash_key,
+                field=field,
+                value=value,
+                case=case,
+                step=step,
+                note=note,
+            )
+        )
+    return HashRegistry(version=version, entries=entries)
 
 
 def type_matches(value: Any, expected: Any) -> bool:
@@ -129,6 +212,194 @@ def validate_jsonl(schema: Schema, lines: Iterable[str]) -> List[Tuple[int, str]
         for err in errors:
             failures.append((idx, err))
     return failures
+
+
+def _seed_to_string(seed: Any) -> Optional[str]:
+    if isinstance(seed, bool):
+        return None
+    if isinstance(seed, int):
+        return str(seed)
+    if isinstance(seed, float):
+        if seed.is_integer():
+            return str(int(seed))
+        return str(seed)
+    if isinstance(seed, str) and seed:
+        return seed
+    return None
+
+
+def compute_hash_key(obj: Dict[str, Any]) -> Optional[str]:
+    hash_key = obj.get("hash_key")
+    if isinstance(hash_key, str) and hash_key:
+        return hash_key
+    mode = obj.get("mode")
+    if mode is None:
+        mode = obj.get("screen_mode")
+    cols = obj.get("cols")
+    rows = obj.get("rows")
+    seed = obj.get("seed")
+    if not isinstance(mode, str):
+        return None
+    if isinstance(cols, bool) or not isinstance(cols, int):
+        return None
+    if isinstance(rows, bool) or not isinstance(rows, int):
+        return None
+    seed_str = _seed_to_string(seed)
+    if seed_str is None:
+        return None
+    return f"{mode}-{cols}x{rows}-seed{seed_str}"
+
+
+def validate_hash_registry(
+    registry: HashRegistry, lines: Iterable[str]
+) -> List[Tuple[int, str]]:
+    failures: List[Tuple[int, str]] = []
+    index: Dict[Tuple[str, str], List[HashRegistryEntry]] = {}
+    for entry in registry.entries:
+        index.setdefault((entry.event_type, entry.hash_key), []).append(entry)
+
+    seen: Set[HashRegistryEntry] = set()
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        event_type = obj.get("type")
+        if not isinstance(event_type, str):
+            continue
+        hash_key = compute_hash_key(obj)
+        if not hash_key:
+            continue
+        entries = index.get((event_type, hash_key))
+        if not entries:
+            continue
+        event_case = obj.get("case")
+        event_step = obj.get("step")
+        event_screen = obj.get("screen")
+        event_mode = obj.get("mode")
+        if event_mode is None:
+            event_mode = obj.get("screen_mode")
+        event_cols = obj.get("cols")
+        event_rows = obj.get("rows")
+        event_seed = obj.get("seed")
+        for entry in entries:
+            if entry.case is not None and entry.case != event_case:
+                continue
+            if entry.step is not None and entry.step != event_step:
+                continue
+            if entry.field not in obj:
+                failures.append(
+                    (
+                        idx,
+                        "missing hash field "
+                        f"{entry.field} for {event_type} {hash_key} "
+                        f"mode={event_mode} cols={event_cols} rows={event_rows} seed={event_seed} "
+                        f"case={event_case} step={event_step} screen={event_screen}",
+                    )
+                )
+                seen.add(entry)
+                continue
+            actual = obj[entry.field]
+            if not isinstance(actual, str):
+                failures.append(
+                    (
+                        idx,
+                        "hash field "
+                        f"{entry.field} for {event_type} {hash_key} "
+                        f"mode={event_mode} cols={event_cols} rows={event_rows} seed={event_seed} "
+                        f"case={event_case} step={event_step} screen={event_screen} is not a string",
+                    )
+                )
+                seen.add(entry)
+                continue
+            if actual != entry.value:
+                failures.append(
+                    (
+                        idx,
+                        "hash mismatch "
+                        f"{event_type} {hash_key} "
+                        f"mode={event_mode} cols={event_cols} rows={event_rows} seed={event_seed} "
+                        f"case={event_case} step={event_step} screen={event_screen} "
+                        f"field={entry.field} expected={entry.value} got={actual}",
+                    )
+                )
+            seen.add(entry)
+
+    for entry in registry.entries:
+        if entry not in seen:
+            failures.append(
+                (
+                    0,
+                    "missing expected hash entry "
+                    f"{entry.event_type} {entry.hash_key} "
+                    f"case={entry.case} step={entry.step} field={entry.field}",
+                )
+            )
+    return failures
+
+
+def extract_registry_entries(lines: Iterable[str]) -> List[HashRegistryEntry]:
+    entries: Dict[Tuple[str, str, str, Optional[str], Optional[str]], HashRegistryEntry] = {}
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        event_type = obj.get("type")
+        if not isinstance(event_type, str):
+            continue
+        fields = REGISTRY_FIELDS.get(event_type)
+        if not fields:
+            continue
+        hash_key = compute_hash_key(obj)
+        if not hash_key:
+            continue
+        event_case = obj.get("case")
+        if event_case is not None and not isinstance(event_case, str):
+            event_case = None
+        event_step = obj.get("step")
+        if event_step is not None and not isinstance(event_step, str):
+            event_step = None
+        for field in fields:
+            value = obj.get(field)
+            if not isinstance(value, str):
+                continue
+            key = (event_type, hash_key, field, event_case, event_step)
+            existing = entries.get(key)
+            if existing and existing.value != value:
+                raise ValidationError(
+                    f"conflicting registry values for {event_type} {hash_key} "
+                    f"case={event_case} step={event_step} field={field}: "
+                    f"{existing.value} vs {value} (line {idx})"
+                )
+            entries[key] = HashRegistryEntry(
+                event_type=event_type,
+                hash_key=hash_key,
+                field=field,
+                value=value,
+                case=event_case,
+                step=event_step,
+            )
+    return sorted(
+        entries.values(),
+        key=lambda item: (
+            item.event_type,
+            item.hash_key,
+            item.case or "",
+            item.step or "",
+            item.field,
+        ),
+    )
 
 
 def example_events(schema_version: str) -> Dict[str, Dict[str, Any]]:
@@ -311,6 +582,56 @@ def run_self_tests(schema_path: str) -> int:
             failures = validate_jsonl(self.schema, ["{not_json}"])
             self.assertTrue(any("invalid json" in err for _, err in failures))
 
+        def test_hash_registry_match(self) -> None:
+            example = example_events(schema.version)["case_step_end"].copy()
+            example["diff_hash"] = "abc123"
+            registry_payload = {
+                "registry_version": REGISTRY_VERSION,
+                "entries": [
+                    {
+                        "event_type": "case_step_end",
+                        "hash_key": example["hash_key"],
+                        "field": "diff_hash",
+                        "value": "abc123",
+                        "case": example["case"],
+                        "step": example["step"],
+                    }
+                ],
+            }
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                registry_path = Path(tmp_dir) / "registry.json"
+                registry_path.write_text(
+                    json.dumps(registry_payload, indent=2), encoding="utf-8"
+                )
+                registry = load_registry(str(registry_path))
+                failures = validate_hash_registry(registry, [json.dumps(example)])
+                self.assertFalse(failures)
+
+        def test_hash_registry_mismatch(self) -> None:
+            example = example_events(schema.version)["case_step_end"].copy()
+            example["diff_hash"] = "abc123"
+            registry_payload = {
+                "registry_version": REGISTRY_VERSION,
+                "entries": [
+                    {
+                        "event_type": "case_step_end",
+                        "hash_key": example["hash_key"],
+                        "field": "diff_hash",
+                        "value": "zzz999",
+                        "case": example["case"],
+                        "step": example["step"],
+                    }
+                ],
+            }
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                registry_path = Path(tmp_dir) / "registry.json"
+                registry_path.write_text(
+                    json.dumps(registry_payload, indent=2), encoding="utf-8"
+                )
+                registry = load_registry(str(registry_path))
+                failures = validate_hash_registry(registry, [json.dumps(example)])
+                self.assertTrue(any("hash mismatch" in err for _, err in failures))
+
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(ValidatorTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1
@@ -330,6 +651,17 @@ def main() -> int:
         "--schema",
         default=str(default_schema),
         help="Path to JSON schema file",
+    )
+    default_registry = Path(__file__).with_name("e2e_hash_registry.json")
+    parser.add_argument(
+        "--registry",
+        default="",
+        help="Path to hash registry file",
+    )
+    parser.add_argument(
+        "--emit-registry",
+        default="",
+        help="Write hash registry JSON to path (use '-' for stdout)",
     )
     parser.add_argument(
         "--strict",
@@ -354,6 +686,8 @@ def main() -> int:
 
     args = parser.parse_args()
     schema_path = args.schema
+    registry_path = args.registry
+    emit_registry_path = args.emit_registry
 
     if args.self_test:
         return run_self_tests(schema_path)
@@ -368,14 +702,53 @@ def main() -> int:
         parser.error("jsonl file path is required")
 
     with open(args.jsonl, "r", encoding="utf-8") as handle:
-        failures = validate_jsonl(schema, handle)
+        lines = list(handle)
+    failures = validate_jsonl(schema, lines)
 
-    if failures:
-        summary = [f"line {line}: {err}" for line, err in failures]
-        message = "\n".join(summary)
-        sys.stderr.write("JSONL schema validation failed:\n")
-        sys.stderr.write(message + "\n")
+    registry_failures: List[Tuple[int, str]] = []
+    if registry_path:
+        registry_file = Path(registry_path)
+        if registry_file.exists():
+            registry = load_registry(str(registry_file))
+            registry_failures = validate_hash_registry(registry, lines)
+        else:
+            registry_failures = [(0, f"registry file not found: {registry_path}")]
+
+    if failures or registry_failures:
+        if failures:
+            summary = [f"line {line}: {err}" for line, err in failures]
+            message = "\n".join(summary)
+            sys.stderr.write("JSONL schema validation failed:\n")
+            sys.stderr.write(message + "\n")
+        if registry_failures:
+            summary = [f"line {line}: {err}" for line, err in registry_failures]
+            message = "\n".join(summary)
+            sys.stderr.write("JSONL hash registry validation failed:\n")
+            sys.stderr.write(message + "\n")
         return 1 if args.strict else 0
+
+    if emit_registry_path:
+        entries = extract_registry_entries(lines)
+        payload = {
+            "registry_version": REGISTRY_VERSION,
+            "entries": [
+                {
+                    "event_type": entry.event_type,
+                    "hash_key": entry.hash_key,
+                    "field": entry.field,
+                    "value": entry.value,
+                    "case": entry.case,
+                    "step": entry.step,
+                    "note": entry.note,
+                }
+                for entry in entries
+            ],
+        }
+        output = json.dumps(payload, indent=2)
+        if emit_registry_path == "-":
+            sys.stdout.write(output + "\n")
+        else:
+            Path(emit_registry_path).write_text(output + "\n", encoding="utf-8")
 
     return 0
 

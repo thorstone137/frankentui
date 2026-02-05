@@ -129,16 +129,18 @@ SCREENS=(
     "26|virtualized_search|Virtualized Search"
     "27|async_tasks|Async Tasks"
     "28|theme_studio|Theme Studio"
-    "29|time_travel_studio|Time-Travel Studio"
+    "29|snapshot_player|Snapshot Player"
     "30|performance_hud|Performance Challenge"
-    "31|i18n_stress_lab|i18n Stress Lab"
-    "32|voi_overlay|VOI Overlay"
-    "33|inline_mode|Inline Mode"
-    "34|accessibility|Accessibility"
-    "35|widget_builder|Widget Builder"
-    "36|palette_evidence|Palette Evidence"
-    "37|determinism_lab|Determinism Lab"
-    "38|links|Links"
+    "31|explainability_cockpit|Explainability Cockpit"
+    "32|i18n_demo|i18n Demo"
+    "33|voi_overlay|VOI Overlay"
+    "34|inline_mode_story|Inline Mode Story"
+    "35|accessibility_panel|Accessibility Panel"
+    "36|widget_builder|Widget Builder"
+    "37|command_palette_lab|Command Palette Lab"
+    "38|determinism_lab|Determinism Lab"
+    "39|hyperlink_playground|Hyperlink Playground"
+    "40|kanban_board|Kanban Board"
 )
 
 PASSED=0
@@ -201,17 +203,6 @@ run_screen_case() {
     else
         jsonl_assert "pty_output_${case_id}" "pass" "ok"
     fi
-
-    local seed_val="${E2E_SEED:-0}"
-    local hash_key
-    hash_key="$(e2e_hash_key "$mode" "$cols" "$rows" "$seed_val")"
-    local hash=""
-    hash="$(sha256_file "$out_pty" 2>/dev/null || true)"
-    if [[ -z "$hash" ]]; then
-        hash="missing"
-    fi
-    jsonl_assert "screen_sweep_${case_id}" "$status" \
-        "screen_id=${screen_id} screen=${screen_slug} label=${screen_label} mode=${mode} cols=${cols} rows=${rows} seed=${seed_val} hash_key=${hash_key} hash=${hash} exit=${exit_code} duration_ms=${duration_ms}"
 
     local seed_val="${E2E_SEED:-0}"
     local hash_key

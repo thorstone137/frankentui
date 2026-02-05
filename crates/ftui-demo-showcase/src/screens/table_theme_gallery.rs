@@ -4,7 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{self, Write};
 
 use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 use ftui_core::geometry::Rect;
@@ -12,7 +12,7 @@ use ftui_extras::markdown::{MarkdownRenderer, MarkdownTheme};
 use ftui_layout::{Constraint, Flex, LayoutSizeHint};
 use ftui_render::frame::Frame;
 use ftui_runtime::Cmd;
-use ftui_style::{ColorProfile, Style, TablePresetId, TableTheme};
+use ftui_style::{ColorProfile, Style, TablePresetId, TableTheme, TableThemeSpec};
 use ftui_text::{Line, Span, Text, WrapMode};
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
@@ -213,6 +213,13 @@ const PRESETS: &[PresetSpec] = &[
     },
 ];
 
+#[derive(Debug, Clone)]
+struct CustomPreset {
+    name: String,
+    desc: String,
+    theme: TableTheme,
+}
+
 pub struct TableThemeGallery {
     selected: usize,
     grid_columns: Cell<usize>,
@@ -225,6 +232,11 @@ pub struct TableThemeGallery {
     zebra_strength: ZebraStrength,
     border_style: BorderStyle,
     highlight_row: bool,
+    custom_presets: Vec<CustomPreset>,
+    custom_counter: u32,
+    export_path: String,
+    import_path: String,
+    clipboard_path: Option<String>,
 }
 
 impl Default for TableThemeGallery {
@@ -251,6 +263,11 @@ impl TableThemeGallery {
             zebra_strength: ZebraStrength::Subtle,
             border_style: BorderStyle::Preset,
             highlight_row: false,
+            custom_presets: Vec::new(),
+            custom_counter: 1,
+            export_path: Self::resolve_export_path(),
+            import_path: Self::resolve_import_path(),
+            clipboard_path: Self::resolve_clipboard_path(),
         }
     }
 
@@ -263,6 +280,26 @@ impl TableThemeGallery {
                     .ok()
                     .filter(|value| !value.trim().is_empty())
             })
+    }
+
+    fn resolve_export_path() -> String {
+        std::env::var(EXPORT_PATH_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_EXPORT_PATH.to_string())
+    }
+
+    fn resolve_import_path() -> String {
+        std::env::var(IMPORT_PATH_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_EXPORT_PATH.to_string())
+    }
+
+    fn resolve_clipboard_path() -> Option<String> {
+        std::env::var(CLIPBOARD_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
     }
 
     fn table_rows() -> Vec<Row> {
@@ -304,8 +341,56 @@ impl TableThemeGallery {
         (cols.max(1), rows.max(1))
     }
 
+    fn preset_count(&self) -> usize {
+        PRESETS.len().saturating_add(self.custom_presets.len())
+    }
+
+    fn preset_name(&self, idx: usize) -> &str {
+        if idx < PRESETS.len() {
+            PRESETS[idx].name
+        } else {
+            self.custom_presets
+                .get(idx.saturating_sub(PRESETS.len()))
+                .map(|preset| preset.name.as_str())
+                .unwrap_or("Custom")
+        }
+    }
+
+    fn preset_desc(&self, idx: usize) -> &str {
+        if idx < PRESETS.len() {
+            PRESETS[idx].desc
+        } else {
+            self.custom_presets
+                .get(idx.saturating_sub(PRESETS.len()))
+                .map(|preset| preset.desc.as_str())
+                .unwrap_or("custom preset")
+        }
+    }
+
+    fn preset_log_id(&self, idx: usize) -> String {
+        if idx < PRESETS.len() {
+            PRESETS[idx].log_id().to_string()
+        } else {
+            format!(
+                "custom_{}",
+                idx.saturating_sub(PRESETS.len()).saturating_add(1)
+            )
+        }
+    }
+
+    fn preset_theme(&self, idx: usize) -> TableTheme {
+        if idx < PRESETS.len() {
+            PRESETS[idx].theme()
+        } else {
+            self.custom_presets
+                .get(idx.saturating_sub(PRESETS.len()))
+                .map(|preset| preset.theme.clone())
+                .unwrap_or_else(TableTheme::terminal_classic)
+        }
+    }
+
     fn move_selection(&mut self, delta_row: i32, delta_col: i32) {
-        let count = PRESETS.len();
+        let count = self.preset_count();
         if count == 0 {
             return;
         }
@@ -366,20 +451,97 @@ impl TableThemeGallery {
             self.border_style.label(),
             highlight,
         ));
-        Text::from_lines([line_one, line_two])
+        let line_three = Line::from("S: Save preset | E: Export | I: Import");
+        Text::from_lines([line_one, line_two, line_three])
     }
 
-    fn preview_theme(&self, preset: PresetSpec) -> TableTheme {
-        self.apply_overrides(preset.theme())
+    fn preview_theme(&self, idx: usize) -> TableTheme {
+        self.apply_overrides(self.preset_theme(idx))
     }
 
-    fn render_preset_card(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        preset: PresetSpec,
-        selected: bool,
-    ) {
+    fn save_custom_preset(&mut self) {
+        if self.preset_count() == 0 {
+            return;
+        }
+        let name = format!("Custom {}", self.custom_counter);
+        let theme = self.preview_theme(self.selected);
+        self.custom_presets.push(CustomPreset {
+            name: name.clone(),
+            desc: "custom saved".to_string(),
+            theme: theme.clone(),
+        });
+        self.custom_counter = self.custom_counter.saturating_add(1);
+        self.selected = self.preset_count().saturating_sub(1);
+        self.log_preset_action("table_theme_save", &name, &theme, None, None);
+    }
+
+    fn export_selected(&mut self) {
+        if self.preset_count() == 0 {
+            return;
+        }
+        let theme = self.preview_theme(self.selected);
+        let name = self.preset_name(self.selected).to_string();
+        let mut spec = TableThemeSpec::from_theme(&theme);
+        if spec.name.is_none() {
+            spec.name = Some(name.clone());
+        }
+        let Ok(payload) = serde_json::to_string_pretty(&spec) else {
+            return;
+        };
+        let _ = Self::write_text_file(&self.export_path, &payload);
+        if let Some(path) = self.clipboard_path.as_deref() {
+            let _ = Self::write_text_file(path, &payload);
+        }
+        self.log_preset_action(
+            "table_theme_export",
+            &name,
+            &theme,
+            Some(self.export_path.as_str()),
+            self.clipboard_path.as_deref(),
+        );
+    }
+
+    fn import_preset(&mut self) {
+        let Ok(payload) = std::fs::read_to_string(&self.import_path) else {
+            return;
+        };
+        let Ok(spec) = serde_json::from_str::<TableThemeSpec>(&payload) else {
+            return;
+        };
+        if spec.validate().is_err() {
+            return;
+        }
+        let name = spec
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("Imported {}", self.custom_counter));
+        let theme = spec.into_theme();
+        self.custom_presets.push(CustomPreset {
+            name: name.clone(),
+            desc: "custom import".to_string(),
+            theme: theme.clone(),
+        });
+        self.custom_counter = self.custom_counter.saturating_add(1);
+        self.selected = self.preset_count().saturating_sub(1);
+        self.log_preset_action(
+            "table_theme_import",
+            &name,
+            &theme,
+            Some(self.import_path.as_str()),
+            None,
+        );
+    }
+
+    fn write_text_file(path: &str, content: &str) -> io::Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        file.write_all(content.as_bytes())
+    }
+
+    fn render_preset_card(&self, frame: &mut Frame, area: Rect, preset_idx: usize, selected: bool) {
         if area.is_empty() {
             return;
         }
@@ -388,7 +550,7 @@ impl TableThemeGallery {
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(preset.name)
+            .title(self.preset_name(preset_idx))
             .title_alignment(Alignment::Center)
             .style(border_style);
 
@@ -403,7 +565,7 @@ impl TableThemeGallery {
             .split(inner);
 
         let desc = Line::from_spans([Span::styled(
-            preset.desc,
+            self.preset_desc(preset_idx),
             Style::new().fg(theme::fg::SECONDARY),
         )]);
         Paragraph::new(Text::from_lines([desc]))
@@ -417,7 +579,7 @@ impl TableThemeGallery {
         ];
         let table = Table::new(Self::table_rows(), widths)
             .header(Self::table_header())
-            .theme(self.preview_theme(preset))
+            .theme(self.preview_theme(preset_idx))
             .theme_phase(PREVIEW_PHASE)
             .column_spacing(1);
         let mut state = TableState::default();
@@ -467,8 +629,12 @@ impl TableThemeGallery {
             return;
         }
 
-        let preset = PRESETS.get(self.selected).copied().unwrap_or(PRESETS[0]);
-        let title = format!("Preview · {} · {}", preset.name, self.preview_mode.label());
+        let selected = self.selected.min(self.preset_count().saturating_sub(1));
+        let title = format!(
+            "Preview · {} · {}",
+            self.preset_name(selected),
+            self.preview_mode.label()
+        );
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -494,21 +660,21 @@ impl TableThemeGallery {
         }
 
         let preview_area = rows.get(1).copied().unwrap_or(rows[0]);
-        let theme = self.preview_theme(preset);
+        let theme = self.preview_theme(selected);
         match self.preview_mode {
             PreviewMode::Markdown => self.render_markdown_preview(frame, preview_area, theme),
             PreviewMode::Widget => self.render_widget_preview(frame, preview_area, theme),
         }
     }
 
-    fn card_table_area(&self, preset: PresetSpec, area: Rect) -> Rect {
+    fn card_table_area(&self, preset_idx: usize, area: Rect) -> Rect {
         if area.is_empty() {
             return Rect::new(area.x, area.y, 0, 0);
         }
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(preset.name)
+            .title(self.preset_name(preset_idx))
             .title_alignment(Alignment::Center);
         let inner = block.inner(area);
         if inner.is_empty() {
@@ -545,6 +711,10 @@ impl TableThemeGallery {
         let Some(path) = self.log_path.as_ref() else {
             return;
         };
+        let count = self.preset_count();
+        if count == 0 {
+            return;
+        }
         let state = LogState {
             size: (area.width, area.height),
             selected: self.selected,
@@ -559,25 +729,19 @@ impl TableThemeGallery {
         }
         self.last_logged_state.set(Some(state));
         let run_id = self.run_id.as_deref().unwrap_or("unknown");
-        let selected_preset = PRESETS
-            .get(self.selected)
-            .copied()
-            .map(|preset| preset.log_id())
-            .unwrap_or("unknown");
-        let selected_preset_name = PRESETS
-            .get(self.selected)
-            .map(|preset| preset.name)
-            .unwrap_or("unknown");
+        let selected_idx = self.selected.min(count.saturating_sub(1));
+        let selected_preset = self.preset_log_id(selected_idx);
+        let selected_preset_name = self.preset_name(selected_idx);
 
         let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
             return;
         };
 
-        for (idx, preset) in PRESETS.iter().copied().enumerate() {
+        for idx in 0..count {
             let card_area = layout.get(idx).copied().unwrap_or(Rect::new(0, 0, 0, 0));
-            let table_area = self.card_table_area(preset, card_area);
+            let table_area = self.card_table_area(idx, card_area);
             let widths = self.column_widths(table_area);
-            let diagnostics = self.preview_theme(preset).diagnostics();
+            let diagnostics = self.preview_theme(idx).diagnostics();
             let payload = json!({
                 "event": "table_theme_gallery",
                 "timestamp": determinism::chrono_like_timestamp(),
@@ -585,7 +749,7 @@ impl TableThemeGallery {
                 "screen_width": area.width,
                 "screen_height": area.height,
                 "selected_index": state.selected,
-                "selected_preset": selected_preset,
+                "selected_preset": selected_preset.as_str(),
                 "selected_preset_name": selected_preset_name,
                 "preview_mode": state.preview.label(),
                 "header_emphasis": state.header_emphasis,
@@ -593,14 +757,43 @@ impl TableThemeGallery {
                 "border_style": state.border.label(),
                 "highlight_row": state.highlight_row,
                 "preset_index": idx,
-                "preset_name": preset.name,
-                "preset_id": preset.log_id(),
+                "preset_name": self.preset_name(idx),
+                "preset_id": self.preset_log_id(idx),
                 "theme_preset": diagnostics.preset_id.map(|id| format!("{id:?}")),
                 "phase": PREVIEW_PHASE,
                 "style_hash": diagnostics.style_hash,
                 "effects_hash": diagnostics.effects_hash,
                 "column_widths": widths,
             });
+            let _ = writeln!(file, "{payload}");
+        }
+    }
+
+    fn log_preset_action(
+        &self,
+        event: &str,
+        name: &str,
+        theme: &TableTheme,
+        file_path: Option<&str>,
+        clipboard_path: Option<&str>,
+    ) {
+        let Some(path) = self.log_path.as_ref() else {
+            return;
+        };
+        let run_id = self.run_id.as_deref().unwrap_or("unknown");
+        let diagnostics = theme.diagnostics();
+        let payload = json!({
+            "event": event,
+            "timestamp": determinism::chrono_like_timestamp(),
+            "run_id": run_id,
+            "preset_name": name,
+            "style_hash": diagnostics.style_hash,
+            "effects_hash": diagnostics.effects_hash,
+            "effect_count": diagnostics.effect_count,
+            "file_path": file_path,
+            "clipboard_path": clipboard_path,
+        });
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(file, "{payload}");
         }
     }
@@ -616,7 +809,7 @@ impl Screen for TableThemeGallery {
                     let layout = self.card_layout.borrow();
                     for (idx, rect) in layout.iter().enumerate() {
                         if rect.contains(mouse.x, mouse.y) {
-                            self.selected = idx.min(PRESETS.len().saturating_sub(1));
+                            self.selected = idx.min(self.preset_count().saturating_sub(1));
                             break;
                         }
                     }
@@ -632,10 +825,11 @@ impl Screen for TableThemeGallery {
                 KeyCode::Up => self.move_selection(-1, 0),
                 KeyCode::Down => self.move_selection(1, 0),
                 KeyCode::Tab => {
-                    self.selected = (self.selected + 1) % PRESETS.len().max(1);
+                    let count = self.preset_count().max(1);
+                    self.selected = (self.selected + 1) % count;
                 }
                 KeyCode::Home => self.selected = 0,
-                KeyCode::End => self.selected = PRESETS.len().saturating_sub(1),
+                KeyCode::End => self.selected = self.preset_count().saturating_sub(1),
                 KeyCode::Char('v') | KeyCode::Char('V') => {
                     self.preview_mode = self.preview_mode.toggle();
                 }
@@ -656,6 +850,15 @@ impl Screen for TableThemeGallery {
                 }
                 KeyCode::Char('l') | KeyCode::Char('L') => {
                     self.highlight_row = !self.highlight_row;
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    self.save_custom_preset();
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    self.export_selected();
+                }
+                KeyCode::Char('i') | KeyCode::Char('I') => {
+                    self.import_preset();
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
                     self.preview_mode = PreviewMode::Markdown;
@@ -698,7 +901,8 @@ impl Screen for TableThemeGallery {
 
         let grid_area = rows[0];
         let preview_area = rows[1];
-        let (cols, rows_count) = Self::compute_grid(grid_area, PRESETS.len());
+        let preset_count = self.preset_count();
+        let (cols, rows_count) = Self::compute_grid(grid_area, preset_count);
         self.grid_columns.set(cols);
 
         let row_constraints = vec![Constraint::Ratio(1, rows_count as u32); rows_count];
@@ -709,7 +913,7 @@ impl Screen for TableThemeGallery {
             .constraints(row_constraints)
             .split(grid_area);
 
-        let mut layout = Vec::with_capacity(PRESETS.len());
+        let mut layout = Vec::with_capacity(preset_count);
         let mut preset_idx = 0usize;
         for row_area in grid_rows {
             let grid_cols = Flex::horizontal()
@@ -717,16 +921,11 @@ impl Screen for TableThemeGallery {
                 .constraints(col_constraints.clone())
                 .split(row_area);
             for col_area in grid_cols {
-                if preset_idx >= PRESETS.len() {
+                if preset_idx >= preset_count {
                     break;
                 }
                 layout.push(col_area);
-                self.render_preset_card(
-                    frame,
-                    col_area,
-                    PRESETS[preset_idx],
-                    preset_idx == self.selected,
-                );
+                self.render_preset_card(frame, col_area, preset_idx, preset_idx == self.selected);
                 preset_idx += 1;
             }
         }
@@ -769,6 +968,18 @@ impl Screen for TableThemeGallery {
             HelpEntry {
                 key: "L",
                 action: "Toggle highlight row",
+            },
+            HelpEntry {
+                key: "S",
+                action: "Save custom preset",
+            },
+            HelpEntry {
+                key: "E",
+                action: "Export preset JSON",
+            },
+            HelpEntry {
+                key: "I",
+                action: "Import preset JSON",
             },
             HelpEntry {
                 key: "R",
@@ -861,7 +1072,7 @@ mod tests {
         gallery.update(&key_press(KeyCode::Up));
         assert_eq!(gallery.selected, 0);
 
-        gallery.selected = PRESETS.len().saturating_sub(1);
+        gallery.selected = gallery.preset_count().saturating_sub(1);
         gallery.update(&key_press(KeyCode::Tab));
         assert_eq!(gallery.selected, 0);
 
@@ -869,7 +1080,7 @@ mod tests {
         gallery.update(&key_press(KeyCode::Home));
         assert_eq!(gallery.selected, 0);
         gallery.update(&key_press(KeyCode::End));
-        assert_eq!(gallery.selected, PRESETS.len().saturating_sub(1));
+        assert_eq!(gallery.selected, gallery.preset_count().saturating_sub(1));
     }
 
     #[test]
@@ -890,6 +1101,19 @@ mod tests {
         assert_eq!(gallery.zebra_strength, ZebraStrength::Subtle);
         assert_eq!(gallery.border_style, BorderStyle::Preset);
         assert!(!gallery.highlight_row);
+    }
+
+    #[test]
+    fn gallery_save_adds_custom_preset_and_selects() {
+        let mut gallery = TableThemeGallery::with_log_path(None);
+        let initial_count = gallery.preset_count();
+
+        gallery.update(&key_press(KeyCode::Char('s')));
+
+        assert_eq!(gallery.custom_presets.len(), 1);
+        assert_eq!(gallery.preset_count(), initial_count.saturating_add(1));
+        assert_eq!(gallery.selected, gallery.preset_count().saturating_sub(1));
+        assert_eq!(gallery.custom_presets[0].name, "Custom 1");
     }
 
     #[test]

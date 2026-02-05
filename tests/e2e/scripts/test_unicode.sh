@@ -13,7 +13,7 @@ source "$LIB_DIR/pty.sh"
 
 FIXTURE_DIR="$E2E_ROOT/fixtures"
 
-ALL_CASES=(
+HARNESS_CASES=(
     unicode_basic_ascii
     unicode_accented
     unicode_wide_cjk
@@ -21,14 +21,45 @@ ALL_CASES=(
     unicode_mixed_content
 )
 
-if [[ ! -x "${E2E_HARNESS_BIN:-}" ]]; then
-    LOG_FILE="$E2E_LOG_DIR/unicode_missing.log"
-    for t in "${ALL_CASES[@]}"; do
-        log_test_skip "$t" "ftui-harness binary missing"
-        record_result "$t" "skipped" 0 "$LOG_FILE" "binary missing"
-    done
-    exit 0
-fi
+DEMO_CASES=(
+    unicode_demo_ascii_icons
+    unicode_demo_emoji_icons
+)
+
+ensure_demo_bin() {
+    local target_dir="${CARGO_TARGET_DIR:-$PROJECT_ROOT/target}"
+    local bin="${E2E_DEMO_BIN:-$target_dir/debug/ftui-demo-showcase}"
+    if [[ -x "$bin" ]]; then
+        echo "$bin"
+        return 0
+    fi
+    log_info "Building ftui-demo-showcase (debug)..." >&2
+    (cd "$PROJECT_ROOT" && cargo build -p ftui-demo-showcase >/dev/null)
+    if [[ -x "$bin" ]]; then
+        echo "$bin"
+        return 0
+    fi
+    return 1
+}
+
+require_harness_bin() {
+    if [[ -x "${E2E_HARNESS_BIN:-}" ]]; then
+        return 0
+    fi
+    SKIP_REASON="ftui-harness binary missing"
+    return 2
+}
+
+require_demo_bin() {
+    if [[ -n "${E2E_DEMO_BIN_RESOLVED:-}" && -x "$E2E_DEMO_BIN_RESOLVED" ]]; then
+        return 0
+    fi
+    if E2E_DEMO_BIN_RESOLVED="$(ensure_demo_bin)"; then
+        return 0
+    fi
+    SKIP_REASON="ftui-demo-showcase binary missing"
+    return 2
+}
 
 run_case() {
     local name="$1"
@@ -45,9 +76,17 @@ run_case() {
         return 0
     fi
 
+    local exit_code=$?
     local end_ms
     end_ms="$(date +%s%3N)"
     local duration_ms=$((end_ms - start_ms))
+    if [[ "$exit_code" -eq 2 ]]; then
+        local reason="${SKIP_REASON:-skipped}"
+        log_test_skip "$name" "$reason"
+        record_result "$name" "skipped" "$duration_ms" "$LOG_FILE" "$reason"
+        SKIP_REASON=""
+        return 0
+    fi
     log_test_fail "$name" "unicode assertions failed"
     record_result "$name" "failed" "$duration_ms" "$LOG_FILE" "unicode assertions failed"
     return 1
@@ -59,6 +98,7 @@ unicode_basic_ascii() {
     local output_file="$E2E_LOG_DIR/unicode_basic_ascii.pty"
 
     log_test_start "unicode_basic_ascii"
+    require_harness_bin || return 2
 
     FTUI_HARNESS_EXIT_AFTER_MS=800 \
     FTUI_HARNESS_LOG_LINES=10 \
@@ -80,6 +120,7 @@ unicode_accented() {
     local output_file="$E2E_LOG_DIR/unicode_accented.pty"
 
     log_test_start "unicode_accented"
+    require_harness_bin || return 2
 
     # Create a temp log file with accented content
     local log_content
@@ -113,6 +154,7 @@ unicode_wide_cjk() {
     local output_file="$E2E_LOG_DIR/unicode_wide_cjk.pty"
 
     log_test_start "unicode_wide_cjk"
+    require_harness_bin || return 2
 
     local log_content
     log_content="$(mktemp)"
@@ -146,6 +188,7 @@ unicode_emoji() {
     local output_file="$E2E_LOG_DIR/unicode_emoji.pty"
 
     log_test_start "unicode_emoji"
+    require_harness_bin || return 2
 
     local log_content
     log_content="$(mktemp)"
@@ -178,6 +221,7 @@ unicode_mixed_content() {
     local output_file="$E2E_LOG_DIR/unicode_mixed_content.pty"
 
     log_test_start "unicode_mixed_content"
+    require_harness_bin || return 2
 
     FTUI_HARNESS_EXIT_AFTER_MS=1000 \
     FTUI_HARNESS_LOG_FILE="$FIXTURE_DIR/unicode_lines.txt" \
@@ -199,10 +243,65 @@ unicode_mixed_content() {
     log_debug "Mixed unicode content rendering verified"
 }
 
+# Test: Demo file browser renders ASCII icons when emoji disabled
+unicode_demo_ascii_icons() {
+    LOG_FILE="$E2E_LOG_DIR/unicode_demo_ascii_icons.log"
+    local output_file="$E2E_LOG_DIR/unicode_demo_ascii_icons.pty"
+
+    log_test_start "unicode_demo_ascii_icons"
+    require_demo_bin || return 2
+
+    FTUI_DEMO_SCREEN=9 \
+    FTUI_DEMO_SCREEN_MODE=alt \
+    FTUI_DEMO_DETERMINISTIC=1 \
+    FTUI_DEMO_SEED=0 \
+    FTUI_DEMO_EXIT_AFTER_MS=1200 \
+    FTUI_GLYPH_MODE=ascii \
+    FTUI_GLYPH_EMOJI=0 \
+    FTUI_NO_EMOJI=1 \
+    PTY_COLS=120 \
+    PTY_ROWS=40 \
+    PTY_TIMEOUT=6 \
+        pty_run "$output_file" "$E2E_DEMO_BIN_RESOLVED"
+
+    grep -a -q "DR my-app" "$output_file" || grep -a -q "RS main.rs" "$output_file" || return 1
+    grep -a -q "🦀" "$output_file" && return 1
+    grep -a -q "📁" "$output_file" && return 1
+
+    log_debug "Demo file browser ASCII icons verified"
+}
+
+# Test: Demo file browser renders emoji icons when enabled
+unicode_demo_emoji_icons() {
+    LOG_FILE="$E2E_LOG_DIR/unicode_demo_emoji_icons.log"
+    local output_file="$E2E_LOG_DIR/unicode_demo_emoji_icons.pty"
+
+    log_test_start "unicode_demo_emoji_icons"
+    require_demo_bin || return 2
+
+    FTUI_DEMO_SCREEN=9 \
+    FTUI_DEMO_SCREEN_MODE=alt \
+    FTUI_DEMO_DETERMINISTIC=1 \
+    FTUI_DEMO_SEED=0 \
+    FTUI_DEMO_EXIT_AFTER_MS=1200 \
+    FTUI_GLYPH_MODE=unicode \
+    FTUI_GLYPH_EMOJI=1 \
+    PTY_COLS=120 \
+    PTY_ROWS=40 \
+    PTY_TIMEOUT=6 \
+        pty_run "$output_file" "$E2E_DEMO_BIN_RESOLVED"
+
+    grep -a -q "🦀" "$output_file" || grep -a -q "📁" "$output_file" || return 1
+
+    log_debug "Demo file browser emoji icons verified"
+}
+
 FAILURES=0
 run_case "unicode_basic_ascii" unicode_basic_ascii         || FAILURES=$((FAILURES + 1))
 run_case "unicode_accented" unicode_accented               || FAILURES=$((FAILURES + 1))
 run_case "unicode_wide_cjk" unicode_wide_cjk              || FAILURES=$((FAILURES + 1))
 run_case "unicode_emoji" unicode_emoji                     || FAILURES=$((FAILURES + 1))
 run_case "unicode_mixed_content" unicode_mixed_content     || FAILURES=$((FAILURES + 1))
+run_case "unicode_demo_ascii_icons" unicode_demo_ascii_icons || FAILURES=$((FAILURES + 1))
+run_case "unicode_demo_emoji_icons" unicode_demo_emoji_icons || FAILURES=$((FAILURES + 1))
 exit "$FAILURES"

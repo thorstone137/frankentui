@@ -13,6 +13,7 @@ E2E_JSONL_VALIDATE_MODE="${E2E_JSONL_VALIDATE_MODE:-}"
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_JSONL_SCHEMA_FILE="${E2E_JSONL_SCHEMA_FILE:-$E2E_LIB_DIR/e2e_jsonl_schema.json}"
 E2E_JSONL_VALIDATOR="${E2E_JSONL_VALIDATOR:-$E2E_LIB_DIR/validate_jsonl.py}"
+E2E_JSONL_REGISTRY_FILE="${E2E_JSONL_REGISTRY_FILE:-$E2E_LIB_DIR/e2e_hash_registry.json}"
 E2E_DETERMINISTIC="${E2E_DETERMINISTIC:-1}"
 E2E_SEED="${E2E_SEED:-0}"
 E2E_TIME_STEP_MS="${E2E_TIME_STEP_MS:-100}"
@@ -352,7 +353,11 @@ jsonl_validate_current() {
         if [[ "$mode" == "strict" ]]; then
             flag="--strict"
         fi
-        if ! "$E2E_PYTHON" "$E2E_JSONL_VALIDATOR" "$E2E_JSONL_FILE" --schema "$E2E_JSONL_SCHEMA_FILE" "$flag"; then
+        local registry_args=()
+        if [[ -n "${E2E_JSONL_REGISTRY_FILE:-}" && -f "$E2E_JSONL_REGISTRY_FILE" ]]; then
+            registry_args=(--registry "$E2E_JSONL_REGISTRY_FILE")
+        fi
+        if ! "$E2E_PYTHON" "$E2E_JSONL_VALIDATOR" "$E2E_JSONL_FILE" --schema "$E2E_JSONL_SCHEMA_FILE" "${registry_args[@]}" "$flag"; then
             log_error "JSONL schema validation failed for $E2E_JSONL_FILE"
             return 1
         fi
