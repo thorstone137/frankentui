@@ -2532,6 +2532,139 @@ impl MermaidShowcaseScreen {
         .style(Style::new().fg(theme::fg::MUTED))
         .render(inner, frame);
     }
+
+    /// Render a centered help overlay listing keybindings.
+    fn render_help_overlay(&self, frame: &mut Frame, area: Rect) {
+        if area.is_empty() {
+            return;
+        }
+
+        let compact = area.width < 80 || area.height < 20;
+        let compact_sections: &[(&str, &[(&str, &str)])] = &[
+            ("Nav", &[("j/k", "Sample"), ("Enter", "Re-render")]),
+            ("View", &[("l", "Layout"), ("+/-", "Zoom"), ("?", "Help")]),
+            ("Panels", &[("m", "Metrics"), ("Esc", "Collapse")]),
+        ];
+        let full_sections: &[(&str, &[(&str, &str)])] = &[
+            (
+                "Navigation",
+                &[
+                    ("j / Down", "Next sample"),
+                    ("k / Up", "Previous sample"),
+                    ("Home / End", "First / last sample"),
+                    ("Enter", "Re-render sample"),
+                    ("Tab", "Select next node"),
+                    ("S-Tab", "Select previous node"),
+                    ("/", "Enter search mode"),
+                ],
+            ),
+            (
+                "Render Config",
+                &[
+                    ("l", "Cycle layout mode"),
+                    ("r", "Force re-layout"),
+                    ("t", "Cycle tier"),
+                    ("g", "Toggle glyph mode"),
+                    ("b", "Cycle render mode"),
+                    ("s", "Toggle styles"),
+                    ("w", "Cycle wrap mode"),
+                    ("p / P", "Cycle palette"),
+                ],
+            ),
+            (
+                "Viewport",
+                &[
+                    ("+ / -", "Zoom in / out"),
+                    ("0", "Reset zoom"),
+                    ("f", "Fit to viewport"),
+                    ("] / [", "Viewport width +/-"),
+                    ("} / {", "Viewport height +/-"),
+                    ("o", "Reset viewport override"),
+                ],
+            ),
+            (
+                "Panels",
+                &[
+                    ("m", "Toggle metrics"),
+                    ("c", "Toggle controls"),
+                    ("i", "Toggle status log"),
+                    ("d", "Toggle debug overlay"),
+                    ("?", "Toggle this help"),
+                    ("Esc", "Collapse panels"),
+                ],
+            ),
+        ];
+        let sections = if compact {
+            compact_sections
+        } else {
+            full_sections
+        };
+
+        let mut content_lines: u16 = 2;
+        for (_name, entries) in sections {
+            content_lines += 1 + entries.len() as u16 + 1;
+        }
+
+        let overlay_w = if compact { 40u16 } else { 52u16 }.min(area.width.saturating_sub(2));
+        let overlay_h = (content_lines + 2).min(area.height);
+        if overlay_w < 10 || overlay_h < 5 {
+            return;
+        }
+
+        let ox = area.x + area.width.saturating_sub(overlay_w) / 2;
+        let oy = area.y + area.height.saturating_sub(overlay_h) / 2;
+        let overlay = Rect::new(ox, oy, overlay_w, overlay_h);
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Help (? to close) ")
+            .title_alignment(Alignment::Center)
+            .style(Style::new().fg(theme::fg::PRIMARY).bg(theme::bg::DEEP));
+        let inner = block.inner(overlay);
+        block.render(overlay, frame);
+
+        if inner.is_empty() {
+            return;
+        }
+
+        let max_lines = inner.height as usize;
+        let mut lines: Vec<Line> = Vec::new();
+
+        let section_style = Style::new().fg(theme::accent::INFO);
+        let key_style = Style::new().fg(theme::accent::WARNING);
+        let desc_style = Style::new().fg(theme::fg::MUTED);
+        let key_width = if compact { 8 } else { 12 };
+
+        for (section_name, entries) in sections {
+            if lines.len() >= max_lines {
+                break;
+            }
+            lines.push(Line::from(Span::styled(
+                format!("  {section_name}"),
+                section_style,
+            )));
+            for (k, desc) in *entries {
+                if lines.len() >= max_lines.saturating_sub(1) {
+                    break;
+                }
+                lines.push(Line::from_spans(vec![
+                    Span::styled(format!("    {k:>key_width$}"), key_style),
+                    Span::styled(format!("  {desc}"), desc_style),
+                ]));
+            }
+        }
+
+        if lines.len() >= max_lines.saturating_sub(1) && content_lines as usize > max_lines {
+            if lines.len() >= max_lines {
+                lines.truncate(max_lines.saturating_sub(1));
+            }
+            lines.push(Line::from(Span::styled("    ... more below", desc_style)));
+        }
+
+        let text = Text::from_lines(lines);
+        Paragraph::new(text).render(inner, frame);
+    }
 }
 
 impl Screen for MermaidShowcaseScreen {

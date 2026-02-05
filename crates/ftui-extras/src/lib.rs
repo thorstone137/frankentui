@@ -81,6 +81,9 @@ pub mod diagram_layout;
 #[cfg(feature = "diagram")]
 pub mod mermaid_render;
 
+#[cfg(feature = "diagram")]
+pub mod dot_parser;
+
 #[cfg(feature = "export")]
 pub mod export;
 

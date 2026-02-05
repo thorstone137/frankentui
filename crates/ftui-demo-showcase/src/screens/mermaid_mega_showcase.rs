@@ -756,59 +756,112 @@ impl MegaRecomputeEvent {
 }
 
 /// Required top-level fields in every `mega_recompute` JSONL event.
+///
+/// These fields must always be present and non-null.
 pub const MEGA_TELEMETRY_REQUIRED_FIELDS: &[&str] = &[
+    // Identity
     "schema_version",
     "event",
     "seq",
+    "timestamp",
+    "seed",
+    "screen_mode",
+    // Sample
     "sample",
-    "sample_idx",
     "diagram_type",
-    "trigger",
+    // Configuration
     "layout_mode",
     "tier",
     "glyph_mode",
     "render_mode",
     "wrap_mode",
     "palette",
+    "styles_enabled",
+    "comparison_enabled",
+    "comparison_layout_mode",
+    // Viewport
     "viewport_cols",
     "viewport_rows",
+    "render_cols",
+    "render_rows",
     "zoom",
-    "total_ms",
+    "pan_x",
+    "pan_y",
+    // Epochs
+    "analysis_epoch",
+    "layout_epoch",
+    "render_epoch",
+    // Phase flags
     "analysis_ran",
     "layout_ran",
     "render_ran",
-    "node_count",
-    "edge_count",
-    "cluster_count",
-    "label_count",
+    // Cache
     "cache_hits",
     "cache_misses",
-    "cache_hit_ratio",
+    "cache_hit",
     "debounce_skips",
     "layout_budget_exceeded",
-    "error_count",
 ];
 
 /// Fields that may be `null` (phase was skipped or data unavailable).
+///
+/// These fields must always be present but may have a `null` value.
 pub const MEGA_TELEMETRY_NULLABLE_FIELDS: &[&str] = &[
+    // Optional identity
+    "run_id",
+    // Phase timings (null when phase was skipped)
     "parse_ms",
     "layout_ms",
     "render_ms",
+    // Diagram dimensions (null when IR unavailable)
+    "node_count",
+    "edge_count",
+    "error_count",
+    // Layout quality metrics (null when layout was not recomputed)
     "layout_iterations",
-    "crossings",
-    "total_bends",
-    "position_variance",
-    "ranks",
-    "max_rank_width",
+    "layout_iterations_max",
+    "layout_budget_exceeded_layout",
+    "layout_crossings",
+    "layout_ranks",
+    "layout_max_rank_width",
+    "layout_total_bends",
+    "layout_position_variance",
 ];
 
-/// Valid values for the `trigger` field.
+/// Valid values for the `trigger` field in `MegaRecomputeEvent`.
 pub const MEGA_TELEMETRY_VALID_TRIGGERS: &[&str] = &[
     "initial",
     "sample_change",
     "config_change",
     "resize",
     "zoom",
+];
+
+/// Fields that must be non-negative numbers (integer or float).
+const MEGA_TELEMETRY_NONNEG_FIELDS: &[&str] = &[
+    "seq",
+    "seed",
+    "viewport_cols",
+    "viewport_rows",
+    "render_cols",
+    "render_rows",
+    "cache_hits",
+    "cache_misses",
+    "debounce_skips",
+    "analysis_epoch",
+    "layout_epoch",
+    "render_epoch",
+];
+
+/// Fields that must be boolean values.
+const MEGA_TELEMETRY_BOOL_FIELDS: &[&str] = &[
+    "analysis_ran",
+    "layout_ran",
+    "render_ran",
+    "cache_hit",
+    "layout_budget_exceeded",
+    "styles_enabled",
+    "comparison_enabled",
 ];
 
 /// Validate a JSONL line against the mega telemetry schema.
