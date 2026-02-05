@@ -50,6 +50,13 @@ fn is_coverage_run() -> bool {
     std::env::var("LLVM_PROFILE_FILE").is_ok() || std::env::var("CARGO_LLVM_COV").is_ok()
 }
 
+/// Check if running in debug build (debug_assertions are enabled).
+/// Debug builds run significantly slower, so timing budgets need adjustment.
+#[allow(dead_code)]
+fn is_debug_build() -> bool {
+    cfg!(debug_assertions)
+}
+
 /// Hash the visible content of a frame buffer for determinism checks.
 fn buffer_hash(frame: &Frame, area: Rect) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -825,9 +832,11 @@ fn stress_render_tiny_frame_with_many_widgets() {
     }));
 
     // Budget: tiny frame should render fast regardless of widget count
+    // Debug builds run ~7x slower than release, so adjust budget accordingly.
+    let budget_ms = if is_debug_build() { 350 } else { 50 };
     assert!(
-        elapsed.as_millis() < 50,
-        "Tiny frame render exceeded budget: {:?}",
+        elapsed.as_millis() < budget_ms,
+        "Tiny frame render exceeded budget ({budget_ms}ms): {:?}",
         elapsed
     );
 }

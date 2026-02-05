@@ -246,6 +246,7 @@ pub enum BlendMode {
 
 /// Mask for which style channels effects are allowed to override.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct StyleMask {
     pub fg: bool,
@@ -375,7 +376,7 @@ impl<'a> TableEffectResolver<'a> {
 /// Apply a preset and add an animated row highlight:
 ///
 /// ```rust,no_run
-/// use crate::{
+/// use ftui_style::{
 ///     TableEffect, TableEffectRule, TableEffectScope, TableEffectTarget, TableSection, TableTheme,
 ///     Style,
 /// };
@@ -402,7 +403,7 @@ impl<'a> TableEffectResolver<'a> {
 /// Override a preset for custom header + zebra rows:
 ///
 /// ```rust,no_run
-/// use crate::{TableTheme, Style};
+/// use ftui_style::{TableTheme, Style};
 /// use ftui_render::cell::PackedRgba;
 ///
 /// let theme = TableTheme::terminal_classic()
@@ -457,6 +458,7 @@ pub struct TableThemeDiagnostics {
 /// This is a pure data representation (no rendering logic) that preserves
 /// the full TableTheme surface, including effects.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableThemeSpec {
     /// Schema version for forward-compatible parsing.
@@ -476,6 +478,7 @@ pub struct TableThemeSpec {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableThemeStyleSpec {
     pub border: StyleSpec,
@@ -488,6 +491,7 @@ pub struct TableThemeStyleSpec {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct StyleSpec {
     pub fg: Option<RgbaSpec>,
@@ -512,6 +516,7 @@ pub enum StyleAttr {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RgbaSpec {
     pub r: u8,
@@ -540,12 +545,14 @@ impl From<RgbaSpec> for PackedRgba {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct GradientSpec {
     pub stops: Vec<GradientStopSpec>,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GradientStopSpec {
     pub pos: f32,
@@ -553,6 +560,7 @@ pub struct GradientStopSpec {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum TableEffectSpec {
     Pulse {
@@ -579,6 +587,7 @@ pub enum TableEffectSpec {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableEffectRuleSpec {
     pub target: TableEffectTarget,
@@ -588,12 +597,51 @@ pub struct TableEffectRuleSpec {
     pub style_mask: StyleMask,
 }
 
+/// Schema version for TableThemeSpec.
+pub const TABLE_THEME_SPEC_VERSION: u8 = 1;
+const TABLE_THEME_SPEC_MAX_NAME_LEN: usize = 64;
+const TABLE_THEME_SPEC_MAX_EFFECTS: usize = 64;
+const TABLE_THEME_SPEC_MAX_STYLE_ATTRS: usize = 16;
+const TABLE_THEME_SPEC_MAX_GRADIENT_STOPS: usize = 16;
+const TABLE_THEME_SPEC_MIN_GRADIENT_STOPS: usize = 1;
+const TABLE_THEME_SPEC_MAX_PADDING: u8 = 8;
+const TABLE_THEME_SPEC_MAX_COLUMN_GAP: u8 = 8;
+const TABLE_THEME_SPEC_MIN_ROW_HEIGHT: u8 = 1;
+const TABLE_THEME_SPEC_MAX_ROW_HEIGHT: u8 = 8;
+const TABLE_THEME_SPEC_MAX_SPEED: f32 = 10.0;
+const TABLE_THEME_SPEC_MAX_PHASE: f32 = 1.0;
+const TABLE_THEME_SPEC_MAX_INTENSITY: f32 = 1.0;
+const TABLE_THEME_SPEC_MAX_ASYMMETRY: f32 = 0.9;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableThemeSpecError {
+    pub field: String,
+    pub message: String,
+}
+
+impl TableThemeSpecError {
+    fn new(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for TableThemeSpecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.field, self.message)
+    }
+}
+
+impl std::error::Error for TableThemeSpecError {}
+
 impl TableThemeSpec {
     /// Create a spec snapshot from a TableTheme.
     #[must_use]
     pub fn from_theme(theme: &TableTheme) -> Self {
         Self {
-            version: 1,
+            version: TABLE_THEME_SPEC_VERSION,
             name: None,
             preset_id: theme.preset_id,
             padding: theme.padding,
@@ -638,6 +686,213 @@ impl TableThemeSpec {
             preset_id: self.preset_id,
         }
     }
+
+    /// Validate spec ranges and sizes for safe import.
+    pub fn validate(&self) -> Result<(), TableThemeSpecError> {
+        if self.version != TABLE_THEME_SPEC_VERSION {
+            return Err(TableThemeSpecError::new(
+                "version",
+                format!("unsupported version {}", self.version),
+            ));
+        }
+
+        if let Some(name) = &self.name {
+            if name.len() > TABLE_THEME_SPEC_MAX_NAME_LEN {
+                return Err(TableThemeSpecError::new(
+                    "name",
+                    format!(
+                        "name length {} exceeds max {}",
+                        name.len(),
+                        TABLE_THEME_SPEC_MAX_NAME_LEN
+                    ),
+                ));
+            }
+        }
+
+        validate_u8_range("padding", self.padding, 0, TABLE_THEME_SPEC_MAX_PADDING)?;
+        validate_u8_range(
+            "column_gap",
+            self.column_gap,
+            0,
+            TABLE_THEME_SPEC_MAX_COLUMN_GAP,
+        )?;
+        validate_u8_range(
+            "row_height",
+            self.row_height,
+            TABLE_THEME_SPEC_MIN_ROW_HEIGHT,
+            TABLE_THEME_SPEC_MAX_ROW_HEIGHT,
+        )?;
+
+        validate_style_spec(&self.styles.border, "styles.border")?;
+        validate_style_spec(&self.styles.header, "styles.header")?;
+        validate_style_spec(&self.styles.row, "styles.row")?;
+        validate_style_spec(&self.styles.row_alt, "styles.row_alt")?;
+        validate_style_spec(&self.styles.row_selected, "styles.row_selected")?;
+        validate_style_spec(&self.styles.row_hover, "styles.row_hover")?;
+        validate_style_spec(&self.styles.divider, "styles.divider")?;
+
+        if self.effects.len() > TABLE_THEME_SPEC_MAX_EFFECTS {
+            return Err(TableThemeSpecError::new(
+                "effects",
+                format!(
+                    "effect count {} exceeds max {}",
+                    self.effects.len(),
+                    TABLE_THEME_SPEC_MAX_EFFECTS
+                ),
+            ));
+        }
+
+        for (idx, rule) in self.effects.iter().enumerate() {
+            validate_effect_rule(rule, idx)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_u8_range(
+    field: impl Into<String>,
+    value: u8,
+    min: u8,
+    max: u8,
+) -> Result<(), TableThemeSpecError> {
+    if value < min || value > max {
+        return Err(TableThemeSpecError::new(
+            field,
+            format!("value {} outside range [{}..={}]", value, min, max),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_style_spec(style: &StyleSpec, field: &str) -> Result<(), TableThemeSpecError> {
+    if style.attrs.len() > TABLE_THEME_SPEC_MAX_STYLE_ATTRS {
+        return Err(TableThemeSpecError::new(
+            format!("{field}.attrs"),
+            format!(
+                "attr count {} exceeds max {}",
+                style.attrs.len(),
+                TABLE_THEME_SPEC_MAX_STYLE_ATTRS
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_effect_rule(rule: &TableEffectRuleSpec, idx: usize) -> Result<(), TableThemeSpecError> {
+    let base = format!("effects[{idx}]");
+    match &rule.effect {
+        TableEffectSpec::Pulse {
+            speed,
+            phase_offset,
+            ..
+        } => {
+            validate_f32_range(
+                format!("{base}.speed"),
+                *speed,
+                0.0,
+                TABLE_THEME_SPEC_MAX_SPEED,
+            )?;
+            validate_f32_range(
+                format!("{base}.phase_offset"),
+                *phase_offset,
+                0.0,
+                TABLE_THEME_SPEC_MAX_PHASE,
+            )?;
+        }
+        TableEffectSpec::BreathingGlow {
+            intensity,
+            speed,
+            phase_offset,
+            asymmetry,
+            ..
+        } => {
+            validate_f32_range(
+                format!("{base}.intensity"),
+                *intensity,
+                0.0,
+                TABLE_THEME_SPEC_MAX_INTENSITY,
+            )?;
+            validate_f32_range(
+                format!("{base}.speed"),
+                *speed,
+                0.0,
+                TABLE_THEME_SPEC_MAX_SPEED,
+            )?;
+            validate_f32_range(
+                format!("{base}.phase_offset"),
+                *phase_offset,
+                0.0,
+                TABLE_THEME_SPEC_MAX_PHASE,
+            )?;
+            validate_f32_range(
+                format!("{base}.asymmetry"),
+                *asymmetry,
+                -TABLE_THEME_SPEC_MAX_ASYMMETRY,
+                TABLE_THEME_SPEC_MAX_ASYMMETRY,
+            )?;
+        }
+        TableEffectSpec::GradientSweep {
+            gradient,
+            speed,
+            phase_offset,
+        } => {
+            validate_gradient_spec(gradient, &base)?;
+            validate_f32_range(
+                format!("{base}.speed"),
+                *speed,
+                0.0,
+                TABLE_THEME_SPEC_MAX_SPEED,
+            )?;
+            validate_f32_range(
+                format!("{base}.phase_offset"),
+                *phase_offset,
+                0.0,
+                TABLE_THEME_SPEC_MAX_PHASE,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_gradient_spec(gradient: &GradientSpec, base: &str) -> Result<(), TableThemeSpecError> {
+    let count = gradient.stops.len();
+    if count < TABLE_THEME_SPEC_MIN_GRADIENT_STOPS || count > TABLE_THEME_SPEC_MAX_GRADIENT_STOPS {
+        return Err(TableThemeSpecError::new(
+            format!("{base}.gradient.stops"),
+            format!(
+                "stop count {} outside range [{}..={}]",
+                count, TABLE_THEME_SPEC_MIN_GRADIENT_STOPS, TABLE_THEME_SPEC_MAX_GRADIENT_STOPS
+            ),
+        ));
+    }
+    for (idx, stop) in gradient.stops.iter().enumerate() {
+        validate_f32_range(
+            format!("{base}.gradient.stops[{idx}].pos"),
+            stop.pos,
+            0.0,
+            1.0,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_f32_range(
+    field: impl Into<String>,
+    value: f32,
+    min: f32,
+    max: f32,
+) -> Result<(), TableThemeSpecError> {
+    if !value.is_finite() {
+        return Err(TableThemeSpecError::new(field, "value must be finite"));
+    }
+    if value < min || value > max {
+        return Err(TableThemeSpecError::new(
+            field,
+            format!("value {} outside range [{min}..={max}]", value),
+        ));
+    }
+    Ok(())
 }
 
 impl StyleSpec {
@@ -2140,5 +2395,77 @@ mod tests {
             let divider_fg = expect_fg(preset, "divider", theme.divider);
             assert_contrast(preset, "divider", divider_fg, base, WCAG_AA_LARGE_TEXT);
         }
+    }
+
+    fn base_spec() -> TableThemeSpec {
+        TableThemeSpec::from_theme(&TableTheme::aurora())
+    }
+
+    fn sample_rule() -> TableEffectRuleSpec {
+        TableEffectRuleSpec {
+            target: TableEffectTarget::AllRows,
+            effect: TableEffectSpec::Pulse {
+                fg_a: RgbaSpec::new(10, 20, 30, 255),
+                fg_b: RgbaSpec::new(40, 50, 60, 255),
+                bg_a: RgbaSpec::new(5, 5, 5, 255),
+                bg_b: RgbaSpec::new(9, 9, 9, 255),
+                speed: 1.0,
+                phase_offset: 0.0,
+            },
+            priority: 0,
+            blend_mode: BlendMode::Replace,
+            style_mask: StyleMask::fg_bg(),
+        }
+    }
+
+    #[test]
+    fn table_theme_spec_validate_accepts_defaults() {
+        let spec = base_spec();
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn table_theme_spec_validate_rejects_padding_overflow() {
+        let mut spec = base_spec();
+        spec.padding = TABLE_THEME_SPEC_MAX_PADDING.saturating_add(1);
+        let err = spec.validate().expect_err("expected padding range error");
+        assert_eq!(err.field, "padding");
+    }
+
+    #[test]
+    fn table_theme_spec_validate_rejects_effect_count_overflow() {
+        let mut spec = base_spec();
+        spec.effects = vec![sample_rule(); TABLE_THEME_SPEC_MAX_EFFECTS.saturating_add(1)];
+        let err = spec.validate().expect_err("expected effects length error");
+        assert_eq!(err.field, "effects");
+    }
+
+    #[test]
+    fn table_theme_spec_validate_rejects_gradient_stop_out_of_range() {
+        let mut spec = base_spec();
+        spec.effects = vec![TableEffectRuleSpec {
+            target: TableEffectTarget::AllRows,
+            effect: TableEffectSpec::GradientSweep {
+                gradient: GradientSpec {
+                    stops: vec![GradientStopSpec {
+                        pos: 1.5,
+                        color: RgbaSpec::new(0, 0, 0, 255),
+                    }],
+                },
+                speed: 1.0,
+                phase_offset: 0.0,
+            },
+            priority: 0,
+            blend_mode: BlendMode::Replace,
+            style_mask: StyleMask::fg_bg(),
+        }];
+        let err = spec
+            .validate()
+            .expect_err("expected gradient stop range error");
+        assert!(
+            err.field.contains("gradient.stops"),
+            "unexpected field: {}",
+            err.field
+        );
     }
 }

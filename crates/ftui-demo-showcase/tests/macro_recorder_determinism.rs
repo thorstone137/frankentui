@@ -18,6 +18,7 @@ use ftui_core::event::{Event, KeyCode, KeyEvent, KeyEventKind, Modifiers};
 use ftui_runtime::input_macro::{
     FilteredEventRecorder, InputMacro, MacroMetadata, MacroPlayback, RecordingFilter, TimedEvent,
 };
+use serial_test::serial;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -280,6 +281,7 @@ fn timing_drift_within_tolerance() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn tracing_emits_macro_events_in_order() {
     let (_guard, events) = capture_macro_events();
 

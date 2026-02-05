@@ -826,8 +826,8 @@ fn e2e_palette_hidden_does_not_intercept_keys() {
 
     // 'q' should quit (global keybinding) — not go to palette.
     // We can't actually test Cmd::Quit easily, but we can test screen nav works.
-    // Press '2' to switch to Shakespeare.
-    app.update(AppMsg::from(press(KeyCode::Char('2'))));
+    // Press '3' to switch to Shakespeare (key mapping: 1=GuidedTour, 2=Dashboard, 3=Shakespeare).
+    app.update(AppMsg::from(press(KeyCode::Char('3'))));
     assert_eq!(
         app.current_screen,
         ScreenId::Shakespeare,
