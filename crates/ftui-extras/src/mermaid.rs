@@ -3034,6 +3034,8 @@ pub fn normalize_ast_to_ir(
         );
     }
 
+    let mut constraints: Vec<LayoutConstraint> = Vec::new();
+
     for statement in &ast.statements {
         match statement {
             Statement::Directive(dir) => match &dir.kind {
@@ -3050,14 +3052,18 @@ pub fn normalize_ast_to_ir(
                     }
                 }
                 DirectiveKind::Raw => {
-                    apply_fallback_action(
-                        policy.unsupported_directive,
-                        MermaidWarningCode::UnsupportedDirective,
-                        "unsupported directive",
-                        dir.span,
-                        &mut warnings,
-                        &mut errors,
-                    );
+                    if let Some(constraint) = parse_constraint_directive(&dir.content, dir.span) {
+                        constraints.push(constraint);
+                    } else {
+                        apply_fallback_action(
+                            policy.unsupported_directive,
+                            MermaidWarningCode::UnsupportedDirective,
+                            "unsupported directive",
+                            dir.span,
+                            &mut warnings,
+                            &mut errors,
+                        );
+                    }
                 }
             },
             Statement::ClassDef { span, .. }
@@ -3711,6 +3717,7 @@ pub fn normalize_ast_to_ir(
         style_refs,
         links: resolved_links,
         meta,
+        constraints,
     };
 
     let degradation = ir.meta.guard.degradation.clone();
@@ -4640,6 +4647,37 @@ pub struct MermaidDiagramMeta {
     pub guard: MermaidGuardReport,
 }
 
+/// Layout constraint parsed from `%%{ftui:...}%%` directives.
+///
+/// These constraints influence the Sugiyama layout algorithm without
+/// replacing it — they are hints that adjust rank assignment, ordering,
+/// and coordinate placement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayoutConstraint {
+    /// Force nodes to the same layer/rank.
+    /// `%%{ ftui:rank=same A, B, C }%%`
+    SameRank { node_ids: Vec<String>, span: Span },
+    /// Force minimum rank span for an edge.
+    /// `%%{ ftui:minlen=3 A-->B }%%`
+    MinLength {
+        from_id: String,
+        to_id: String,
+        min_len: usize,
+        span: Span,
+    },
+    /// Pin a node at specific coordinates.
+    /// `%%{ ftui:pin A x=100 y=50 }%%`
+    Pin {
+        node_id: String,
+        x: f64,
+        y: f64,
+        span: Span,
+    },
+    /// Force left-to-right ordering within a rank.
+    /// `%%{ ftui:order=left A, B, C }%%`
+    OrderInRank { node_ids: Vec<String>, span: Span },
+}
+
 #[derive(Debug, Clone)]
 pub struct MermaidDiagramIr {
     pub diagram_type: DiagramType,
@@ -4655,6 +4693,7 @@ pub struct MermaidDiagramIr {
     pub style_refs: Vec<IrStyleRef>,
     pub links: Vec<IrLink>,
     pub meta: MermaidDiagramMeta,
+    pub constraints: Vec<LayoutConstraint>,
 }
 
 #[derive(Debug, Clone)]
@@ -4813,7 +4852,7 @@ impl<'a> Lexer<'a> {
                         span: Span::new(start, self.position()),
                     };
                 }
-                self.advance_byte();
+                self.advance_byte_or_char();
             }
             return Token {
                 kind: TokenKind::Directive(&self.input[content_start..self.idx]),
@@ -4827,7 +4866,7 @@ impl<'a> Lexer<'a> {
             if b == b'\n' || b == b'\r' {
                 break;
             }
-            self.advance_byte();
+            self.advance_byte_or_char();
         }
         Token {
             kind: TokenKind::Comment(&self.input[content_start..self.idx]),
@@ -4851,14 +4890,14 @@ impl<'a> Lexer<'a> {
             if b == b'\\' {
                 self.advance_byte();
                 if self.idx < self.bytes.len() {
-                    self.advance_byte();
+                    self.advance_byte_or_char();
                 }
                 continue;
             }
             if b == b'\n' || b == b'\r' {
                 break;
             }
-            self.advance_byte();
+            self.advance_byte_or_char();
         }
         Token {
             kind: TokenKind::String(&self.input[content_start..self.idx]),
@@ -4992,6 +5031,24 @@ impl<'a> Lexer<'a> {
         let len = c.len_utf8();
         self.idx += len;
         self.col += 1;
+    }
+
+    /// Advance past the current byte or full UTF-8 character.
+    /// For ASCII bytes, advances 1 byte. For non-ASCII, decodes the full
+    /// UTF-8 character and advances all its bytes, incrementing col by 1.
+    fn advance_byte_or_char(&mut self) {
+        if self.idx >= self.bytes.len() {
+            return;
+        }
+        let b = self.bytes[self.idx];
+        if b.is_ascii() {
+            self.advance_byte();
+        } else if let Some(c) = self.decode_current_char() {
+            self.advance_char(c);
+        } else {
+            // Invalid UTF-8 continuation byte; skip it.
+            self.advance_byte();
+        }
     }
 
     fn position(&self) -> Position {
@@ -5814,6 +5871,109 @@ fn strip_inline_comment(line: &str) -> &str {
     } else {
         line
     }
+}
+
+/// Try to parse a raw directive content as a layout constraint.
+///
+/// Supported forms:
+/// - `ftui:rank=same A, B, C`
+/// - `ftui:minlen=3 A-->B`
+/// - `ftui:pin A x=100 y=50`
+/// - `ftui:order=left A, B, C`
+fn parse_constraint_directive(content: &str, span: Span) -> Option<LayoutConstraint> {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("ftui:") {
+        return None;
+    }
+    let rest = trimmed[5..].trim();
+
+    // ftui:rank=same A, B, C
+    if let Some(ids_str) = rest.strip_prefix("rank=same") {
+        let ids: Vec<String> = ids_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if ids.len() >= 2 {
+            return Some(LayoutConstraint::SameRank {
+                node_ids: ids,
+                span,
+            });
+        }
+        return None;
+    }
+
+    // ftui:minlen=N FROM-->TO
+    if let Some(rest2) = rest.strip_prefix("minlen=") {
+        // Parse "3 A-->B"
+        let parts: Vec<&str> = rest2.splitn(2, char::is_whitespace).collect();
+        if parts.len() == 2
+            && let Ok(min_len) = parts[0].parse::<usize>()
+        {
+            // Find arrow in the edge spec
+            let edge_spec = parts[1].trim();
+            // Try common arrow patterns
+            for arrow in &["-->", "---", "-.->", "==>", "->", "--"] {
+                if let Some(arrow_pos) = edge_spec.find(arrow) {
+                    let from_id = edge_spec[..arrow_pos].trim().to_string();
+                    let to_id = edge_spec[arrow_pos + arrow.len()..].trim().to_string();
+                    if !from_id.is_empty() && !to_id.is_empty() {
+                        return Some(LayoutConstraint::MinLength {
+                            from_id,
+                            to_id,
+                            min_len,
+                            span,
+                        });
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
+    // ftui:pin NODE x=X y=Y
+    if let Some(rest2) = rest.strip_prefix("pin") {
+        let rest2 = rest2.trim();
+        let mut parts = rest2.split_whitespace();
+        if let Some(node_id) = parts.next() {
+            let mut x: Option<f64> = None;
+            let mut y: Option<f64> = None;
+            for part in parts {
+                if let Some(val) = part.strip_prefix("x=") {
+                    x = val.parse().ok();
+                } else if let Some(val) = part.strip_prefix("y=") {
+                    y = val.parse().ok();
+                }
+            }
+            if let (Some(x_val), Some(y_val)) = (x, y) {
+                return Some(LayoutConstraint::Pin {
+                    node_id: node_id.to_string(),
+                    x: x_val,
+                    y: y_val,
+                    span,
+                });
+            }
+        }
+        return None;
+    }
+
+    // ftui:order=left A, B, C
+    if let Some(ids_str) = rest.strip_prefix("order=left") {
+        let ids: Vec<String> = ids_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if ids.len() >= 2 {
+            return Some(LayoutConstraint::OrderInRank {
+                node_ids: ids,
+                span,
+            });
+        }
+        return None;
+    }
+
+    None
 }
 
 fn parse_directive_block(trimmed: &str, span: Span) -> Result<Directive, MermaidError> {
@@ -6920,6 +7080,90 @@ mod tests {
                 .iter()
                 .any(|t| matches!(t.kind, TokenKind::Arrow("-->"))),
             "Arrow should still be parsed correctly"
+        );
+    }
+
+    #[test]
+    fn tokenize_non_ascii_string_content() {
+        // CJK and emoji inside quoted strings should be preserved intact
+        let tokens = tokenize("graph TD\nA[\"日本語ラベル\"]\n");
+        let strings: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| match t.kind {
+                TokenKind::String(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            strings.contains(&"日本語ラベル"),
+            "Expected CJK string '日本語ラベル', got: {strings:?}"
+        );
+    }
+
+    #[test]
+    fn tokenize_emoji_in_string() {
+        // Emoji inside strings should be preserved as a single token
+        let tokens = tokenize("graph TD\nA[\"🎉 Party 🎊\"]\n");
+        let strings: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| match t.kind {
+                TokenKind::String(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            strings.contains(&"🎉 Party 🎊"),
+            "Expected emoji string, got: {strings:?}"
+        );
+    }
+
+    #[test]
+    fn tokenize_emoji_as_punct() {
+        // Bare emoji (not alphabetic) should become a single Punct, not split bytes
+        let tokens = tokenize("🎉");
+        let puncts: Vec<char> = tokens
+            .iter()
+            .filter_map(|t| match t.kind {
+                TokenKind::Punct(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(puncts, vec!['🎉'], "Emoji should be a single Punct token");
+    }
+
+    #[test]
+    fn tokenize_non_ascii_comment() {
+        // Non-ASCII in comments should be preserved
+        let tokens = tokenize("graph TD\n%% コメント: 日本語\nA-->B\n");
+        let comments: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| match t.kind {
+                TokenKind::Comment(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            comments.iter().any(|c| c.contains("コメント")),
+            "Expected Japanese comment, got: {comments:?}"
+        );
+    }
+
+    #[test]
+    fn tokenize_non_ascii_span_columns() {
+        // Column positions should count characters, not bytes
+        // "A" at col 1, "[" at col 2, quote at col 3, CJK string, close quote, "]"
+        let tokens = tokenize("A[\"漢字\"]\n");
+        let string_tok = tokens
+            .iter()
+            .find(|t| matches!(t.kind, TokenKind::String(_)))
+            .expect("should have string token");
+        // The string "漢字" starts at byte 3 (A [ ") but the end span should
+        // reflect character count, not byte count
+        let end_col = string_tok.span.end.col;
+        // Span end is past closing quote: A=1, [=2, "=3, 漢=4, 字=5, "=6 → end=7
+        assert_eq!(
+            end_col, 7,
+            "String end column should count chars not bytes, got {end_col}"
         );
     }
 
@@ -8699,6 +8943,7 @@ mod tests {
                 theme_overrides: MermaidThemeOverrides::default(),
                 guard: MermaidGuardReport::default(),
             },
+            constraints: vec![],
         }
     }
 
@@ -9103,5 +9348,161 @@ mod tests {
         let entries = keymap_for_mode(ShowcaseMode::Normal);
         let has_palette = entries.iter().any(|e| e.category == KeyCategory::Theme);
         assert!(has_palette, "Normal mode should have theme bindings");
+    }
+    // ── Constraint directive parsing tests ─────────────────────
+
+    #[test]
+    fn parse_same_rank_directive() {
+        let src = "graph TD
+%%{ ftui:rank=same A, B, C }%%
+A --> B
+B --> C
+";
+        let ast = parse(src).expect("parse");
+        let config = MermaidConfig::default();
+        let ir_parse = normalize_ast_to_ir(
+            &ast,
+            &config,
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert_eq!(ir_parse.ir.constraints.len(), 1);
+        match &ir_parse.ir.constraints[0] {
+            LayoutConstraint::SameRank { node_ids, .. } => {
+                assert_eq!(node_ids, &["A", "B", "C"]);
+            }
+            other => panic!("expected SameRank, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_minlen_directive() {
+        let src = "graph TD
+%%{ ftui:minlen=3 A-->B }%%
+A --> B
+";
+        let ast = parse(src).expect("parse");
+        let config = MermaidConfig::default();
+        let ir_parse = normalize_ast_to_ir(
+            &ast,
+            &config,
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert_eq!(ir_parse.ir.constraints.len(), 1);
+        match &ir_parse.ir.constraints[0] {
+            LayoutConstraint::MinLength {
+                from_id,
+                to_id,
+                min_len,
+                ..
+            } => {
+                assert_eq!(from_id, "A");
+                assert_eq!(to_id, "B");
+                assert_eq!(*min_len, 3);
+            }
+            other => panic!("expected MinLength, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_pin_directive() {
+        let src = "graph TD
+%%{ ftui:pin A x=100 y=50 }%%
+A --> B
+";
+        let ast = parse(src).expect("parse");
+        let config = MermaidConfig::default();
+        let ir_parse = normalize_ast_to_ir(
+            &ast,
+            &config,
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert_eq!(ir_parse.ir.constraints.len(), 1);
+        match &ir_parse.ir.constraints[0] {
+            LayoutConstraint::Pin { node_id, x, y, .. } => {
+                assert_eq!(node_id, "A");
+                assert!((x - 100.0).abs() < 1e-9);
+                assert!((y - 50.0).abs() < 1e-9);
+            }
+            other => panic!("expected Pin, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_order_directive() {
+        let src = "graph TD
+%%{ ftui:order=left A, B, C }%%
+A --> B
+B --> C
+";
+        let ast = parse(src).expect("parse");
+        let config = MermaidConfig::default();
+        let ir_parse = normalize_ast_to_ir(
+            &ast,
+            &config,
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert_eq!(ir_parse.ir.constraints.len(), 1);
+        match &ir_parse.ir.constraints[0] {
+            LayoutConstraint::OrderInRank { node_ids, .. } => {
+                assert_eq!(node_ids, &["A", "B", "C"]);
+            }
+            other => panic!("expected OrderInRank, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_ftui_directive_remains_unsupported() {
+        let src = "graph TD
+%%{ something_else }%%
+A --> B
+";
+        let ast = parse(src).expect("parse");
+        let config = MermaidConfig::default();
+        let ir_parse = normalize_ast_to_ir(
+            &ast,
+            &config,
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert!(ir_parse.ir.constraints.is_empty());
+        // Should have a warning about unsupported directive
+        assert!(
+            ir_parse
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("unsupported")),
+            "expected unsupported directive warning"
+        );
+    }
+
+    #[test]
+    fn multiple_constraints_parsed() {
+        let src = "graph TD
+%%{ ftui:rank=same A, B }%%
+%%{ ftui:minlen=2 B-->C }%%
+A --> B
+B --> C
+";
+        let ast = parse(src).expect("parse");
+        let config = MermaidConfig::default();
+        let ir_parse = normalize_ast_to_ir(
+            &ast,
+            &config,
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert_eq!(ir_parse.ir.constraints.len(), 2);
+        assert!(matches!(
+            &ir_parse.ir.constraints[0],
+            LayoutConstraint::SameRank { .. }
+        ));
+        assert!(matches!(
+            &ir_parse.ir.constraints[1],
+            LayoutConstraint::MinLength { .. }
+        ));
     }
 }

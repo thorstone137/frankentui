@@ -501,6 +501,7 @@ impl<'a> DotParser<'a> {
             style_refs: Vec::new(),
             links: Vec::new(),
             meta,
+            constraints: Vec::new(),
         };
 
         Ok(MermaidIrParse {

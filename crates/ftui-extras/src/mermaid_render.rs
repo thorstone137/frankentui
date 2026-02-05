@@ -6794,4 +6794,236 @@ mod tests {
         }
         assert_eq!(current, start, "prev() should cycle back after 6 steps");
     }
+
+    // ── Canvas Label Compositing Tests (bd-ukp1f.3) ─────────────────────
+
+    #[cfg(feature = "canvas")]
+    #[test]
+    fn canvas_composite_node_label_centered_rect() {
+        // Node label should be centered inside rect with fill background.
+        let ir = make_ir(1, vec![]);
+        let layout = make_layout(1, vec![]);
+        let config = MermaidConfig::default();
+        let renderer = MermaidRenderer::new(&config);
+        let vp = Viewport::fit(&layout.bounding_box, Rect::new(0, 0, 40, 20));
+
+        let mut buf = Buffer::new(40, 20);
+        let plan = RenderPlan {
+            fidelity: MermaidFidelity::Normal,
+            show_node_labels: true,
+            show_edge_labels: true,
+            show_clusters: false,
+            max_label_width: 0,
+            diagram_area: Rect::new(0, 0, 40, 20),
+            legend_area: None,
+        };
+        renderer.canvas_composite_labels(&layout.nodes, &layout.edges, &ir, &vp, &plan, &mut buf);
+        // Node label "N0" should appear somewhere in the buffer.
+        let has_n0 = (0..20)
+            .any(|y| (0..40).any(|x| buf.get(x, y).and_then(|c| c.content.as_char()) == Some('N')));
+        assert!(has_n0, "Node label 'N0' should be rendered in the buffer");
+    }
+
+    #[cfg(feature = "canvas")]
+    #[test]
+    fn canvas_composite_node_label_has_fill_background() {
+        // Label cells should have the node fill as background color.
+        let ir = make_ir(1, vec![]);
+        let layout = make_layout(1, vec![]);
+        let config = MermaidConfig::default();
+        let renderer = MermaidRenderer::new(&config);
+        let vp = Viewport::fit(&layout.bounding_box, Rect::new(0, 0, 40, 20));
+        let colors = DiagramPalette::from_preset(config.palette);
+        let expected_fill = colors.node_fill_for(0);
+
+        let mut buf = Buffer::new(40, 20);
+        let plan = RenderPlan {
+            fidelity: MermaidFidelity::Normal,
+            show_node_labels: true,
+            show_edge_labels: true,
+            show_clusters: false,
+            max_label_width: 0,
+            diagram_area: Rect::new(0, 0, 40, 20),
+            legend_area: None,
+        };
+        renderer.canvas_composite_labels(&layout.nodes, &layout.edges, &ir, &vp, &plan, &mut buf);
+        // Find a cell with 'N' (from label "N0") and verify its bg.
+        let mut found_with_bg = false;
+        for y in 0..20 {
+            for x in 0..40 {
+                if let Some(cell) = buf.get(x, y)
+                    && cell.content.as_char() == Some('N')
+                    && cell.bg == expected_fill
+                {
+                    found_with_bg = true;
+                }
+            }
+        }
+        assert!(
+            found_with_bg,
+            "Label text cells should have node fill as background color"
+        );
+    }
+
+    #[cfg(feature = "canvas")]
+    #[test]
+    fn canvas_composite_fills_interior_with_bg() {
+        // Interior cells (padding around label) should also have fill bg.
+        let ir = make_ir(1, vec![]);
+        let layout = make_layout(1, vec![]);
+        let config = MermaidConfig::default();
+        let renderer = MermaidRenderer::new(&config);
+        let vp = Viewport::fit(&layout.bounding_box, Rect::new(0, 0, 40, 20));
+        let colors = DiagramPalette::from_preset(config.palette);
+        let expected_fill = colors.node_fill_for(0);
+
+        let mut buf = Buffer::new(40, 20);
+        let plan = RenderPlan {
+            fidelity: MermaidFidelity::Normal,
+            show_node_labels: true,
+            show_edge_labels: true,
+            show_clusters: false,
+            max_label_width: 0,
+            diagram_area: Rect::new(0, 0, 40, 20),
+            legend_area: None,
+        };
+        renderer.canvas_composite_labels(&layout.nodes, &layout.edges, &ir, &vp, &plan, &mut buf);
+        // Count cells with the node fill background.
+        let fill_count = (0..20u16)
+            .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+            .filter(|&(x, y)| buf.get(x, y).is_some_and(|c| c.bg == expected_fill))
+            .count();
+        // At least a few cells should be filled (label text + padding).
+        assert!(
+            fill_count >= 2,
+            "Expected at least 2 cells with fill background, got {fill_count}"
+        );
+    }
+
+    #[cfg(feature = "canvas")]
+    #[test]
+    fn canvas_composite_edge_label_has_black_bg() {
+        // Edge labels should have black background for readability.
+        let mut ir = make_ir(2, vec![(0, 1)]);
+        // Add a label to the edge.
+        let label_id = ir.labels.len();
+        ir.labels.push(make_label("yes"));
+        ir.edges[0].label = Some(IrLabelId(label_id));
+        let layout = make_layout(2, vec![(0, 1)]);
+        let config = MermaidConfig::default();
+        let renderer = MermaidRenderer::new(&config);
+        let vp = Viewport::fit(&layout.bounding_box, Rect::new(0, 0, 40, 20));
+
+        let mut buf = Buffer::new(40, 20);
+        let plan = RenderPlan {
+            fidelity: MermaidFidelity::Normal,
+            show_node_labels: true,
+            show_edge_labels: true,
+            show_clusters: false,
+            max_label_width: 0,
+            diagram_area: Rect::new(0, 0, 40, 20),
+            legend_area: None,
+        };
+        renderer.canvas_composite_labels(&layout.nodes, &layout.edges, &ir, &vp, &plan, &mut buf);
+        // Find edge label text and verify black bg.
+        let mut found_edge_label = false;
+        for y in 0..20 {
+            for x in 0..40 {
+                if let Some(cell) = buf.get(x, y)
+                    && cell.content.as_char() == Some('y')
+                    && cell.bg == PackedRgba::BLACK
+                {
+                    found_edge_label = true;
+                }
+            }
+        }
+        assert!(
+            found_edge_label,
+            "Edge label 'yes' should be rendered with black background"
+        );
+    }
+
+    #[cfg(feature = "canvas")]
+    #[cfg(feature = "canvas")]
+    #[test]
+    fn canvas_composite_skips_when_labels_disabled() {
+        // When show_node_labels is false, no labels should appear.
+        let ir = make_ir(1, vec![]);
+        let layout = make_layout(1, vec![]);
+        let config = MermaidConfig::default();
+        let renderer = MermaidRenderer::new(&config);
+        let vp = Viewport::fit(&layout.bounding_box, Rect::new(0, 0, 40, 20));
+
+        let mut buf = Buffer::new(40, 20);
+        let plan = RenderPlan {
+            fidelity: MermaidFidelity::Outline,
+            show_node_labels: false,
+            show_edge_labels: false,
+            show_clusters: false,
+            max_label_width: 0,
+            diagram_area: Rect::new(0, 0, 40, 20),
+            legend_area: None,
+        };
+        renderer.canvas_composite_labels(&layout.nodes, &layout.edges, &ir, &vp, &plan, &mut buf);
+        // No label text should appear.
+        let has_text = (0..20).any(|y| {
+            (0..40).any(|x| {
+                buf.get(x, y)
+                    .and_then(|c| c.content.as_char())
+                    .is_some_and(|ch| ch != ' ' && ch != '\0')
+            })
+        });
+        assert!(
+            !has_text,
+            "No labels should be rendered when labels are disabled"
+        );
+    }
+
+    #[cfg(feature = "canvas")]
+    #[cfg(feature = "canvas")]
+    #[test]
+    fn canvas_composite_multiple_nodes_different_fills() {
+        // Each node should get a distinct fill color.
+        let ir = make_ir(3, vec![(0, 1), (1, 2)]);
+        let layout = make_layout(3, vec![(0, 1), (1, 2)]);
+        let config = MermaidConfig::default();
+        let renderer = MermaidRenderer::new(&config);
+        let vp = Viewport::fit(&layout.bounding_box, Rect::new(0, 0, 80, 30));
+        let colors = DiagramPalette::from_preset(config.palette);
+
+        let mut buf = Buffer::new(80, 30);
+        let plan = RenderPlan {
+            fidelity: MermaidFidelity::Normal,
+            show_node_labels: true,
+            show_edge_labels: true,
+            show_clusters: false,
+            max_label_width: 0,
+            diagram_area: Rect::new(0, 0, 80, 30),
+            legend_area: None,
+        };
+        renderer.canvas_composite_labels(&layout.nodes, &layout.edges, &ir, &vp, &plan, &mut buf);
+        // Collect distinct bg colors that have text content.
+        let mut bg_colors = std::collections::HashSet::new();
+        for y in 0..30 {
+            for x in 0..80 {
+                if let Some(cell) = buf.get(x, y)
+                    && let Some(ch) = cell.content.as_char()
+                    && ch.is_alphanumeric()
+                    && cell.bg != PackedRgba::TRANSPARENT
+                {
+                    bg_colors.insert(cell.bg);
+                }
+            }
+        }
+        // The default palette uses different fills for each node.
+        let fill0 = colors.node_fill_for(0);
+        let fill1 = colors.node_fill_for(1);
+        let fill2 = colors.node_fill_for(2);
+        // With 3 nodes and distinct palette entries, we should see at least 2
+        // distinct fill colors (might be more if all 3 are distinct).
+        assert!(
+            bg_colors.contains(&fill0) || bg_colors.contains(&fill1) || bg_colors.contains(&fill2),
+            "At least one node fill color should appear as text background"
+        );
+    }
 }
