@@ -316,8 +316,10 @@ mod tests {
     #[test]
     fn player_thrust_running_multiplier() {
         let mut p1 = Player::default();
-        let mut p2 = Player::default();
-        p2.running = true;
+        let mut p2 = Player {
+            running: true,
+            ..Default::default()
+        };
         p1.thrust(0.0, 5.0);
         p2.thrust(0.0, 5.0);
         assert!(
@@ -332,8 +334,10 @@ mod tests {
 
     #[test]
     fn move_forward_uses_angle() {
-        let mut p = Player::default();
-        p.angle = std::f32::consts::FRAC_PI_2; // facing up (y+)
+        let mut p = Player {
+            angle: std::f32::consts::FRAC_PI_2, // facing up (y+)
+            ..Default::default()
+        };
         p.move_forward(1.0);
         assert!(
             p.mom_y.abs() > p.mom_x.abs(),
@@ -343,8 +347,7 @@ mod tests {
 
     #[test]
     fn strafe_perpendicular_to_facing() {
-        let mut p = Player::default();
-        p.angle = 0.0; // facing right
+        let mut p = Player::default(); // facing right
         p.strafe(1.0); // strafe right should be downward (angle - pi/2)
         assert!(
             p.mom_y.abs() > p.mom_x.abs(),
@@ -361,11 +364,13 @@ mod tests {
 
     #[test]
     fn spawn_resets_momentum() {
-        let mut p = Player::default();
-        p.mom_x = 10.0;
-        p.mom_y = 20.0;
-        p.mom_z = 5.0;
-        p.bob_phase = 3.0;
+        let mut p = Player {
+            mom_x: 10.0,
+            mom_y: 20.0,
+            mom_z: 5.0,
+            bob_phase: 3.0,
+            ..Default::default()
+        };
         p.spawn(50.0, 60.0, 1.0);
         assert_eq!(p.mom_x, 0.0);
         assert_eq!(p.mom_y, 0.0);
@@ -383,9 +388,11 @@ mod tests {
 
     #[test]
     fn bob_offset_nonzero_with_bob_amount() {
-        let mut p = Player::default();
-        p.bob_amount = 1.0;
-        p.bob_phase = std::f32::consts::FRAC_PI_4; // sin(pi/2) = 1.0
+        let p = Player {
+            bob_amount: 1.0,
+            bob_phase: std::f32::consts::FRAC_PI_4, // sin(pi/2) = 1.0
+            ..Default::default()
+        };
         let offset = p.bob_offset();
         assert!(
             offset.abs() > 0.0,
