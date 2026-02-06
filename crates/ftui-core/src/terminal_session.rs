@@ -373,6 +373,47 @@ impl TerminalSession {
         crossterm::execute!(io::stdout(), crossterm::cursor::Hide)
     }
 
+    /// Return whether mouse capture is currently enabled for this session.
+    ///
+    /// Mouse capture enables terminal mouse reporting (SGR mode) so the runtime
+    /// can receive click/scroll/drag events.
+    #[must_use]
+    pub fn mouse_capture_enabled(&self) -> bool {
+        self.mouse_enabled
+    }
+
+    /// Enable or disable terminal mouse capture (SGR mouse reporting).
+    ///
+    /// This is idempotent: enabling when already enabled (or disabling when
+    /// already disabled) is a no-op.
+    ///
+    /// Note: In many terminals, enabling mouse capture steals the scroll wheel
+    /// from the terminal's native scrollback. In inline mode, prefer leaving
+    /// this off unless the user explicitly opts in.
+    pub fn set_mouse_capture(&mut self, enabled: bool) -> io::Result<()> {
+        if enabled == self.mouse_enabled {
+            self.options.mouse_capture = enabled;
+            return Ok(());
+        }
+
+        let mut stdout = io::stdout();
+        if enabled {
+            crossterm::execute!(stdout, crossterm::event::EnableMouseCapture)?;
+            self.mouse_enabled = true;
+            self.options.mouse_capture = true;
+            #[cfg(feature = "tracing")]
+            tracing::info!("mouse capture enabled (runtime toggle)");
+        } else {
+            crossterm::execute!(stdout, crossterm::event::DisableMouseCapture)?;
+            self.mouse_enabled = false;
+            self.options.mouse_capture = false;
+            #[cfg(feature = "tracing")]
+            tracing::info!("mouse capture disabled (runtime toggle)");
+        }
+
+        Ok(())
+    }
+
     /// Get the session options.
     pub fn options(&self) -> &SessionOptions {
         &self.options

@@ -3,7 +3,7 @@
 │ Intrinsic Sizing Demo • Adaptive Sidebar (1/4)                               │
 │╭Menu──────────────╮╭Content─────────────────────────────────────────────────╮│
 ││?? Dashboard      ││Current width: 78                                       ││
-││?? Settings       ││Sidebar mode: Full sidebar mode (width >= 60)           ││
+││? Settings        ││Sidebar mode: Full sidebar mode (width >= 60)           ││
 ││?? Help           ││                                                        ││
 ││?? Notifications  ││The sidebar adapts to terminal width:                   ││
 ││?? Profile        ││• Narrow: icon-only (4 cols)                            ││

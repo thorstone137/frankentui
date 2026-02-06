@@ -424,7 +424,9 @@ impl TableState {
     ) -> MouseResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some((id, HitRegion::Content, data)) = hit && id == expected_id {
+                if let Some((id, HitRegion::Content, data)) = hit
+                    && id == expected_id
+                {
                     let index = data as usize;
                     if index < row_count {
                         self.select(Some(index));
@@ -434,7 +436,9 @@ impl TableState {
                 MouseResult::Ignored
             }
             MouseEventKind::Moved => {
-                if let Some((id, HitRegion::Content, data)) = hit && id == expected_id {
+                if let Some((id, HitRegion::Content, data)) = hit
+                    && id == expected_id
+                {
                     let index = data as usize;
                     if index < row_count {
                         let changed = self.hovered != Some(index);

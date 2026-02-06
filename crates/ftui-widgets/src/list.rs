@@ -177,7 +177,9 @@ impl ListState {
     ) -> MouseResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some((id, HitRegion::Content, data)) = hit && id == expected_id {
+                if let Some((id, HitRegion::Content, data)) = hit
+                    && id == expected_id
+                {
                     let index = data as usize;
                     if index < item_count {
                         self.select(Some(index));

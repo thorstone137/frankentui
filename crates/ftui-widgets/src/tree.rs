@@ -18,9 +18,11 @@
 //! assert_eq!(tree.root().children().len(), 2);
 //! ```
 
+use crate::mouse::MouseResult;
 use crate::stateful::Stateful;
 use crate::undo_support::{TreeUndoExt, UndoSupport, UndoWidgetId};
 use crate::{Widget, draw_text_span};
+use ftui_core::event::{MouseButton, MouseEvent, MouseEventKind};
 use ftui_core::geometry::Rect;
 use ftui_render::frame::{Frame, HitId, HitRegion};
 use ftui_style::Style;
@@ -540,6 +542,90 @@ impl Tree {
         }
         Some(current)
     }
+
+    /// Handle a mouse event for this tree.
+    ///
+    /// # Hit data convention
+    ///
+    /// The hit data (`u64`) encodes the flattened visible row index. When the
+    /// tree renders with a `hit_id`, each visible row registers
+    /// `HitRegion::Content` with `data = visible_row_index as u64`.
+    ///
+    /// Clicking a parent node (one with children) toggles its expanded state
+    /// and returns `Activated`. Clicking a leaf returns `Selected`.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` — the mouse event from the terminal
+    /// * `hit` — result of `frame.hit_test(event.x, event.y)`, if available
+    /// * `expected_id` — the `HitId` this tree was rendered with
+    pub fn handle_mouse(
+        &mut self,
+        event: &MouseEvent,
+        hit: Option<(HitId, HitRegion, u64)>,
+        expected_id: HitId,
+    ) -> MouseResult {
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some((id, HitRegion::Content, data)) = hit {
+                    if id == expected_id {
+                        let index = data as usize;
+                        if let Some(node) = self.node_at_visible_index_mut(index) {
+                            if node.children.is_empty() {
+                                return MouseResult::Selected(index);
+                            }
+                            node.toggle_expanded();
+                            return MouseResult::Activated(index);
+                        }
+                    }
+                }
+                MouseResult::Ignored
+            }
+            _ => MouseResult::Ignored,
+        }
+    }
+
+    /// Get a mutable reference to the node at the given visible (flattened) index.
+    ///
+    /// The traversal order matches `render_node()`: if `show_root` is true the
+    /// root is row 0; otherwise children of the root are the top-level rows.
+    /// Only expanded nodes' children are visited.
+    pub fn node_at_visible_index_mut(&mut self, target: usize) -> Option<&mut TreeNode> {
+        let mut counter = 0usize;
+        if self.show_root {
+            Self::walk_visible_mut(&mut self.root, target, &mut counter)
+        } else if self.root.expanded {
+            for child in &mut self.root.children {
+                if let Some(node) = Self::walk_visible_mut(child, target, &mut counter) {
+                    return Some(node);
+                }
+            }
+            None
+        } else {
+            None
+        }
+    }
+
+    /// Recursive helper that walks the visible tree to find the node at the
+    /// given flattened index. Returns `Some` if found, `None` otherwise.
+    fn walk_visible_mut<'a>(
+        node: &'a mut TreeNode,
+        target: usize,
+        counter: &mut usize,
+    ) -> Option<&'a mut TreeNode> {
+        if *counter == target {
+            return Some(node);
+        }
+        *counter += 1;
+        if node.expanded {
+            for child in &mut node.children {
+                if let Some(found) = Self::walk_visible_mut(child, target, counter) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -980,5 +1066,198 @@ mod tests {
         let mut tree = Tree::new(TreeNode::new("root"));
         let wrong_snapshot: Box<dyn Any + Send> = Box::new(42i32);
         assert!(!tree.restore_snapshot(&*wrong_snapshot));
+    }
+
+    // --- Mouse handling tests ---
+
+    use crate::mouse::MouseResult;
+    use ftui_core::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    #[test]
+    fn tree_click_expands_parent() {
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(
+                    TreeNode::new("a")
+                        .child(TreeNode::new("a1"))
+                        .child(TreeNode::new("a2")),
+                )
+                .child(TreeNode::new("b")),
+        );
+        assert!(tree.root().children()[0].is_expanded());
+
+        // Click on row 1 which is node "a" (a parent node)
+        let event = MouseEvent::new(MouseEventKind::Down(MouseButton::Left), 5, 1);
+        let hit = Some((HitId::new(1), HitRegion::Content, 1u64));
+        let result = tree.handle_mouse(&event, hit, HitId::new(1));
+        assert_eq!(result, MouseResult::Activated(1));
+        assert!(!tree.root().children()[0].is_expanded()); // toggled to collapsed
+    }
+
+    #[test]
+    fn tree_click_selects_leaf() {
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(
+                    TreeNode::new("a")
+                        .child(TreeNode::new("a1"))
+                        .child(TreeNode::new("a2")),
+                )
+                .child(TreeNode::new("b")),
+        );
+
+        // Row 4 is "b" (a leaf): root=0, a=1, a1=2, a2=3, b=4
+        let event = MouseEvent::new(MouseEventKind::Down(MouseButton::Left), 5, 4);
+        let hit = Some((HitId::new(1), HitRegion::Content, 4u64));
+        let result = tree.handle_mouse(&event, hit, HitId::new(1));
+        assert_eq!(result, MouseResult::Selected(4));
+    }
+
+    #[test]
+    fn tree_click_wrong_id_ignored() {
+        let mut tree = Tree::new(TreeNode::new("root").child(TreeNode::new("a")));
+        let event = MouseEvent::new(MouseEventKind::Down(MouseButton::Left), 0, 0);
+        let hit = Some((HitId::new(99), HitRegion::Content, 0u64));
+        let result = tree.handle_mouse(&event, hit, HitId::new(1));
+        assert_eq!(result, MouseResult::Ignored);
+    }
+
+    #[test]
+    fn tree_click_no_hit_ignored() {
+        let mut tree = Tree::new(TreeNode::new("root"));
+        let event = MouseEvent::new(MouseEventKind::Down(MouseButton::Left), 0, 0);
+        let result = tree.handle_mouse(&event, None, HitId::new(1));
+        assert_eq!(result, MouseResult::Ignored);
+    }
+
+    #[test]
+    fn tree_right_click_ignored() {
+        let mut tree = Tree::new(TreeNode::new("root").child(TreeNode::new("a")));
+        let event = MouseEvent::new(MouseEventKind::Down(MouseButton::Right), 0, 0);
+        let hit = Some((HitId::new(1), HitRegion::Content, 0u64));
+        let result = tree.handle_mouse(&event, hit, HitId::new(1));
+        assert_eq!(result, MouseResult::Ignored);
+    }
+
+    #[test]
+    fn tree_node_at_visible_index_with_show_root() {
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(
+                    TreeNode::new("a")
+                        .child(TreeNode::new("a1"))
+                        .child(TreeNode::new("a2")),
+                )
+                .child(TreeNode::new("b")),
+        );
+
+        // Visible order: root=0, a=1, a1=2, a2=3, b=4
+        assert_eq!(
+            tree.node_at_visible_index_mut(0)
+                .map(|n| n.label().to_string()),
+            Some("root".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(1)
+                .map(|n| n.label().to_string()),
+            Some("a".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(2)
+                .map(|n| n.label().to_string()),
+            Some("a1".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(3)
+                .map(|n| n.label().to_string()),
+            Some("a2".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(4)
+                .map(|n| n.label().to_string()),
+            Some("b".to_string())
+        );
+        assert!(tree.node_at_visible_index_mut(5).is_none());
+    }
+
+    #[test]
+    fn tree_node_at_visible_index_hidden_root() {
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(TreeNode::new("a").child(TreeNode::new("a1")))
+                .child(TreeNode::new("b")),
+        )
+        .with_show_root(false);
+
+        // Root hidden: a=0, a1=1, b=2
+        assert_eq!(
+            tree.node_at_visible_index_mut(0)
+                .map(|n| n.label().to_string()),
+            Some("a".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(1)
+                .map(|n| n.label().to_string()),
+            Some("a1".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(2)
+                .map(|n| n.label().to_string()),
+            Some("b".to_string())
+        );
+        assert!(tree.node_at_visible_index_mut(3).is_none());
+    }
+
+    #[test]
+    fn tree_node_at_visible_index_collapsed() {
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(
+                    TreeNode::new("a")
+                        .with_expanded(false)
+                        .child(TreeNode::new("a1"))
+                        .child(TreeNode::new("a2")),
+                )
+                .child(TreeNode::new("b")),
+        );
+
+        // root=0, a=1 (collapsed, so a1/a2 hidden), b=2
+        assert_eq!(
+            tree.node_at_visible_index_mut(0)
+                .map(|n| n.label().to_string()),
+            Some("root".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(1)
+                .map(|n| n.label().to_string()),
+            Some("a".to_string())
+        );
+        assert_eq!(
+            tree.node_at_visible_index_mut(2)
+                .map(|n| n.label().to_string()),
+            Some("b".to_string())
+        );
+        assert!(tree.node_at_visible_index_mut(3).is_none());
+    }
+
+    #[test]
+    fn tree_click_toggles_collapsed_node() {
+        let mut tree = Tree::new(
+            TreeNode::new("root")
+                .child(
+                    TreeNode::new("a")
+                        .with_expanded(false)
+                        .child(TreeNode::new("a1")),
+                )
+                .child(TreeNode::new("b")),
+        );
+        assert!(!tree.root().children()[0].is_expanded());
+
+        // Click on "a" (row 1) to expand it
+        let event = MouseEvent::new(MouseEventKind::Down(MouseButton::Left), 0, 1);
+        let hit = Some((HitId::new(1), HitRegion::Content, 1u64));
+        let result = tree.handle_mouse(&event, hit, HitId::new(1));
+        assert_eq!(result, MouseResult::Activated(1));
+        assert!(tree.root().children()[0].is_expanded()); // now expanded
     }
 }
