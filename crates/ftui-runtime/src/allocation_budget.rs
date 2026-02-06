@@ -1022,4 +1022,336 @@ mod tests {
         let second = run();
         assert_eq!(first, second);
     }
+
+    // ── BudgetConfig defaults ───────────────────────────────────────
+
+    #[test]
+    fn budget_config_default_values() {
+        let config = BudgetConfig::default();
+        assert!((config.alpha - 0.05).abs() < f64::EPSILON);
+        assert!((config.mu_0 - 0.0).abs() < f64::EPSILON);
+        assert!((config.sigma_sq - 1.0).abs() < f64::EPSILON);
+        assert!((config.cusum_k - 0.5).abs() < f64::EPSILON);
+        assert!((config.cusum_h - 5.0).abs() < f64::EPSILON);
+        assert!((config.lambda - 0.1).abs() < f64::EPSILON);
+        assert_eq!(config.window_size, 100);
+    }
+
+    #[test]
+    fn calibrated_clamps_tiny_sigma() {
+        let config = BudgetConfig::calibrated(0.0, 0.0, 1.0, 0.05);
+        assert!(config.sigma_sq >= SIGMA2_MIN);
+    }
+
+    #[test]
+    fn calibrated_lambda_bounded() {
+        let config = BudgetConfig::calibrated(0.0, 0.001, 1000.0, 0.05);
+        assert!(config.lambda <= 0.5);
+    }
+
+    // ── json_escape ─────────────────────────────────────────────────
+
+    #[test]
+    fn json_escape_special_chars() {
+        assert_eq!(json_escape("hello"), "hello");
+        assert_eq!(json_escape("say \"hi\""), "say \\\"hi\\\"");
+        assert_eq!(json_escape("back\\slash"), "back\\\\slash");
+        assert_eq!(json_escape("new\nline"), "new\\nline");
+        assert_eq!(json_escape("tab\there"), "tab\\there");
+        assert_eq!(json_escape("cr\rhere"), "cr\\rhere");
+    }
+
+    #[test]
+    fn json_escape_control_chars() {
+        let s = "\x01\x02";
+        let escaped = json_escape(s);
+        assert!(escaped.contains("\\u0001"));
+        assert!(escaped.contains("\\u0002"));
+    }
+
+    // ── EvidenceContext ──────────────────────────────────────────────
+
+    #[test]
+    fn evidence_context_prefix_format() {
+        let ctx = EvidenceContext::new("run-42", "inline", 120, 30);
+        let prefix = ctx.prefix(7);
+        assert!(prefix.contains("\"run_id\":\"run-42\""));
+        assert!(prefix.contains("\"event_idx\":7"));
+        assert!(prefix.contains("\"screen_mode\":\"inline\""));
+        assert!(prefix.contains("\"cols\":120"));
+        assert!(prefix.contains("\"rows\":30"));
+    }
+
+    // ── AllocationBudget constructors / accessors ────────────────────
+
+    #[test]
+    fn new_monitor_initial_state() {
+        let monitor = AllocationBudget::new(BudgetConfig::default());
+        assert_eq!(monitor.frames(), 0);
+        assert_eq!(monitor.total_alerts(), 0);
+        assert!((monitor.e_value() - 1.0).abs() < f64::EPSILON);
+        assert!((monitor.cusum_plus() - 0.0).abs() < f64::EPSILON);
+        assert!((monitor.cusum_minus() - 0.0).abs() < f64::EPSILON);
+        assert!(monitor.ledger().is_empty());
+    }
+
+    #[test]
+    fn running_mean_empty_returns_mu0() {
+        let config = BudgetConfig {
+            mu_0: 42.0,
+            ..Default::default()
+        };
+        let monitor = AllocationBudget::new(config);
+        assert!((monitor.running_mean() - 42.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn running_mean_with_observations() {
+        let mut monitor = AllocationBudget::new(BudgetConfig {
+            mu_0: 0.0,
+            cusum_h: 1000.0,
+            alpha: 1e-20,
+            ..Default::default()
+        });
+        monitor.observe(10.0);
+        monitor.observe(20.0);
+        monitor.observe(30.0);
+        assert!((monitor.running_mean() - 20.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn window_size_enforced() {
+        let config = BudgetConfig {
+            window_size: 5,
+            mu_0: 0.0,
+            cusum_h: 1000.0,
+            alpha: 1e-20,
+            ..Default::default()
+        };
+        let mut monitor = AllocationBudget::new(config);
+        for i in 0..20 {
+            monitor.observe(i as f64);
+        }
+        let expected_mean = (15.0 + 16.0 + 17.0 + 18.0 + 19.0) / 5.0;
+        assert!((monitor.running_mean() - expected_mean).abs() < 1e-10);
+    }
+
+    // ── with_evidence_context / set_evidence_context ─────────────────
+
+    #[test]
+    fn with_evidence_context_builder() {
+        let monitor = AllocationBudget::new(BudgetConfig::default()).with_evidence_context(
+            "my-run",
+            "fullscreen",
+            200,
+            50,
+        );
+        let summary = monitor.summary();
+        let ctx = EvidenceContext::new("my-run", "fullscreen", 200, 50);
+        let jsonl = summary.to_jsonl(&ctx, 0);
+        assert!(jsonl.contains("\"run_id\":\"my-run\""));
+        assert!(jsonl.contains("\"screen_mode\":\"fullscreen\""));
+    }
+
+    #[test]
+    fn set_evidence_context_mutates() {
+        let mut monitor = AllocationBudget::new(BudgetConfig::default());
+        monitor.set_evidence_context("new-run", "alt", 160, 40);
+        monitor.observe(1.0);
+        assert_eq!(monitor.frames(), 1);
+    }
+
+    // ── Alert resets state ──────────────────────────────────────────
+
+    #[test]
+    fn alert_resets_cusum_and_evalue() {
+        let config = BudgetConfig {
+            alpha: 0.05,
+            mu_0: 0.0,
+            sigma_sq: 1.0,
+            lambda: 0.5,
+            cusum_k: 0.5,
+            cusum_h: 100.0,
+            ..Default::default()
+        };
+        let mut monitor = AllocationBudget::new(config);
+        let mut alert_seen = false;
+        for _ in 0..100 {
+            if monitor.observe(10.0).is_some() {
+                alert_seen = true;
+                break;
+            }
+        }
+        assert!(alert_seen, "should have triggered alert");
+        assert!((monitor.e_value() - 1.0).abs() < f64::EPSILON);
+        assert!((monitor.cusum_plus() - 0.0).abs() < f64::EPSILON);
+        assert!((monitor.cusum_minus() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn alert_increments_total_alerts() {
+        let config = BudgetConfig {
+            alpha: 0.05,
+            mu_0: 0.0,
+            sigma_sq: 1.0,
+            lambda: 0.5,
+            cusum_k: 0.5,
+            cusum_h: 100.0,
+            ..Default::default()
+        };
+        let mut monitor = AllocationBudget::new(config);
+        assert_eq!(monitor.total_alerts(), 0);
+        for _ in 0..100 {
+            if monitor.observe(10.0).is_some() {
+                break;
+            }
+        }
+        assert!(monitor.total_alerts() >= 1);
+    }
+
+    #[test]
+    fn alert_contains_expected_fields() {
+        let config = BudgetConfig {
+            alpha: 0.05,
+            mu_0: 0.0,
+            sigma_sq: 1.0,
+            lambda: 0.5,
+            cusum_k: 0.5,
+            cusum_h: 100.0,
+            ..Default::default()
+        };
+        let mut monitor = AllocationBudget::new(config);
+        let mut alert = None;
+        for _ in 0..100 {
+            if let Some(a) = monitor.observe(10.0) {
+                alert = Some(a);
+                break;
+            }
+        }
+        let alert = alert.expect("should have triggered");
+        assert!(alert.frame > 0);
+        assert!(alert.e_process_triggered);
+        assert!(alert.e_value >= 1.0 / 0.05);
+        assert!(alert.estimated_shift > 0.0);
+    }
+
+    // ── CUSUM downward shift ────────────────────────────────────────
+
+    #[test]
+    fn cusum_minus_detects_decrease() {
+        let config = BudgetConfig {
+            mu_0: 100.0,
+            sigma_sq: 4.0,
+            cusum_k: 2.5,
+            cusum_h: 5.0,
+            lambda: 0.01,
+            alpha: 1e-100,
+            ..Default::default()
+        };
+        let mut monitor = AllocationBudget::new(config);
+        for _ in 0..10 {
+            monitor.observe(90.0);
+        }
+        assert!(
+            monitor.cusum_minus() > 0.0,
+            "CUSUM- should be positive for downward shift"
+        );
+    }
+
+    // ── Summary fields ──────────────────────────────────────────────
+
+    #[test]
+    fn summary_initial_state() {
+        let monitor = AllocationBudget::new(BudgetConfig {
+            mu_0: 25.0,
+            ..Default::default()
+        });
+        let summary = monitor.summary();
+        assert_eq!(summary.frames, 0);
+        assert_eq!(summary.total_alerts, 0);
+        assert!((summary.e_value - 1.0).abs() < f64::EPSILON);
+        assert!((summary.mu_0 - 25.0).abs() < f64::EPSILON);
+        assert!((summary.drift - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn budget_summary_clone_debug() {
+        let summary = BudgetSummary {
+            frames: 10,
+            total_alerts: 1,
+            e_value: 2.5,
+            cusum_plus: 3.0,
+            cusum_minus: 1.0,
+            running_mean: 55.0,
+            mu_0: 50.0,
+            drift: 5.0,
+        };
+        let cloned = summary.clone();
+        assert_eq!(cloned.frames, 10);
+        assert!((cloned.drift - 5.0).abs() < f64::EPSILON);
+        let dbg = format!("{:?}", summary);
+        assert!(dbg.contains("BudgetSummary"));
+    }
+
+    #[test]
+    fn budget_evidence_clone_debug() {
+        let ev = BudgetEvidence {
+            frame: 5,
+            x: 12.0,
+            residual: 2.0,
+            cusum_plus: 1.5,
+            cusum_minus: 0.3,
+            e_value: 1.1,
+            alert: false,
+        };
+        let cloned = ev.clone();
+        assert_eq!(cloned.frame, 5);
+        assert!(!cloned.alert);
+        let dbg = format!("{:?}", ev);
+        assert!(dbg.contains("BudgetEvidence"));
+    }
+
+    #[test]
+    fn budget_alert_clone_debug() {
+        let alert = BudgetAlert {
+            frame: 50,
+            estimated_shift: 3.5,
+            e_value: 25.0,
+            cusum_plus: 8.0,
+            e_process_triggered: true,
+            cusum_triggered: true,
+        };
+        let cloned = alert.clone();
+        assert_eq!(cloned.frame, 50);
+        assert!(cloned.e_process_triggered);
+        let dbg = format!("{:?}", alert);
+        assert!(dbg.contains("BudgetAlert"));
+    }
+
+    // ── Reset clears config_logged ──────────────────────────────────
+
+    #[test]
+    fn reset_allows_config_re_logging() {
+        let mut monitor = AllocationBudget::new(BudgetConfig::default());
+        monitor.observe(1.0);
+        monitor.reset();
+        monitor.observe(2.0);
+        assert_eq!(monitor.frames(), 1);
+        assert_eq!(monitor.ledger().len(), 1);
+    }
+
+    // ── frames counter ──────────────────────────────────────────────
+
+    #[test]
+    fn frames_increments_per_observe() {
+        let mut monitor = AllocationBudget::new(BudgetConfig {
+            cusum_h: 1000.0,
+            alpha: 1e-20,
+            ..Default::default()
+        });
+        for _ in 0..7 {
+            monitor.observe(0.0);
+        }
+        assert_eq!(monitor.frames(), 7);
+    }
 }
