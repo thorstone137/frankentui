@@ -384,4 +384,204 @@ mod tests {
             _ => panic!("Expected SubSector"),
         }
     }
+
+    #[test]
+    fn parse_child_node_zero() {
+        match parse_child(0) {
+            NodeChild::Node(n) => assert_eq!(n, 0),
+            _ => panic!("Expected Node(0)"),
+        }
+    }
+
+    #[test]
+    fn parse_child_subsector_zero() {
+        match parse_child(NF_SUBSECTOR) {
+            NodeChild::SubSector(s) => assert_eq!(s, 0),
+            _ => panic!("Expected SubSector(0)"),
+        }
+    }
+
+    #[test]
+    fn linedef_is_two_sided() {
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: ML_TWOSIDED, special: 0,
+            tag: 0, front_sidedef: None, back_sidedef: None,
+        };
+        assert!(ld.is_two_sided());
+    }
+
+    #[test]
+    fn linedef_not_two_sided() {
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: 0, special: 0,
+            tag: 0, front_sidedef: None, back_sidedef: None,
+        };
+        assert!(!ld.is_two_sided());
+    }
+
+    #[test]
+    fn linedef_is_blocking() {
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: ML_BLOCKING, special: 0,
+            tag: 0, front_sidedef: None, back_sidedef: None,
+        };
+        assert!(ld.is_blocking());
+    }
+
+    #[test]
+    fn linedef_not_blocking() {
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: ML_TWOSIDED, special: 0,
+            tag: 0, front_sidedef: None, back_sidedef: None,
+        };
+        assert!(!ld.is_blocking());
+    }
+
+    #[test]
+    fn linedef_front_sector_some() {
+        let sidedefs = vec![SideDef {
+            x_offset: 0.0, y_offset: 0.0,
+            upper_texture: String::new(), lower_texture: String::new(),
+            middle_texture: String::new(), sector: 3,
+        }];
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: 0, special: 0, tag: 0,
+            front_sidedef: Some(0), back_sidedef: None,
+        };
+        assert_eq!(ld.front_sector(&sidedefs), Some(3));
+    }
+
+    #[test]
+    fn linedef_front_sector_none() {
+        let sidedefs: Vec<SideDef> = vec![];
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: 0, special: 0, tag: 0,
+            front_sidedef: None, back_sidedef: None,
+        };
+        assert_eq!(ld.front_sector(&sidedefs), None);
+    }
+
+    #[test]
+    fn linedef_back_sector_some() {
+        let sidedefs = vec![SideDef {
+            x_offset: 0.0, y_offset: 0.0,
+            upper_texture: String::new(), lower_texture: String::new(),
+            middle_texture: String::new(), sector: 7,
+        }];
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: 0, special: 0, tag: 0,
+            front_sidedef: None, back_sidedef: Some(0),
+        };
+        assert_eq!(ld.back_sector(&sidedefs), Some(7));
+    }
+
+    #[test]
+    fn linedef_combined_flags() {
+        let ld = LineDef {
+            v1: 0, v2: 1, flags: ML_BLOCKING | ML_TWOSIDED,
+            special: 0, tag: 0,
+            front_sidedef: None, back_sidedef: None,
+        };
+        assert!(ld.is_blocking());
+        assert!(ld.is_two_sided());
+    }
+
+    #[test]
+    fn sector_is_sky_ceiling() {
+        let s = Sector {
+            floor_height: 0.0, ceiling_height: 128.0,
+            floor_texture: String::new(), ceiling_texture: "F_SKY1".into(),
+            light_level: 200, special: 0, tag: 0,
+        };
+        assert!(s.is_sky_ceiling());
+    }
+
+    #[test]
+    fn sector_not_sky_ceiling() {
+        let s = Sector {
+            floor_height: 0.0, ceiling_height: 128.0,
+            floor_texture: String::new(), ceiling_texture: "FLAT1".into(),
+            light_level: 200, special: 0, tag: 0,
+        };
+        assert!(!s.is_sky_ceiling());
+    }
+
+    #[test]
+    fn point_in_subsector_empty_nodes() {
+        let map = DoomMap {
+            name: "TEST".into(),
+            vertices: vec![], linedefs: vec![], sidedefs: vec![],
+            sectors: vec![], segs: vec![], subsectors: vec![],
+            nodes: vec![], things: vec![],
+        };
+        assert_eq!(map.point_in_subsector(0.0, 0.0), 0);
+    }
+
+    #[test]
+    fn vertex_coords() {
+        let v = Vertex { x: 10.5, y: -20.3 };
+        assert!((v.x - 10.5).abs() < f32::EPSILON);
+        assert!((v.y + 20.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn thing_fields() {
+        let t = Thing {
+            x: 100.0, y: 200.0, angle: 1.5,
+            thing_type: THING_PLAYER1, flags: 0,
+        };
+        assert_eq!(t.thing_type, THING_PLAYER1);
+        assert!((t.angle - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn seg_fields() {
+        let s = Seg {
+            v1: 0, v2: 1, angle: 3.14,
+            linedef: 5, direction: 0, offset: 10.0,
+        };
+        assert_eq!(s.linedef, 5);
+        assert_eq!(s.direction, 0);
+    }
+
+    #[test]
+    fn subsector_fields() {
+        let ss = SubSector { num_segs: 4, first_seg: 10 };
+        assert_eq!(ss.num_segs, 4);
+        assert_eq!(ss.first_seg, 10);
+    }
+
+    #[test]
+    fn player_start_found() {
+        let map = DoomMap {
+            name: "TEST".into(),
+            vertices: vec![], linedefs: vec![], sidedefs: vec![],
+            sectors: vec![], segs: vec![], subsectors: vec![],
+            nodes: vec![],
+            things: vec![
+                Thing { x: 50.0, y: 60.0, angle: 0.0, thing_type: 0, flags: 0 },
+                Thing { x: 100.0, y: 200.0, angle: 1.5, thing_type: THING_PLAYER1, flags: 0x07 },
+            ],
+        };
+        let start = map.player_start();
+        assert!(start.is_some());
+        let (x, y, a) = start.unwrap();
+        assert!((x - 100.0).abs() < f32::EPSILON);
+        assert!((y - 200.0).abs() < f32::EPSILON);
+        assert!((a - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn player_start_not_found() {
+        let map = DoomMap {
+            name: "TEST".into(),
+            vertices: vec![], linedefs: vec![], sidedefs: vec![],
+            sectors: vec![], segs: vec![], subsectors: vec![],
+            nodes: vec![],
+            things: vec![
+                Thing { x: 50.0, y: 60.0, angle: 0.0, thing_type: 0, flags: 0 },
+            ],
+        };
+        assert!(map.player_start().is_none());
+    }
 }
