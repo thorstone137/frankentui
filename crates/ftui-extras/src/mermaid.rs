@@ -1362,6 +1362,9 @@ pub enum DiagramType {
     Er,
     Mindmap,
     Pie,
+    GitGraph,
+    Journey,
+    Requirement,
     Unknown,
 }
 
@@ -1377,6 +1380,9 @@ impl DiagramType {
             Self::Er => "er",
             Self::Mindmap => "mindmap",
             Self::Pie => "pie",
+            Self::GitGraph => "gitgraph",
+            Self::Journey => "journey",
+            Self::Requirement => "requirement",
             Self::Unknown => "unknown",
         }
     }
@@ -1712,6 +1718,38 @@ pub const FEATURE_MATRIX: &[FeatureMatrixEntry] = &[
         fixture: None,
         note: "RenderPlan selection",
     },
+    // ── gitGraph ─────────────────────────────────────────────────────
+    FeatureMatrixEntry {
+        family: DiagramType::GitGraph,
+        feature: "commit / branch / checkout / merge",
+        level: MermaidSupportLevel::Partial,
+        fixture: None,
+        note: "parser complete; layout WIP",
+    },
+    FeatureMatrixEntry {
+        family: DiagramType::GitGraph,
+        feature: "cherry-pick",
+        level: MermaidSupportLevel::Partial,
+        fixture: None,
+        note: "parsed; render TBD",
+    },
+    // ── Journey ─────────────────────────────────────────────────────
+    FeatureMatrixEntry {
+        family: DiagramType::Journey,
+        feature: "sections + tasks + scores",
+        level: MermaidSupportLevel::Partial,
+        fixture: None,
+        note: "parser complete; layout WIP",
+    },
+    // ── requirementDiagram ──────────────────────────────────────────
+    FeatureMatrixEntry {
+        family: DiagramType::Requirement,
+        feature: "requirements + elements + relations",
+        level: MermaidSupportLevel::Partial,
+        fixture: None,
+        note: "parser complete; layout WIP",
+    },
+    // ── Cross-cutting ───────────────────────────────────────────────
     FeatureMatrixEntry {
         family: DiagramType::Unknown,
         feature: "interactive selection + highlights",
@@ -2151,6 +2189,9 @@ pub struct MermaidCompatibilityMatrix {
     pub er: MermaidSupportLevel,
     pub mindmap: MermaidSupportLevel,
     pub pie: MermaidSupportLevel,
+    pub gitgraph: MermaidSupportLevel,
+    pub journey: MermaidSupportLevel,
+    pub requirement: MermaidSupportLevel,
 }
 
 impl MermaidCompatibilityMatrix {
@@ -2166,6 +2207,9 @@ impl MermaidCompatibilityMatrix {
             er: MermaidSupportLevel::Supported,
             mindmap: MermaidSupportLevel::Partial,
             pie: MermaidSupportLevel::Partial,
+            gitgraph: MermaidSupportLevel::Partial,
+            journey: MermaidSupportLevel::Partial,
+            requirement: MermaidSupportLevel::Partial,
         }
     }
 
@@ -2180,6 +2224,9 @@ impl MermaidCompatibilityMatrix {
             DiagramType::Er => self.er,
             DiagramType::Mindmap => self.mindmap,
             DiagramType::Pie => self.pie,
+            DiagramType::GitGraph => self.gitgraph,
+            DiagramType::Journey => self.journey,
+            DiagramType::Requirement => self.requirement,
             DiagramType::Unknown => MermaidSupportLevel::Unsupported,
         }
     }
@@ -2196,6 +2243,9 @@ impl Default for MermaidCompatibilityMatrix {
             er: MermaidSupportLevel::Supported,
             mindmap: MermaidSupportLevel::Partial,
             pie: MermaidSupportLevel::Partial,
+            gitgraph: MermaidSupportLevel::Partial,
+            journey: MermaidSupportLevel::Partial,
+            requirement: MermaidSupportLevel::Partial,
         }
     }
 }
@@ -3368,6 +3418,183 @@ pub fn normalize_ast_to_ir(
                     )),
                 }
             }
+            Statement::GitGraphCommit(commit) => {
+                // Create a node for each commit
+                let auto_id = format!(
+                    "commit_L{}_C{}",
+                    commit.span.start.line, commit.span.start.col
+                );
+                let id = commit.id.clone().unwrap_or(auto_id);
+                let label = commit
+                    .message
+                    .as_deref()
+                    .or(commit.tag.as_deref())
+                    .or(commit.id.as_deref());
+                let _ = upsert_node(
+                    &id,
+                    label,
+                    NodeShape::Circle,
+                    commit.span,
+                    false,
+                    idx,
+                    &mut node_map,
+                    &mut node_drafts,
+                    &mut implicit_warned,
+                    &mut warnings,
+                );
+                if let Some(cluster_idx) = cluster_stack.last().copied() {
+                    cluster_drafts[cluster_idx].members.push(id);
+                }
+            }
+            Statement::GitGraphBranch(branch) => {
+                // Branches create implicit subgraph containers
+                let title = Some(branch.name.clone());
+                let cid = IrClusterId(cluster_drafts.len());
+                cluster_drafts.push(ClusterDraft {
+                    id: cid,
+                    title,
+                    members: Vec::new(),
+                    span: branch.span,
+                });
+            }
+            Statement::GitGraphCheckout(_) | Statement::GitGraphCherryPick(_) => {
+                // These affect state tracking but don't produce IR directly
+            }
+            Statement::GitGraphMerge(merge) => {
+                // Merge creates an edge from merge branch to current position
+                let from = normalize_id(&merge.branch);
+                if !from.is_empty() {
+                    // Create a merge node if id is specified
+                    let merge_node = merge.id.clone().unwrap_or_else(|| {
+                        format!("merge_L{}_C{}", merge.span.start.line, merge.span.start.col)
+                    });
+                    let label = merge.tag.as_deref();
+                    let _ = upsert_node(
+                        &merge_node,
+                        label,
+                        NodeShape::Circle,
+                        merge.span,
+                        false,
+                        idx,
+                        &mut node_map,
+                        &mut node_drafts,
+                        &mut implicit_warned,
+                        &mut warnings,
+                    );
+                    edge_drafts.push(EdgeDraft {
+                        from,
+                        from_port: None,
+                        to: merge_node,
+                        to_port: None,
+                        arrow: "-->".to_string(),
+                        label: merge.tag.clone(),
+                        span: merge.span,
+                        insertion_idx: idx,
+                    });
+                }
+            }
+            Statement::JourneySection { name, span } => {
+                // Journey sections become subgraph containers
+                let title = Some(name.clone());
+                let cid = IrClusterId(cluster_drafts.len());
+                cluster_drafts.push(ClusterDraft {
+                    id: cid,
+                    title,
+                    members: Vec::new(),
+                    span: *span,
+                });
+                cluster_stack.push(cluster_drafts.len() - 1);
+            }
+            Statement::JourneyTask(task) => {
+                let id = format!("journey_L{}_C{}", task.span.start.line, task.span.start.col);
+                let label_text = format!("{} ({})", task.title, task.score);
+                let _ = upsert_node(
+                    &id,
+                    Some(&label_text),
+                    NodeShape::Rect,
+                    task.span,
+                    false,
+                    idx,
+                    &mut node_map,
+                    &mut node_drafts,
+                    &mut implicit_warned,
+                    &mut warnings,
+                );
+                if let Some(cluster_idx) = cluster_stack.last().copied() {
+                    cluster_drafts[cluster_idx].members.push(id);
+                }
+            }
+            Statement::RequirementDef(req) => {
+                let id = req.id.clone().unwrap_or_else(|| normalize_id(&req.name));
+                let label_text = format!("<<{}>>\n{}", req.kind, req.name);
+                let _ = upsert_node(
+                    &id,
+                    Some(&label_text),
+                    NodeShape::Rect,
+                    req.span,
+                    false,
+                    idx,
+                    &mut node_map,
+                    &mut node_drafts,
+                    &mut implicit_warned,
+                    &mut warnings,
+                );
+            }
+            Statement::RequirementElement(elem) => {
+                let id = normalize_id(&elem.name);
+                let _ = upsert_node(
+                    &id,
+                    Some(&elem.name),
+                    NodeShape::Rect,
+                    elem.span,
+                    false,
+                    idx,
+                    &mut node_map,
+                    &mut node_drafts,
+                    &mut implicit_warned,
+                    &mut warnings,
+                );
+            }
+            Statement::RequirementRelation(rel) => {
+                let from = normalize_id(&rel.source);
+                let to = normalize_id(&rel.target);
+                if !from.is_empty() && !to.is_empty() {
+                    upsert_node(
+                        &from,
+                        None,
+                        NodeShape::Rect,
+                        rel.span,
+                        true,
+                        idx,
+                        &mut node_map,
+                        &mut node_drafts,
+                        &mut implicit_warned,
+                        &mut warnings,
+                    );
+                    upsert_node(
+                        &to,
+                        None,
+                        NodeShape::Rect,
+                        rel.span,
+                        true,
+                        idx,
+                        &mut node_map,
+                        &mut node_drafts,
+                        &mut implicit_warned,
+                        &mut warnings,
+                    );
+                    edge_drafts.push(EdgeDraft {
+                        from,
+                        from_port: None,
+                        to,
+                        to_port: None,
+                        arrow: "-->".to_string(),
+                        label: Some(rel.relation_type.clone()),
+                        span: rel.span,
+                        insertion_idx: idx,
+                    });
+                }
+            }
             Statement::Raw { text, span } => {
                 if ast.diagram_type == DiagramType::Pie {
                     if is_pie_show_data_line(text) {
@@ -4008,6 +4235,76 @@ pub struct MindmapNode {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
+pub struct GitGraphCommit {
+    pub id: Option<String>,
+    pub message: Option<String>,
+    pub tag: Option<String>,
+    pub commit_type: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitGraphBranch {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitGraphCheckout {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitGraphMerge {
+    pub branch: String,
+    pub id: Option<String>,
+    pub tag: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitGraphCherryPick {
+    pub commit_id: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct JourneyTask {
+    pub title: String,
+    pub score: u8,
+    pub actors: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequirementDef {
+    pub kind: String,
+    pub name: String,
+    pub id: Option<String>,
+    pub text: Option<String>,
+    pub risk: Option<String>,
+    pub verify_method: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequirementRelation {
+    pub source: String,
+    pub target: String,
+    pub relation_type: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequirementElement {
+    pub name: String,
+    pub element_type: Option<String>,
+    pub docref: Option<String>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
     Click,
@@ -4079,6 +4376,19 @@ pub enum Statement {
     GanttTask(GanttTask),
     PieEntry(PieEntry),
     MindmapNode(MindmapNode),
+    GitGraphCommit(GitGraphCommit),
+    GitGraphBranch(GitGraphBranch),
+    GitGraphCheckout(GitGraphCheckout),
+    GitGraphMerge(GitGraphMerge),
+    GitGraphCherryPick(GitGraphCherryPick),
+    JourneySection {
+        name: String,
+        span: Span,
+    },
+    JourneyTask(JourneyTask),
+    RequirementDef(RequirementDef),
+    RequirementRelation(RequirementRelation),
+    RequirementElement(RequirementElement),
     Raw {
         text: String,
         span: Span,
@@ -5136,6 +5446,8 @@ pub fn parse_with_diagnostics(input: &str) -> MermaidParse {
     let mut pending_note: Option<StateNotePending> = None;
     // Track ER entity attribute block: `ENTITY { type name constraint ... }`
     let mut er_entity_block: Option<String> = None;
+    let mut req_block: Option<RequirementDef> = None;
+    let mut elem_block: Option<RequirementElement> = None;
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
@@ -5192,6 +5504,9 @@ pub fn parse_with_diagnostics(input: &str) -> MermaidParse {
                     "erDiagram",
                     "mindmap",
                     "pie",
+                    "gitGraph",
+                    "journey",
+                    "requirementDiagram",
                 ]),
             );
             diagram_type = DiagramType::Unknown;
@@ -5445,6 +5760,38 @@ pub fn parse_with_diagnostics(input: &str) -> MermaidParse {
                     });
                 }
             }
+            DiagramType::GitGraph => {
+                if let Some(stmt) = parse_gitgraph_line(trimmed, span) {
+                    statements.push(stmt);
+                } else {
+                    statements.push(Statement::Raw {
+                        text: normalize_ws(trimmed),
+                        span,
+                    });
+                }
+            }
+            DiagramType::Journey => {
+                if let Some(stmt) = parse_journey_line(trimmed, raw_line, span) {
+                    statements.push(stmt);
+                } else {
+                    statements.push(Statement::Raw {
+                        text: normalize_ws(trimmed),
+                        span,
+                    });
+                }
+            }
+            DiagramType::Requirement => {
+                if let Some(stmt) =
+                    parse_requirement_line(trimmed, span, &mut req_block, &mut elem_block)
+                {
+                    statements.push(stmt);
+                } else {
+                    statements.push(Statement::Raw {
+                        text: normalize_ws(trimmed),
+                        span,
+                    });
+                }
+            }
             DiagramType::Unknown => {
                 statements.push(Statement::Raw {
                     text: normalize_ws(trimmed),
@@ -5452,6 +5799,14 @@ pub fn parse_with_diagnostics(input: &str) -> MermaidParse {
                 });
             }
         }
+    }
+
+    // Close any pending requirement/element block at EOF
+    if let Some(req) = req_block.take() {
+        statements.push(Statement::RequirementDef(req));
+    }
+    if let Some(elem) = elem_block.take() {
+        statements.push(Statement::RequirementElement(elem));
     }
 
     MermaidParse {
@@ -5897,6 +6252,16 @@ fn statement_span(statement: &Statement) -> Span {
         Statement::GanttTask(task) => task.span,
         Statement::PieEntry(entry) => entry.span,
         Statement::MindmapNode(node) => node.span,
+        Statement::GitGraphCommit(c) => c.span,
+        Statement::GitGraphBranch(b) => b.span,
+        Statement::GitGraphCheckout(c) => c.span,
+        Statement::GitGraphMerge(m) => m.span,
+        Statement::GitGraphCherryPick(c) => c.span,
+        Statement::JourneySection { span, .. } => *span,
+        Statement::JourneyTask(t) => t.span,
+        Statement::RequirementDef(r) => r.span,
+        Statement::RequirementRelation(r) => r.span,
+        Statement::RequirementElement(e) => e.span,
         Statement::Raw { span, .. } => *span,
     }
 }
@@ -6538,6 +6903,15 @@ fn parse_header(line: &str) -> Option<(DiagramType, Option<GraphDirection>)> {
     if lower.starts_with("pie") {
         return Some((DiagramType::Pie, None));
     }
+    if lower.starts_with("gitgraph") {
+        return Some((DiagramType::GitGraph, None));
+    }
+    if lower.starts_with("journey") {
+        return Some((DiagramType::Journey, None));
+    }
+    if lower.starts_with("requirementdiagram") {
+        return Some((DiagramType::Requirement, None));
+    }
     None
 }
 
@@ -6868,6 +7242,369 @@ fn split_er_label(text: &str) -> (Option<&str>, &str) {
     }
     // Fallback: try standard |label| syntax.
     split_label(trimmed)
+}
+
+fn parse_gitgraph_line(trimmed: &str, span: Span) -> Option<Statement> {
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("commit") {
+        let mut id = None;
+        let mut message = None;
+        let mut tag = None;
+        let mut commit_type = None;
+        let rest = trimmed["commit".len()..].trim();
+        // Parse key:value pairs like id: "abc" tag: "v1" type: HIGHLIGHT
+        let mut remaining = rest;
+        while !remaining.is_empty() {
+            remaining = remaining.trim_start();
+            if remaining.starts_with("id:") {
+                remaining = remaining["id:".len()..].trim_start();
+                if let Some(val) = extract_quoted_or_word(remaining) {
+                    id = Some(val.0.to_string());
+                    remaining = val.1;
+                }
+            } else if remaining.starts_with("msg:") || remaining.starts_with("message:") {
+                let skip = if remaining.starts_with("msg:") {
+                    "msg:".len()
+                } else {
+                    "message:".len()
+                };
+                remaining = remaining[skip..].trim_start();
+                if let Some(val) = extract_quoted_or_word(remaining) {
+                    message = Some(val.0.to_string());
+                    remaining = val.1;
+                }
+            } else if remaining.starts_with("tag:") {
+                remaining = remaining["tag:".len()..].trim_start();
+                if let Some(val) = extract_quoted_or_word(remaining) {
+                    tag = Some(val.0.to_string());
+                    remaining = val.1;
+                }
+            } else if remaining.starts_with("type:") {
+                remaining = remaining["type:".len()..].trim_start();
+                if let Some(val) = extract_quoted_or_word(remaining) {
+                    commit_type = Some(val.0.to_string());
+                    remaining = val.1;
+                }
+            } else {
+                // Skip unknown token
+                if let Some(pos) = remaining.find(char::is_whitespace) {
+                    remaining = &remaining[pos..];
+                } else {
+                    break;
+                }
+            }
+        }
+        return Some(Statement::GitGraphCommit(GitGraphCommit {
+            id,
+            message,
+            tag,
+            commit_type,
+            span,
+        }));
+    }
+    if lower.starts_with("branch") {
+        let name = trimmed["branch".len()..].trim();
+        if !name.is_empty() {
+            return Some(Statement::GitGraphBranch(GitGraphBranch {
+                name: normalize_ws(name),
+                span,
+            }));
+        }
+    }
+    if lower.starts_with("checkout") || lower.starts_with("switch") {
+        let skip = if lower.starts_with("checkout") {
+            "checkout".len()
+        } else {
+            "switch".len()
+        };
+        let name = trimmed[skip..].trim();
+        if !name.is_empty() {
+            return Some(Statement::GitGraphCheckout(GitGraphCheckout {
+                name: normalize_ws(name),
+                span,
+            }));
+        }
+    }
+    if lower.starts_with("merge") {
+        let rest = trimmed["merge".len()..].trim();
+        // Parse: merge <branch> [id: "x"] [tag: "y"]
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let branch = parts.next().unwrap_or("").trim();
+        if !branch.is_empty() {
+            let mut id = None;
+            let mut tag = None;
+            if let Some(extra) = parts.next() {
+                let mut remaining = extra.trim();
+                while !remaining.is_empty() {
+                    remaining = remaining.trim_start();
+                    if remaining.starts_with("id:") {
+                        remaining = remaining["id:".len()..].trim_start();
+                        if let Some(val) = extract_quoted_or_word(remaining) {
+                            id = Some(val.0.to_string());
+                            remaining = val.1;
+                        }
+                    } else if remaining.starts_with("tag:") {
+                        remaining = remaining["tag:".len()..].trim_start();
+                        if let Some(val) = extract_quoted_or_word(remaining) {
+                            tag = Some(val.0.to_string());
+                            remaining = val.1;
+                        }
+                    } else {
+                        if let Some(pos) = remaining.find(char::is_whitespace) {
+                            remaining = &remaining[pos..];
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            return Some(Statement::GitGraphMerge(GitGraphMerge {
+                branch: normalize_ws(branch),
+                id,
+                tag,
+                span,
+            }));
+        }
+    }
+    if lower.starts_with("cherry-pick") {
+        let rest = trimmed["cherry-pick".len()..].trim();
+        let mut remaining = rest;
+        let mut commit_id = String::new();
+        while !remaining.is_empty() {
+            remaining = remaining.trim_start();
+            if remaining.starts_with("id:") {
+                remaining = remaining["id:".len()..].trim_start();
+                if let Some(val) = extract_quoted_or_word(remaining) {
+                    commit_id = val.0.to_string();
+                    remaining = val.1;
+                }
+            } else {
+                if let Some(pos) = remaining.find(char::is_whitespace) {
+                    remaining = &remaining[pos..];
+                } else {
+                    break;
+                }
+            }
+        }
+        if !commit_id.is_empty() {
+            return Some(Statement::GitGraphCherryPick(GitGraphCherryPick {
+                commit_id,
+                span,
+            }));
+        }
+    }
+    None
+}
+
+/// Extract a quoted string or bare word from the start of `input`.
+/// Returns (value, remaining) or None.
+fn extract_quoted_or_word(input: &str) -> Option<(&str, &str)> {
+    let input = input.trim_start();
+    if let Some(stripped) = input.strip_prefix('"') {
+        let end = stripped.find('"')?;
+        Some((&stripped[..end], &stripped[end + 1..]))
+    } else {
+        let end = input.find(char::is_whitespace).unwrap_or(input.len());
+        if end == 0 {
+            return None;
+        }
+        Some((&input[..end], &input[end..]))
+    }
+}
+
+fn parse_journey_line(trimmed: &str, line: &str, span: Span) -> Option<Statement> {
+    let lower = trimmed.to_ascii_lowercase();
+    // Section header: "section <name>"
+    if lower.starts_with("section") {
+        let rest = &line[line.to_ascii_lowercase().find("section").unwrap() + "section".len()..];
+        let name = rest.trim();
+        if !name.is_empty() {
+            return Some(Statement::JourneySection {
+                name: normalize_ws(name),
+                span,
+            });
+        }
+    }
+    // Title line (handled as Raw — the IR normalization stage can pick it up)
+    if lower.starts_with("title") {
+        return None; // Let Raw handle it
+    }
+    // Task line: "<title>: <score>: <actor1>[, <actor2>, ...]"
+    if let Some(first_colon) = trimmed.find(':') {
+        let title = trimmed[..first_colon].trim();
+        let rest = trimmed[first_colon + 1..].trim();
+        // Parse score and actors
+        let mut parts = rest.splitn(2, ':');
+        let score_str = parts.next().unwrap_or("").trim();
+        let actors_str = parts.next().unwrap_or("").trim();
+        if let Ok(score) = score_str.parse::<u8>() {
+            let actors: Vec<String> = if actors_str.is_empty() {
+                Vec::new()
+            } else {
+                actors_str
+                    .split(',')
+                    .map(|a| normalize_ws(a.trim()))
+                    .filter(|a| !a.is_empty())
+                    .collect()
+            };
+            if !title.is_empty() {
+                return Some(Statement::JourneyTask(JourneyTask {
+                    title: normalize_ws(title),
+                    score,
+                    actors,
+                    span,
+                }));
+            }
+        }
+    }
+    None
+}
+
+fn parse_requirement_line(
+    trimmed: &str,
+    span: Span,
+    req_block: &mut Option<RequirementDef>,
+    elem_block: &mut Option<RequirementElement>,
+) -> Option<Statement> {
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Close a requirement/element block
+    if trimmed == "}" {
+        if let Some(req) = req_block.take() {
+            return Some(Statement::RequirementDef(req));
+        }
+        if let Some(elem) = elem_block.take() {
+            return Some(Statement::RequirementElement(elem));
+        }
+        return None;
+    }
+
+    // Inside a requirement block: parse attributes
+    if let Some(req) = req_block {
+        if lower.starts_with("id:") {
+            req.id = Some(normalize_ws(trimmed["id:".len()..].trim()));
+        } else if lower.starts_with("text:") {
+            req.text = Some(normalize_ws(trimmed["text:".len()..].trim()));
+        } else if lower.starts_with("risk:") {
+            req.risk = Some(normalize_ws(trimmed["risk:".len()..].trim()));
+        } else if lower.starts_with("verifymethod:") || lower.starts_with("verifymethod :") {
+            let skip = if lower.starts_with("verifymethod:") {
+                "verifymethod:".len()
+            } else {
+                "verifymethod :".len()
+            };
+            req.verify_method = Some(normalize_ws(trimmed[skip..].trim()));
+        }
+        return None;
+    }
+
+    // Inside an element block: parse attributes
+    if let Some(elem) = elem_block {
+        if lower.starts_with("type:") {
+            elem.element_type = Some(normalize_ws(trimmed["type:".len()..].trim()));
+        } else if lower.starts_with("docref:") {
+            elem.docref = Some(normalize_ws(trimmed["docref:".len()..].trim()));
+        }
+        return None;
+    }
+
+    // Requirement definition start
+    let req_kinds = [
+        "requirement",
+        "functionalrequirement",
+        "interfacerequirement",
+        "performancerequirement",
+        "physicalrequirement",
+        "designconstraint",
+    ];
+    for kind in &req_kinds {
+        if lower.starts_with(kind) {
+            let rest = trimmed[kind.len()..].trim();
+            // Parse: <kind> <name> { or <kind> "<name>" {
+            let name_part = rest.trim_end_matches('{').trim();
+            let name = name_part.trim_matches('"');
+            if !name.is_empty() {
+                let has_brace = rest.ends_with('{');
+                let def = RequirementDef {
+                    kind: kind.to_string(),
+                    name: normalize_ws(name),
+                    id: None,
+                    text: None,
+                    risk: None,
+                    verify_method: None,
+                    span,
+                };
+                if has_brace {
+                    *req_block = Some(def);
+                    return None;
+                }
+                return Some(Statement::RequirementDef(def));
+            }
+        }
+    }
+
+    // Element definition start
+    if lower.starts_with("element") {
+        let rest = trimmed["element".len()..].trim();
+        let name_part = rest.trim_end_matches('{').trim();
+        let name = name_part.trim_matches('"');
+        if !name.is_empty() {
+            let has_brace = rest.ends_with('{');
+            let elem = RequirementElement {
+                name: normalize_ws(name),
+                element_type: None,
+                docref: None,
+                span,
+            };
+            if has_brace {
+                *elem_block = Some(elem);
+                return None;
+            }
+            return Some(Statement::RequirementElement(elem));
+        }
+    }
+
+    // Relationship: <source> - <type> -> <target>
+    let relation_types = [
+        "traces",
+        "copies",
+        "derives",
+        "satisfies",
+        "verifies",
+        "refines",
+        "contains",
+    ];
+    for rel in &relation_types {
+        let pattern = format!("- {} ->", rel);
+        if let Some(pos) = lower.find(&pattern) {
+            let source = trimmed[..pos].trim();
+            let target = trimmed[pos + pattern.len()..].trim();
+            if !source.is_empty() && !target.is_empty() {
+                return Some(Statement::RequirementRelation(RequirementRelation {
+                    source: normalize_ws(source),
+                    target: normalize_ws(target),
+                    relation_type: rel.to_string(),
+                    span,
+                }));
+            }
+        }
+        // Also support reversed: <target> <- <type> - <source>
+        let rev_pattern = format!("<- {} -", rel);
+        if let Some(pos) = lower.find(&rev_pattern) {
+            let target = trimmed[..pos].trim();
+            let source = trimmed[pos + rev_pattern.len()..].trim();
+            if !source.is_empty() && !target.is_empty() {
+                return Some(Statement::RequirementRelation(RequirementRelation {
+                    source: normalize_ws(source),
+                    target: normalize_ws(target),
+                    relation_type: rel.to_string(),
+                    span,
+                }));
+            }
+        }
+    }
+
+    None
 }
 
 fn parse_node_id(text: &str) -> Option<String> {
@@ -9543,5 +10280,310 @@ B --> C
             &ir_parse.ir.constraints[1],
             LayoutConstraint::MinLength { .. }
         ));
+    }
+
+    #[test]
+    fn parse_gitgraph_commits() {
+        let input =
+            "gitGraph\n    commit\n    commit id: \"abc\"\n    commit id: \"def\" tag: \"v1\"\n";
+        let ast = parse(input).expect("parse");
+        assert_eq!(ast.diagram_type, DiagramType::GitGraph);
+        let commits: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::GitGraphCommit(_)))
+            .collect();
+        assert_eq!(commits.len(), 3);
+        // Check second commit has id
+        if let Statement::GitGraphCommit(c) = &commits[1] {
+            assert_eq!(c.id.as_deref(), Some("abc"));
+        } else {
+            panic!("expected GitGraphCommit");
+        }
+        // Check third commit has tag
+        if let Statement::GitGraphCommit(c) = &commits[2] {
+            assert_eq!(c.id.as_deref(), Some("def"));
+            assert_eq!(c.tag.as_deref(), Some("v1"));
+        } else {
+            panic!("expected GitGraphCommit");
+        }
+    }
+
+    #[test]
+    fn parse_gitgraph_branch_checkout_merge() {
+        let input = concat!(
+            "gitGraph\n",
+            "    commit\n",
+            "    branch develop\n",
+            "    checkout develop\n",
+            "    commit\n",
+            "    checkout main\n",
+            "    merge develop\n",
+        );
+        let ast = parse(input).expect("parse");
+        assert_eq!(ast.diagram_type, DiagramType::GitGraph);
+        let branches: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::GitGraphBranch(_)))
+            .collect();
+        assert_eq!(branches.len(), 1);
+        if let Statement::GitGraphBranch(b) = &branches[0] {
+            assert_eq!(b.name, "develop");
+        }
+        let checkouts: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::GitGraphCheckout(_)))
+            .collect();
+        assert_eq!(checkouts.len(), 2);
+        let merges: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::GitGraphMerge(_)))
+            .collect();
+        assert_eq!(merges.len(), 1);
+        if let Statement::GitGraphMerge(m) = &merges[0] {
+            assert_eq!(m.branch, "develop");
+        }
+    }
+
+    #[test]
+    fn parse_gitgraph_cherry_pick() {
+        let input =
+            "gitGraph\n    commit id: \"abc\"\n    branch feat\n    cherry-pick id: \"abc\"\n";
+        let ast = parse(input).expect("parse");
+        let cherry_picks: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::GitGraphCherryPick(_)))
+            .collect();
+        assert_eq!(cherry_picks.len(), 1);
+        if let Statement::GitGraphCherryPick(c) = &cherry_picks[0] {
+            assert_eq!(c.commit_id, "abc");
+        }
+    }
+
+    #[test]
+    fn parse_journey_sections_and_tasks() {
+        let input = concat!(
+            "journey\n",
+            "    title My Working Day\n",
+            "    section Go to work\n",
+            "    Make tea: 5: Me\n",
+            "    Go upstairs: 3: Me, Cat\n",
+            "    section Go home\n",
+            "    Go downstairs: 5: Me\n",
+        );
+        let ast = parse(input).expect("parse");
+        assert_eq!(ast.diagram_type, DiagramType::Journey);
+        let sections: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::JourneySection { .. }))
+            .collect();
+        assert_eq!(sections.len(), 2);
+        if let Statement::JourneySection { name, .. } = &sections[0] {
+            assert_eq!(name, "Go to work");
+        }
+        let tasks: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::JourneyTask(_)))
+            .collect();
+        assert_eq!(tasks.len(), 3);
+        if let Statement::JourneyTask(t) = &tasks[0] {
+            assert_eq!(t.title, "Make tea");
+            assert_eq!(t.score, 5);
+            assert_eq!(t.actors, vec!["Me".to_string()]);
+        }
+        if let Statement::JourneyTask(t) = &tasks[1] {
+            assert_eq!(t.title, "Go upstairs");
+            assert_eq!(t.score, 3);
+            assert_eq!(t.actors, vec!["Me".to_string(), "Cat".to_string()]);
+        }
+    }
+
+    #[test]
+    fn parse_journey_task_no_actors() {
+        let input = "journey\n    Do thing: 4:\n";
+        let ast = parse(input).expect("parse");
+        let tasks: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::JourneyTask(_)))
+            .collect();
+        assert_eq!(tasks.len(), 1);
+        if let Statement::JourneyTask(t) = &tasks[0] {
+            assert_eq!(t.title, "Do thing");
+            assert_eq!(t.score, 4);
+            assert!(t.actors.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_requirement_diagram_basic() {
+        let input = concat!(
+            "requirementDiagram\n",
+            "    requirement test_req {\n",
+            "    id: 1\n",
+            "    text: the test text.\n",
+            "    risk: high\n",
+            "    verifymethod: test\n",
+            "    }\n",
+        );
+        let ast = parse(input).expect("parse");
+        assert_eq!(ast.diagram_type, DiagramType::Requirement);
+        let reqs: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::RequirementDef(_)))
+            .collect();
+        assert_eq!(reqs.len(), 1);
+        if let Statement::RequirementDef(r) = &reqs[0] {
+            assert_eq!(r.kind, "requirement");
+            assert_eq!(r.name, "test_req");
+            assert_eq!(r.id.as_deref(), Some("1"));
+            assert_eq!(r.text.as_deref(), Some("the test text."));
+            assert_eq!(r.risk.as_deref(), Some("high"));
+            assert_eq!(r.verify_method.as_deref(), Some("test"));
+        }
+    }
+
+    #[test]
+    fn parse_requirement_element_and_relation() {
+        let input = concat!(
+            "requirementDiagram\n",
+            "    requirement test_req {\n",
+            "    id: 1\n",
+            "    }\n",
+            "    element test_entity {\n",
+            "    type: simulation\n",
+            "    }\n",
+            "    test_entity - satisfies -> test_req\n",
+        );
+        let ast = parse(input).expect("parse");
+        let elems: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::RequirementElement(_)))
+            .collect();
+        assert_eq!(elems.len(), 1);
+        if let Statement::RequirementElement(e) = &elems[0] {
+            assert_eq!(e.name, "test_entity");
+            assert_eq!(e.element_type.as_deref(), Some("simulation"));
+        }
+        let rels: Vec<_> = ast
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Statement::RequirementRelation(_)))
+            .collect();
+        assert_eq!(rels.len(), 1);
+        if let Statement::RequirementRelation(r) = &rels[0] {
+            assert_eq!(r.source, "test_entity");
+            assert_eq!(r.target, "test_req");
+            assert_eq!(r.relation_type, "satisfies");
+        }
+    }
+
+    #[test]
+    fn parse_requirement_multiple_kinds() {
+        let input = concat!(
+            "requirementDiagram\n",
+            "    functionalRequirement func_req {\n",
+            "    id: FR-1\n",
+            "    text: Must handle input\n",
+            "    }\n",
+            "    performanceRequirement perf_req {\n",
+            "    id: PR-1\n",
+            "    text: Under 100ms\n",
+            "    risk: low\n",
+            "    }\n",
+        );
+        let ast = parse(input).expect("parse");
+        let reqs: Vec<_> = ast
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::RequirementDef(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reqs.len(), 2);
+        assert_eq!(reqs[0].kind, "functionalrequirement");
+        assert_eq!(reqs[0].name, "func_req");
+        assert_eq!(reqs[1].kind, "performancerequirement");
+        assert_eq!(reqs[1].name, "perf_req");
+    }
+
+    #[test]
+    fn gitgraph_ir_produces_nodes_and_edges() {
+        let input = concat!(
+            "gitGraph\n",
+            "    commit id: \"a\"\n",
+            "    branch dev\n",
+            "    commit id: \"b\"\n",
+            "    merge dev\n",
+        );
+        let ast = parse(input).expect("parse");
+        let ir = normalize_ast_to_ir(
+            &ast,
+            &MermaidConfig::default(),
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        // Should have commit nodes
+        assert!(!ir.ir.nodes.is_empty(), "gitGraph should produce IR nodes");
+    }
+
+    #[test]
+    fn journey_ir_produces_nodes_and_clusters() {
+        let input = concat!(
+            "journey\n",
+            "    section Work\n",
+            "    Code: 5: Dev\n",
+            "    Review: 3: Dev, Lead\n",
+        );
+        let ast = parse(input).expect("parse");
+        let ir = normalize_ast_to_ir(
+            &ast,
+            &MermaidConfig::default(),
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert!(!ir.ir.nodes.is_empty(), "journey should produce IR nodes");
+        assert!(
+            !ir.ir.clusters.is_empty(),
+            "journey sections should produce clusters"
+        );
+    }
+
+    #[test]
+    fn requirement_ir_produces_nodes_and_edges() {
+        let input = concat!(
+            "requirementDiagram\n",
+            "    requirement req1 {\n",
+            "    id: R1\n",
+            "    }\n",
+            "    element elem1 {\n",
+            "    type: module\n",
+            "    }\n",
+            "    elem1 - satisfies -> req1\n",
+        );
+        let ast = parse(input).expect("parse");
+        let ir = normalize_ast_to_ir(
+            &ast,
+            &MermaidConfig::default(),
+            &MermaidCompatibilityMatrix::default(),
+            &MermaidFallbackPolicy::default(),
+        );
+        assert!(
+            ir.ir.nodes.len() >= 2,
+            "requirement diagram should produce at least 2 nodes"
+        );
+        assert!(
+            !ir.ir.edges.is_empty(),
+            "requirement relations should produce edges"
+        );
     }
 }
