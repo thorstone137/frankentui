@@ -109,6 +109,9 @@ mod tests {
         gantt_task: usize,
         pie: usize,
         mindmap: usize,
+        gitgraph: usize,
+        journey: usize,
+        requirement: usize,
         raw: usize,
     }
 
@@ -136,6 +139,16 @@ mod tests {
                 Statement::GanttTask(_) => counts.gantt_task += 1,
                 Statement::PieEntry(_) => counts.pie += 1,
                 Statement::MindmapNode(_) => counts.mindmap += 1,
+                Statement::GitGraphCommit(_)
+                | Statement::GitGraphBranch(_)
+                | Statement::GitGraphCheckout(_)
+                | Statement::GitGraphMerge(_)
+                | Statement::GitGraphCherryPick(_) => counts.gitgraph += 1,
+                Statement::JourneySection { .. }
+                | Statement::JourneyTask(_) => counts.journey += 1,
+                Statement::RequirementDef(_)
+                | Statement::RequirementRelation(_)
+                | Statement::RequirementElement(_) => counts.requirement += 1,
                 Statement::Raw { .. } => counts.raw += 1,
             }
         }
