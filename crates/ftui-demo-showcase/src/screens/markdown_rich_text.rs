@@ -314,9 +314,7 @@ fn wrap_markdown_for_panel(text: &Text, width: u16) -> Text {
             if line.width() <= width {
                 lines.push(line.clone());
             } else {
-                let mut text = Text::from_lines([line.clone()]);
-                text.truncate(width, None);
-                lines.extend(text.lines().iter().cloned());
+                lines.extend(truncate_line_to_width(line, width));
             }
             continue;
         }
@@ -325,27 +323,32 @@ fn wrap_markdown_for_panel(text: &Text, width: u16) -> Text {
             continue;
         }
 
-        for wrapped in line.wrap(width, WrapMode::Word) {
-            if wrapped.width() <= width {
-                lines.push(wrapped);
-            } else {
-                let mut text = Text::from_lines([wrapped]);
-                text.truncate(width, None);
-                lines.extend(text.lines().iter().cloned());
-            }
+        if let Some(prefix_width) = blockquote_prefix_width(&plain) {
+            lines.extend(wrap_blockquote_line(line, width, prefix_width));
+            continue;
         }
+
+        lines.extend(wrap_line_to_width(line, width));
     }
 
     Text::from_lines(lines)
 }
 
 fn is_table_line(plain: &str) -> bool {
-    plain.chars().any(|c| {
-        matches!(
-            c,
-            '┌' | '┬' | '┐' | '├' | '┼' | '┤' | '└' | '┴' | '┘' | '│' | '─'
-        )
-    })
+    let trimmed = plain.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    if trimmed.chars().any(|c| {
+        matches!(c, '┌' | '┬' | '┐' | '├' | '┼' | '┤' | '└' | '┴' | '┘' | '─')
+    }) {
+        return true;
+    }
+
+    trimmed.starts_with('│')
+        && trimmed.ends_with('│')
+        && trimmed.chars().filter(|&c| c == '│').count() >= 2
 }
 
 fn is_table_like_line(plain: &str) -> bool {
@@ -354,6 +357,99 @@ fn is_table_like_line(plain: &str) -> bool {
         return false;
     }
     trimmed.chars().filter(|&c| c == '|').count() >= 2
+}
+
+fn wrap_line_to_width(line: &Line, width: usize) -> Vec<Line> {
+    let mut wrapped_lines = Vec::new();
+    for wrapped in line.wrap(width, WrapMode::Word) {
+        if wrapped.width() <= width {
+            wrapped_lines.push(wrapped);
+        } else {
+            wrapped_lines.extend(truncate_line_to_width(&wrapped, width));
+        }
+    }
+    wrapped_lines
+}
+
+fn truncate_line_to_width(line: &Line, width: usize) -> Vec<Line> {
+    let mut text = Text::from_lines([line.clone()]);
+    text.truncate(width, None);
+    text.lines().to_vec()
+}
+
+fn blockquote_prefix_width(plain: &str) -> Option<usize> {
+    let mut prefix_bytes = 0usize;
+    loop {
+        let rest = &plain[prefix_bytes..];
+        if rest.starts_with("│ ") || rest.starts_with("┃ ") {
+            // Prefix markers are one box-drawing character + one trailing space.
+            prefix_bytes += 4;
+        } else {
+            break;
+        }
+    }
+
+    if prefix_bytes == 0 {
+        return None;
+    }
+
+    Some(ftui_text::display_width(&plain[..prefix_bytes]))
+}
+
+fn wrap_blockquote_line(line: &Line, width: usize, prefix_width: usize) -> Vec<Line> {
+    if prefix_width == 0 || prefix_width >= width {
+        return truncate_line_to_width(line, width);
+    }
+
+    let (prefix, content) = split_line_at_cell(line, prefix_width);
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    let wrapped_content = wrap_line_to_width(&content, content_width);
+
+    wrapped_content
+        .into_iter()
+        .map(|body_line| {
+            let mut merged = prefix.clone();
+            for span in body_line.spans() {
+                merged.push_span(span.clone());
+            }
+            merged
+        })
+        .collect()
+}
+
+fn split_line_at_cell(line: &Line, cell_pos: usize) -> (Line, Line) {
+    if cell_pos == 0 {
+        return (Line::new(), line.clone());
+    }
+
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut remaining = cell_pos;
+
+    for span in line.spans() {
+        if remaining == 0 {
+            right.push(span.clone());
+            continue;
+        }
+
+        let span_width = span.width();
+        if span_width <= remaining {
+            left.push(span.clone());
+            remaining -= span_width;
+            continue;
+        }
+
+        let (head, tail) = span.split_at_cell(remaining);
+        if !head.is_empty() {
+            left.push(head);
+        }
+        if !tail.is_empty() {
+            right.push(tail);
+        }
+        remaining = 0;
+    }
+
+    (Line::from_spans(left), Line::from_spans(right))
 }
 
 impl Widget for MarkdownPanel<'_> {
