@@ -2011,15 +2011,20 @@ pub fn layout_diagram_with_spacing(
     let mut ranks = assign_ranks(&graph);
 
     // Phase 1b: Apply rank constraints (same-rank, min-length).
-    let node_id_map: std::collections::HashMap<&str, usize> = ir
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, node)| (node.id.as_str(), i))
-        .collect();
-    if !ir.constraints.is_empty() {
-        apply_same_rank_constraints(&mut ranks, &ir.constraints, &node_id_map);
-        apply_min_length_constraints(&mut ranks, &ir.constraints, &node_id_map);
+    let node_id_map: Option<std::collections::HashMap<&str, usize>> = if ir.constraints.is_empty() {
+        None
+    } else {
+        Some(
+            ir.nodes
+                .iter()
+                .enumerate()
+                .map(|(i, node)| (node.id.as_str(), i))
+                .collect(),
+        )
+    };
+    if let Some(node_id_map) = node_id_map.as_ref() {
+        apply_same_rank_constraints(&mut ranks, &ir.constraints, node_id_map);
+        apply_min_length_constraints(&mut ranks, &ir.constraints, node_id_map);
     }
 
     // Phase 2: Build rank buckets and minimize crossings.
@@ -2037,8 +2042,8 @@ pub fn layout_diagram_with_spacing(
     let budget_exceeded = iterations_used >= max_iterations;
 
     // Phase 2b: Apply order-in-rank constraints (after crossing minimization).
-    if !ir.constraints.is_empty() {
-        apply_order_constraints(&mut rank_order, &ir.constraints, &node_id_map, &ranks);
+    if let Some(node_id_map) = node_id_map.as_ref() {
+        apply_order_constraints(&mut rank_order, &ir.constraints, node_id_map, &ranks);
     }
 
     // Phase 3: Coordinate assignment (content-aware sizing).
@@ -2057,8 +2062,8 @@ pub fn layout_diagram_with_spacing(
     );
 
     // Phase 3c: Apply pin constraints (override positions).
-    if !ir.constraints.is_empty() {
-        apply_pin_constraints(&mut node_rects, &ir.constraints, &node_id_map);
+    if let Some(node_id_map) = node_id_map.as_ref() {
+        apply_pin_constraints(&mut node_rects, &ir.constraints, node_id_map);
     }
 
     // Precompute per-node order within its rank to avoid repeated scans.
@@ -2165,20 +2170,21 @@ fn compute_bounding_box(
     clusters: &[LayoutClusterBox],
     edges: &[LayoutEdgePath],
 ) -> LayoutRect {
-    let mut rects: Vec<&LayoutRect> = nodes.iter().map(|n| &n.rect).collect();
-    rects.extend(clusters.iter().map(|c| &c.rect));
-
-    if rects.is_empty() {
+    let mut rects = nodes
+        .iter()
+        .map(|n| &n.rect)
+        .chain(clusters.iter().map(|c| &c.rect));
+    let Some(first) = rects.next() else {
         return LayoutRect {
             x: 0.0,
             y: 0.0,
             width: 0.0,
             height: 0.0,
         };
-    }
+    };
 
-    let mut bounds = *rects[0];
-    for &r in &rects[1..] {
+    let mut bounds = *first;
+    for r in rects {
         bounds = bounds.union(r);
     }
 
