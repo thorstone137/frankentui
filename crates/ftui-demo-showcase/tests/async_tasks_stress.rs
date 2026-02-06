@@ -240,21 +240,43 @@ fn cancellation_is_immediate() {
     mgr.tick(2);
 
     // Select and cancel
+    let selected_id = mgr.tasks()[mgr.selected()].id;
     let cancel_start = Instant::now();
     mgr.update(&press(KeyCode::Char('c')));
     let cancel_elapsed = cancel_start.elapsed();
 
+    // Cancellation must take effect immediately (state change only; no tick required).
+    let selected = mgr
+        .tasks()
+        .iter()
+        .find(|task| task.id == selected_id)
+        .expect("selected task must exist");
+    assert_eq!(
+        selected.state,
+        ftui_demo_showcase::screens::async_tasks::TaskState::Canceled
+    );
+
+    // Time budgets are inherently noisy in shared CI; keep a guardrail but avoid flake.
+    let budget_cancel_ns: u128 = if is_coverage_run() {
+        5_000_000 // 5ms
+    } else if std::env::var_os("CI").is_some() {
+        2_000_000 // 2ms
+    } else {
+        1_000_000 // 1ms
+    };
+
     log_jsonl(&serde_json::json!({
         "test": "cancellation_is_immediate",
         "cancel_elapsed_ns": cancel_elapsed.as_nanos(),
+        "budget_cancel_ns": budget_cancel_ns,
     }));
 
-    // Cancellation should be fast (state change only)
-    // Budget increased for CI environments and debug builds
+    // Cancellation should be fast (state change only).
     assert!(
-        cancel_elapsed.as_nanos() < 100_000,
-        "Cancellation took too long: {:?}",
-        cancel_elapsed
+        cancel_elapsed.as_nanos() < budget_cancel_ns,
+        "Cancellation took too long: {:?} (budget={}ns)",
+        cancel_elapsed,
+        budget_cancel_ns
     );
 }
 

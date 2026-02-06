@@ -413,4 +413,36 @@ mod tests {
         show(&mut output).unwrap();
         assert_eq!(output, b"\x1b[?25h");
     }
+
+    #[test]
+    fn emulated_save_overwrites_previous_position() {
+        let mut manager = CursorManager::new(CursorSaveStrategy::Emulated);
+        let mut output = Vec::new();
+
+        manager.save(&mut output, (1, 2)).unwrap();
+        assert_eq!(manager.saved_position(), Some((1, 2)));
+
+        manager.save(&mut output, (30, 40)).unwrap();
+        assert_eq!(manager.saved_position(), Some((30, 40)));
+
+        manager.restore(&mut output).unwrap();
+        assert_eq!(output, b"\x1b[41;31H");
+    }
+
+    #[test]
+    fn cursor_save_strategy_default_is_dec() {
+        let strategy = CursorSaveStrategy::default();
+        assert_eq!(strategy, CursorSaveStrategy::Dec);
+    }
+
+    #[test]
+    fn cursor_manager_clone_preserves_saved_position() {
+        let mut manager = CursorManager::new(CursorSaveStrategy::Emulated);
+        let mut output = Vec::new();
+        manager.save(&mut output, (7, 13)).unwrap();
+
+        let cloned = manager.clone();
+        assert_eq!(cloned.saved_position(), Some((7, 13)));
+        assert_eq!(cloned.strategy(), CursorSaveStrategy::Emulated);
+    }
 }

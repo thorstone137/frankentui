@@ -945,4 +945,46 @@ mod tests {
             assert!(agg.estimate(&i) >= 1, "Category {} should have count", i);
         }
     }
+
+    #[test]
+    fn aggregator_stats_default_is_zero() {
+        let stats = AggregatorStats::default();
+        assert_eq!(stats.total_events, 0);
+        assert_eq!(stats.change_points_detected, 0);
+        assert_eq!(stats.alerts_triggered, 0);
+        assert_eq!(stats.current_run_length, 0);
+        assert_eq!(stats.memory_bytes, 0);
+    }
+
+    #[test]
+    fn current_evidence_on_fresh_aggregator() {
+        let mut agg = TimelineAggregator::new(test_config());
+        let evidence = agg.current_evidence();
+        assert_eq!(evidence.observation_count, 0);
+        assert_eq!(evidence.rolling_mean, 0.0);
+        assert_eq!(evidence.rolling_variance, MIN_VARIANCE);
+    }
+
+    #[test]
+    fn window_trims_at_capacity() {
+        let mut config = test_config();
+        config.window_size = 5;
+        let mut agg = TimelineAggregator::new(config);
+
+        for i in 0..10 {
+            agg.observe(&i, 1);
+        }
+
+        assert_eq!(agg.window.len(), 5);
+    }
+
+    #[test]
+    fn estimate_delegates_to_sketch() {
+        let mut agg = TimelineAggregator::new(test_config());
+        for _ in 0..5 {
+            agg.observe(&"key", 3);
+        }
+        assert!(agg.estimate(&"key") >= 15);
+        assert_eq!(agg.estimate(&"missing"), 0);
+    }
 }

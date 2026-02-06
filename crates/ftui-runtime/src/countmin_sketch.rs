@@ -969,4 +969,52 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn error_evidence_bound_prefers_calibrated() {
+        let mut sketch = CountMinSketch::new(test_config());
+        for i in 0..20 {
+            sketch.add(&i, 1);
+        }
+        for i in 0..10 {
+            sketch.calibrate(&i, 1);
+        }
+        let evidence = sketch.error_evidence();
+        assert!(evidence.calibrated_bound.is_some());
+        // error_bound() should return the calibrated value
+        assert_eq!(evidence.error_bound(), evidence.calibrated_bound.unwrap());
+    }
+
+    #[test]
+    fn error_evidence_bound_falls_back_to_theoretical() {
+        let mut sketch = CountMinSketch::new(test_config());
+        sketch.add(&"item", 50);
+        let evidence = sketch.error_evidence();
+        assert!(evidence.calibrated_bound.is_none());
+        assert_eq!(evidence.error_bound(), evidence.theoretical_bound);
+    }
+
+    #[test]
+    fn with_dimensions_clamps_to_bounds() {
+        let sketch = CountMinSketch::with_dimensions(0, 0);
+        assert_eq!(sketch.width(), 1);
+        assert_eq!(sketch.depth(), 1);
+    }
+
+    #[test]
+    fn merge_invalidates_calibrated_bound() {
+        let mut sketch1 = CountMinSketch::with_dimensions(50, 3);
+        let sketch2 = CountMinSketch::with_dimensions(50, 3);
+
+        sketch1.add(&"a", 10);
+        sketch1.calibrate(&"a", 10);
+        // Force computation of calibrated bound
+        let _ = sketch1.error_evidence();
+
+        sketch1.merge(&sketch2).unwrap();
+        // After merge, internal cached bound is invalidated
+        // Re-computing evidence should still work
+        let evidence = sketch1.error_evidence();
+        assert!(evidence.total_count >= 10);
+    }
 }

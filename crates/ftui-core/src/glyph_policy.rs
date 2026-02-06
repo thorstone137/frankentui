@@ -423,4 +423,44 @@ mod tests {
 
         assert!(!policy.cjk_width);
     }
+
+    #[test]
+    fn glyph_mode_parse_aliases() {
+        assert_eq!(GlyphMode::parse("uni"), Some(GlyphMode::Unicode));
+        assert_eq!(GlyphMode::parse("u"), Some(GlyphMode::Unicode));
+        assert_eq!(GlyphMode::parse("ansi"), Some(GlyphMode::Ascii));
+        assert_eq!(GlyphMode::parse("a"), Some(GlyphMode::Ascii));
+        assert_eq!(GlyphMode::parse("invalid"), None);
+    }
+
+    #[test]
+    fn glyph_mode_as_str_roundtrip() {
+        assert_eq!(GlyphMode::Unicode.as_str(), "unicode");
+        assert_eq!(GlyphMode::Ascii.as_str(), "ascii");
+        assert_eq!(
+            GlyphMode::parse(GlyphMode::Unicode.as_str()),
+            Some(GlyphMode::Unicode)
+        );
+    }
+
+    #[test]
+    fn parse_bool_truthy_and_falsy() {
+        assert_eq!(parse_bool("1"), Some(true));
+        assert_eq!(parse_bool("yes"), Some(true));
+        assert_eq!(parse_bool("on"), Some(true));
+        assert_eq!(parse_bool("0"), Some(false));
+        assert_eq!(parse_bool("no"), Some(false));
+        assert_eq!(parse_bool("off"), Some(false));
+        assert_eq!(parse_bool("garbage"), None);
+    }
+
+    #[test]
+    fn double_width_false_suppresses_emoji_without_explicit_override() {
+        let env = map_env(&[]);
+        let mut caps = TerminalCapabilities::modern();
+        caps.double_width = false;
+        let policy = GlyphPolicy::from_env_with(get_env(&env), &caps);
+
+        assert!(!policy.emoji);
+    }
 }
