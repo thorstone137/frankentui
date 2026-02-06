@@ -907,6 +907,309 @@ mod tests {
         let unavail = StorageError::Unavailable("no backend".into());
         assert!(unavail.to_string().contains("unavailable"));
     }
+
+    // ── StorageError ────────────────────────────────────────────────────
+
+    #[test]
+    fn storage_error_source_io() {
+        let err = StorageError::Io(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "broken",
+        ));
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+
+    #[test]
+    fn storage_error_source_corruption_none() {
+        let err = StorageError::Corruption("test".into());
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn storage_error_source_unavailable_none() {
+        let err = StorageError::Unavailable("test".into());
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn storage_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout");
+        let err: StorageError = io_err.into();
+        match err {
+            StorageError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::TimedOut),
+            _ => panic!("expected Io variant"),
+        }
+    }
+
+    #[test]
+    fn storage_error_debug_format() {
+        let err = StorageError::Corruption("test".into());
+        let dbg = format!("{:?}", err);
+        assert!(dbg.contains("Corruption"));
+    }
+
+    // ── MemoryStorage ───────────────────────────────────────────────────
+
+    #[test]
+    fn memory_storage_name() {
+        let storage = MemoryStorage::new();
+        assert_eq!(storage.name(), "MemoryStorage");
+    }
+
+    #[test]
+    fn memory_storage_is_available() {
+        let storage = MemoryStorage::new();
+        assert!(storage.is_available());
+    }
+
+    #[test]
+    fn memory_storage_debug_format() {
+        let storage = MemoryStorage::new();
+        let dbg = format!("{:?}", storage);
+        assert!(dbg.contains("MemoryStorage"));
+        assert!(dbg.contains("entries"));
+    }
+
+    #[test]
+    fn memory_storage_debug_shows_count() {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "a".to_string(),
+            StoredEntry {
+                key: "a".to_string(),
+                version: 1,
+                data: vec![],
+            },
+        );
+        let storage = MemoryStorage::with_entries(entries);
+        let dbg = format!("{:?}", storage);
+        assert!(dbg.contains("1"));
+    }
+
+    #[test]
+    fn memory_storage_save_replaces_all() {
+        let storage = MemoryStorage::new();
+
+        let mut data1 = HashMap::new();
+        data1.insert(
+            "old".to_string(),
+            StoredEntry {
+                key: "old".to_string(),
+                version: 1,
+                data: vec![],
+            },
+        );
+        storage.save_all(&data1).unwrap();
+
+        let mut data2 = HashMap::new();
+        data2.insert(
+            "new".to_string(),
+            StoredEntry {
+                key: "new".to_string(),
+                version: 2,
+                data: vec![],
+            },
+        );
+        storage.save_all(&data2).unwrap();
+
+        let loaded = storage.load_all().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded.contains_key("new"));
+        assert!(!loaded.contains_key("old"));
+    }
+
+    // ── StateRegistry ───────────────────────────────────────────────────
+
+    #[test]
+    fn registry_backend_name() {
+        let registry = StateRegistry::in_memory();
+        assert_eq!(registry.backend_name(), "MemoryStorage");
+    }
+
+    #[test]
+    fn registry_is_available() {
+        let registry = StateRegistry::in_memory();
+        assert!(registry.is_available());
+    }
+
+    #[test]
+    fn registry_debug_format() {
+        let registry = StateRegistry::in_memory();
+        registry.set("x", 1, vec![]);
+        let dbg = format!("{:?}", registry);
+        assert!(dbg.contains("StateRegistry"));
+        assert!(dbg.contains("MemoryStorage"));
+        assert!(dbg.contains("dirty"));
+    }
+
+    #[test]
+    fn registry_set_overwrites() {
+        let registry = StateRegistry::in_memory();
+        registry.set("k", 1, b"first".to_vec());
+        registry.set("k", 2, b"second".to_vec());
+
+        assert_eq!(registry.len(), 1);
+        let entry = registry.get("k").unwrap();
+        assert_eq!(entry.version, 2);
+        assert_eq!(entry.data, b"second");
+    }
+
+    #[test]
+    fn registry_remove_nonexistent_returns_none() {
+        let registry = StateRegistry::in_memory();
+        assert!(registry.remove("nonexistent").is_none());
+    }
+
+    #[test]
+    fn registry_load_replaces_cache() {
+        let storage = MemoryStorage::new();
+        let mut initial = HashMap::new();
+        initial.insert(
+            "backend_key".to_string(),
+            StoredEntry {
+                key: "backend_key".to_string(),
+                version: 1,
+                data: b"from_backend".to_vec(),
+            },
+        );
+        storage.save_all(&initial).unwrap();
+
+        let registry = StateRegistry::new(Box::new(storage));
+        registry.set("local_key", 1, b"local".to_vec());
+        assert!(registry.get("local_key").is_some());
+
+        // Load replaces entire cache
+        registry.load().unwrap();
+        assert!(registry.get("local_key").is_none());
+        assert!(registry.get("backend_key").is_some());
+    }
+
+    #[test]
+    fn registry_load_clears_dirty_flag() {
+        let registry = StateRegistry::in_memory();
+        registry.set("x", 1, vec![]);
+        assert!(registry.is_dirty());
+
+        registry.load().unwrap();
+        assert!(!registry.is_dirty());
+    }
+
+    #[test]
+    fn registry_flush_persists_to_backend() {
+        let registry = StateRegistry::in_memory();
+        registry.set("widget::foo", 3, b"bar".to_vec());
+        registry.flush().unwrap();
+
+        // Load fresh and verify data survived
+        let count = registry.load().unwrap();
+        assert_eq!(count, 1);
+        let entry = registry.get("widget::foo").unwrap();
+        assert_eq!(entry.version, 3);
+        assert_eq!(entry.data, b"bar");
+    }
+
+    #[test]
+    fn registry_multiple_keys() {
+        let registry = StateRegistry::in_memory();
+        registry.set("a", 1, vec![1]);
+        registry.set("b", 2, vec![2]);
+        registry.set("c", 3, vec![3]);
+
+        assert_eq!(registry.len(), 3);
+        assert!(!registry.is_empty());
+
+        let mut keys = registry.keys();
+        keys.sort();
+        assert_eq!(keys, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn registry_remove_marks_dirty() {
+        let registry = StateRegistry::in_memory();
+        registry.set("x", 1, vec![]);
+        registry.flush().unwrap();
+        assert!(!registry.is_dirty());
+
+        registry.remove("x");
+        assert!(registry.is_dirty());
+    }
+
+    #[test]
+    fn registry_clear_after_set_and_flush() {
+        let registry = StateRegistry::in_memory();
+        registry.set("a", 1, vec![]);
+        registry.flush().unwrap();
+        registry.clear().unwrap();
+
+        assert!(registry.is_empty());
+        assert!(!registry.is_dirty());
+
+        // Backend is also cleared
+        let count = registry.load().unwrap();
+        assert_eq!(count, 0);
+    }
+
+    // ── RegistryStats ───────────────────────────────────────────────────
+
+    #[test]
+    fn registry_stats_default() {
+        let stats = RegistryStats::default();
+        assert_eq!(stats.entry_count, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert!(!stats.dirty);
+        assert_eq!(stats.backend, "");
+    }
+
+    #[test]
+    fn registry_stats_empty() {
+        let registry = StateRegistry::in_memory();
+        let stats = registry.stats();
+        assert_eq!(stats.entry_count, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert!(!stats.dirty);
+    }
+
+    // ── StoredEntry ─────────────────────────────────────────────────────
+
+    #[test]
+    fn stored_entry_clone() {
+        let entry = StoredEntry {
+            key: "test".to_string(),
+            version: 7,
+            data: vec![1, 2, 3],
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.key, "test");
+        assert_eq!(cloned.version, 7);
+        assert_eq!(cloned.data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn stored_entry_debug() {
+        let entry = StoredEntry {
+            key: "k".to_string(),
+            version: 1,
+            data: vec![],
+        };
+        let dbg = format!("{:?}", entry);
+        assert!(dbg.contains("StoredEntry"));
+    }
+
+    // ── Arc shared access ───────────────────────────────────────────────
+
+    #[test]
+    fn registry_shared_concurrent_access() {
+        let registry = StateRegistry::in_memory().shared();
+        let r2 = Arc::clone(&registry);
+
+        registry.set("from_1", 1, vec![10]);
+        r2.set("from_2", 1, vec![20]);
+
+        assert_eq!(registry.len(), 2);
+        assert!(r2.get("from_1").is_some());
+        assert!(registry.get("from_2").is_some());
+    }
 }
 
 #[cfg(all(test, feature = "state-persistence"))]
