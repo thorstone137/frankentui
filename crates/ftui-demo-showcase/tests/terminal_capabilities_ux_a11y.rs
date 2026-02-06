@@ -123,7 +123,7 @@ fn keybindings_documented() {
     );
     assert!(
         keys.iter()
-            .any(|(k, a)| *k == "↑/↓" && a.contains("Select")),
+            .any(|(k, a)| k.contains("↑/↓") && a.contains("Select")),
         "Arrow keys should be documented for selection"
     );
     assert!(

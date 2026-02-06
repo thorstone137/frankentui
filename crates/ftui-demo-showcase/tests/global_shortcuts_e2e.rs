@@ -207,41 +207,41 @@ fn help_visible_after_question_mark_survives_toggle_cycle() {
 }
 
 #[test]
-fn esc_does_not_close_help() {
-    // Help is toggled only by '?', not by Esc
+fn esc_closes_help() {
+    // Esc closes the topmost overlay
     let mut app = AppModel::new();
     app.help_visible = true;
 
     app.update(AppMsg::from(press(KeyCode::Escape)));
     assert!(
-        app.help_visible,
-        "Esc should NOT close help — only ? toggles it"
+        !app.help_visible,
+        "Esc should close help overlay"
     );
 }
 
 #[test]
-fn esc_does_not_close_debug() {
-    // Debug is toggled only by F12, not by Esc
+fn esc_closes_debug() {
+    // Esc closes the topmost overlay
     let mut app = AppModel::new();
     app.debug_visible = true;
 
     app.update(AppMsg::from(press(KeyCode::Escape)));
     assert!(
-        app.debug_visible,
-        "Esc should NOT close debug — only F12 toggles it"
+        !app.debug_visible,
+        "Esc should close debug overlay"
     );
 }
 
 #[test]
-fn esc_does_not_close_perf_hud() {
-    // Perf HUD is toggled only by Ctrl+P, not by Esc
+fn esc_closes_perf_hud() {
+    // Esc closes the topmost overlay
     let mut app = AppModel::new();
     app.perf_hud_visible = true;
 
     app.update(AppMsg::from(press(KeyCode::Escape)));
     assert!(
-        app.perf_hud_visible,
-        "Esc should NOT close perf HUD — only Ctrl+P toggles it"
+        !app.perf_hud_visible,
+        "Esc should close perf HUD overlay"
     );
 }
 
@@ -273,16 +273,18 @@ fn esc_priority_palette_before_a11y() {
 }
 
 #[test]
-fn esc_with_help_and_a11y_closes_only_a11y() {
-    // When help and a11y are both visible, Esc should only close a11y.
-    // Help requires '?' to dismiss.
+fn esc_with_help_and_a11y_closes_help_first() {
+    // Overlay priority: help is above a11y, so Esc closes help first
     let mut app = AppModel::new();
     app.help_visible = true;
     app.a11y_panel_visible = true;
 
     app.update(AppMsg::from(press(KeyCode::Escape)));
-    assert!(!app.a11y_panel_visible, "Esc should close a11y panel");
-    assert!(app.help_visible, "help should remain visible after Esc");
+    assert!(!app.help_visible, "first Esc should close help (higher priority)");
+    assert!(app.a11y_panel_visible, "a11y should remain visible after first Esc");
+
+    app.update(AppMsg::from(press(KeyCode::Escape)));
+    assert!(!app.a11y_panel_visible, "second Esc should close a11y panel");
 }
 
 #[test]

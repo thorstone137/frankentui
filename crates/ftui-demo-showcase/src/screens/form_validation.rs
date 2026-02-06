@@ -510,6 +510,19 @@ impl Screen for FormValidationDemo {
             self.handle_mouse(event);
             return Cmd::None;
         }
+        // Handle M key with either NONE or SHIFT modifiers for mode toggle
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Char('m' | 'M'),
+            kind: KeyEventKind::Press,
+            modifiers,
+            ..
+        }) = event
+        {
+            if matches!(*modifiers, Modifiers::NONE | Modifiers::SHIFT) {
+                self.toggle_validation_mode();
+                return Cmd::None;
+            }
+        }
         if let Event::Key(KeyEvent {
             code,
             kind: KeyEventKind::Press,
@@ -519,7 +532,7 @@ impl Screen for FormValidationDemo {
         {
             match code {
                 KeyCode::Char('m' | 'M') => {
-                    self.toggle_validation_mode();
+                    // Handled above with modifier check
                     return Cmd::None;
                 }
                 KeyCode::Char('e' | 'E') => {

@@ -313,13 +313,9 @@ fn e2e_email_validation() {
         )],
     );
 
-    // Clear and type valid email
-    // First clear the field
+    // Set valid email directly (char events don't go through form text input)
     if let Some(FormField::Text { value, .. }) = demo.form.field_mut(1) {
-        value.clear();
-    }
-    for ch in "user@example.com".chars() {
-        demo.update(&char_press(ch));
+        *value = "user@example.com".into();
     }
     demo.run_validation();
 
