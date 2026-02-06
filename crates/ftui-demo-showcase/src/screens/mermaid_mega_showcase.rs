@@ -101,6 +101,8 @@ fn mega_sample_category(sample: &MegaSample) -> &'static str {
     let src = sample.source.trim_start();
     if src.starts_with("graph") || src.starts_with("flowchart") {
         "flow"
+    } else if src.starts_with("block-beta") {
+        "block-beta"
     } else if src.starts_with("sequenceDiagram") {
         "sequence"
     } else if src.starts_with("classDiagram") {
@@ -303,6 +305,14 @@ const MEGA_SAMPLES: &[MegaSample] = &[
     MegaSample {
         name: "Generated",
         source: GENERATED_SAMPLE_SOURCE,
+    },
+    MegaSample {
+        name: "Block Beta Basic",
+        source: "block-beta\n  columns 3\n  a[\"Frontend\"] b[\"Backend\"] c[\"Database\"]\n  space\n  d[\"Load Balancer\"]:3",
+    },
+    MegaSample {
+        name: "Block Beta Stress",
+        source: "block-beta\n  columns 4\n  a[\"Service A\"]:2 b[\"Service B\"]:2\n  block:inner1:2\n    columns 2\n    c[\"Cache\"] d[\"Queue\"]\n  end\n  block:inner2:2\n    columns 2\n    e[\"Worker 1\"] f[\"Worker 2\"]\n  end\n  g[\"Load Balancer\"]:4\n  space:2\n  h[\"Database\"]:2",
     },
 ];
 
