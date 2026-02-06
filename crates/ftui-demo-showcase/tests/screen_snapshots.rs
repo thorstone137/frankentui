@@ -20,7 +20,7 @@ use ftui_core::terminal_capabilities::TerminalProfile;
 use ftui_demo_showcase::app::{AppModel, AppMsg, ScreenId};
 use ftui_demo_showcase::screens::Screen;
 use ftui_demo_showcase::theme::{ScopedThemeLock, ThemeId};
-use ftui_harness::assert_snapshot;
+use ftui_harness::{assert_snapshot, buffer_to_text};
 use ftui_render::frame::Frame;
 use ftui_render::grapheme_pool::GraphemePool;
 use ftui_render::link_registry::LinkRegistry;
@@ -2802,6 +2802,34 @@ fn mermaid_showcase_help_overlay_80x24() {
     mermaid_showcase_snapshot(&mut screen, 80, 24, "mermaid_showcase_help_overlay_80x24");
 }
 
+#[test]
+fn mermaid_showcase_debug_overlay_120x40() {
+    let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+    let mut screen = ftui_demo_showcase::screens::mermaid_showcase::MermaidShowcaseScreen::new();
+    // Toggle all debug overlays (bounds, routes, ports, grid).
+    screen.update(&press(KeyCode::Char('d')));
+    mermaid_showcase_snapshot(
+        &mut screen,
+        120,
+        40,
+        "mermaid_showcase_debug_overlay_120x40",
+    );
+}
+
+#[test]
+fn mermaid_showcase_debug_bounds_only_120x40() {
+    let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+    let mut screen = ftui_demo_showcase::screens::mermaid_showcase::MermaidShowcaseScreen::new();
+    // Toggle just the bounds overlay via key '1'.
+    screen.update(&press(KeyCode::Char('1')));
+    mermaid_showcase_snapshot(
+        &mut screen,
+        120,
+        40,
+        "mermaid_showcase_debug_bounds_only_120x40",
+    );
+}
+
 // ============================================================================
 // Mermaid Mega Showcase
 // ============================================================================
@@ -2979,7 +3007,17 @@ fn mega_showcase_invalid_overlay_120x40() {
         ftui_demo_showcase::screens::mermaid_mega_showcase::MermaidMegaShowcaseScreen::new();
     // Note: this index is kept stable by inserting the invalid sample right before "Generated".
     mega_showcase_goto_sample(&mut screen, 30);
-    mega_showcase_snapshot(&mut screen, 120, 40, "mega_showcase_invalid_overlay_120x40");
+
+    let mut pool = GraphemePool::new();
+    let mut frame = Frame::new(120, 40, &mut pool);
+    let area = Rect::new(0, 0, 120, 40);
+    screen.view(&mut frame, area);
+    let text = buffer_to_text(&frame.buffer);
+    assert!(text.contains("Flow Invalid (Parse Error)"));
+    assert!(text.contains("Mermaid error"));
+    assert!(text.contains("classDef missing name"));
+    assert!(text.contains("expected: classDef <name> <style>"));
+    assert_snapshot!("mega_showcase_invalid_overlay_120x40", &frame.buffer);
 }
 
 #[test]
@@ -2990,10 +3028,15 @@ fn mega_showcase_invalid_diagnostics_120x40() {
     mega_showcase_goto_sample(&mut screen, 30);
     // Toggle the dedicated diagnostics view (error list + line/col).
     screen.update(&press(KeyCode::Char('e')));
-    mega_showcase_snapshot(
-        &mut screen,
-        120,
-        40,
-        "mega_showcase_invalid_diagnostics_120x40",
-    );
+
+    let mut pool = GraphemePool::new();
+    let mut frame = Frame::new(120, 40, &mut pool);
+    let area = Rect::new(0, 0, 120, 40);
+    screen.view(&mut frame, area);
+    let text = buffer_to_text(&frame.buffer);
+    assert!(text.contains("Diagnostics (1 error)"));
+    assert!(text.contains("classDef missing name"));
+    assert!(text.contains("line 3, col 1"));
+    assert!(text.contains("expected: classDef <name> <style>"));
+    assert_snapshot!("mega_showcase_invalid_diagnostics_120x40", &frame.buffer);
 }
