@@ -1001,6 +1001,14 @@ impl MermaidRenderer {
             self.render_requirement_entities(layout, ir, &vp, buf);
             return;
         }
+        if ir.diagram_type.is_c4() {
+            self.render_c4_entities(layout, ir, &vp, buf);
+            return;
+        }
+        if ir.diagram_type.is_c4() {
+            self.render_c4_entities(layout, ir, &vp, buf);
+            return;
+        }
         self.render_edges(&layout.edges, ir, &vp, &resolved_styles.edge_styles, buf);
         self.render_nodes(&layout.nodes, ir, &vp, buf);
     }
@@ -2444,6 +2452,102 @@ impl MermaidRenderer {
             );
 
             // Render label inside the box (collapsed if let for clippy).
+            if let Some(label_id) = ir.nodes[i].label
+                && let Some(label) = ir.labels.get(label_id.0)
+            {
+                let inner_w = cell_rect.width.saturating_sub(2) as usize;
+                let inner_x = cell_rect.x + 1;
+                let inner_y = cell_rect.y + 1;
+                let text_color = self.colors.node_text;
+
+                for (line_idx, line) in label.text.split('\n').enumerate() {
+                    let y = inner_y + line_idx as u16;
+                    if y >= cell_rect.y + cell_rect.height.saturating_sub(1) {
+                        break;
+                    }
+                    let display = if line.len() > inner_w && inner_w > 3 {
+                        format!("{}...", &line[..inner_w.saturating_sub(3)])
+                    } else {
+                        line.to_string()
+                    };
+                    for (j, ch) in display.chars().enumerate() {
+                        let x = inner_x + j as u16;
+                        if x < cell_rect.x + cell_rect.width.saturating_sub(1) {
+                            buf.set(x, y, Cell::from_char(ch).with_fg(text_color));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw relation edges.
+        self.render_edges(&layout.edges, ir, vp, &resolved_styles.edge_styles, buf);
+    }
+
+    /// Render C4 architecture diagram entities with bordered boxes.
+    fn render_c4_entities(
+        &self,
+        layout: &DiagramLayout,
+        ir: &MermaidDiagramIr,
+        vp: &Viewport,
+        buf: &mut Buffer,
+    ) {
+        let resolved_styles = resolve_styles(ir);
+
+        // Draw cluster boundaries (C4 boundaries).
+        self.render_clusters(&layout.clusters, ir, vp, buf);
+
+        for (i, node) in layout.nodes.iter().enumerate() {
+            let cell_rect = vp.to_cell_rect(&node.rect);
+            if cell_rect.width < 2 || cell_rect.height < 2 {
+                continue;
+            }
+
+            let border_color = self.colors.node_fills[i % self.colors.node_fills.len()];
+
+            // Top and bottom borders.
+            let horiz = self.glyphs.border.horizontal;
+            for x in cell_rect.x..cell_rect.x + cell_rect.width {
+                buf.set(x, cell_rect.y, Cell::from_char(horiz).with_fg(border_color));
+                buf.set(
+                    x,
+                    cell_rect.y + cell_rect.height.saturating_sub(1),
+                    Cell::from_char(horiz).with_fg(border_color),
+                );
+            }
+            // Left and right borders.
+            let vert = self.glyphs.border.vertical;
+            for y in cell_rect.y..cell_rect.y + cell_rect.height {
+                buf.set(cell_rect.x, y, Cell::from_char(vert).with_fg(border_color));
+                buf.set(
+                    cell_rect.x + cell_rect.width.saturating_sub(1),
+                    y,
+                    Cell::from_char(vert).with_fg(border_color),
+                );
+            }
+            // Corners.
+            buf.set(
+                cell_rect.x,
+                cell_rect.y,
+                Cell::from_char(self.glyphs.border.top_left).with_fg(border_color),
+            );
+            buf.set(
+                cell_rect.x + cell_rect.width.saturating_sub(1),
+                cell_rect.y,
+                Cell::from_char(self.glyphs.border.top_right).with_fg(border_color),
+            );
+            buf.set(
+                cell_rect.x,
+                cell_rect.y + cell_rect.height.saturating_sub(1),
+                Cell::from_char(self.glyphs.border.bottom_left).with_fg(border_color),
+            );
+            buf.set(
+                cell_rect.x + cell_rect.width.saturating_sub(1),
+                cell_rect.y + cell_rect.height.saturating_sub(1),
+                Cell::from_char(self.glyphs.border.bottom_right).with_fg(border_color),
+            );
+
+            // Render multi-line label.
             if let Some(label_id) = ir.nodes[i].label
                 && let Some(label) = ir.labels.get(label_id.0)
             {

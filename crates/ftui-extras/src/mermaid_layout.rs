@@ -1961,6 +1961,215 @@ fn layout_quadrant_diagram(
     }
 }
 
+fn layout_c4_diagram(
+    ir: &MermaidDiagramIr,
+    config: &MermaidConfig,
+    spacing: &LayoutSpacing,
+) -> DiagramLayout {
+    let n = ir.nodes.len();
+    if n == 0 {
+        return DiagramLayout {
+            nodes: vec![],
+            clusters: vec![],
+            edges: vec![],
+            bounding_box: LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
+            stats: LayoutStats {
+                iterations_used: 0,
+                max_iterations: config.layout_iteration_budget,
+                budget_exceeded: false,
+                crossings: 0,
+                ranks: 0,
+                max_rank_width: 0,
+                total_bends: 0,
+                position_variance: 0.0,
+            },
+            degradation: None,
+        };
+    }
+
+    // Wider boxes for C4 multi-line labels.
+    let c4_spacing = LayoutSpacing {
+        node_width: spacing.node_width.max(20.0),
+        node_height: spacing.node_height.max(5.0),
+        rank_gap: spacing.rank_gap.max(6.0),
+        node_gap: spacing.node_gap.max(5.0),
+        ..*spacing
+    };
+
+    let graph = LayoutGraph::from_ir(ir);
+    let mut ranks = assign_ranks(&graph);
+
+    let node_id_map: Option<std::collections::HashMap<&str, usize>> = if ir.constraints.is_empty() {
+        None
+    } else {
+        Some(
+            ir.nodes
+                .iter()
+                .enumerate()
+                .map(|(i, node)| (node.id.as_str(), i))
+                .collect(),
+        )
+    };
+    if let Some(ref id_map) = node_id_map {
+        apply_same_rank_constraints(&mut ranks, &ir.constraints, id_map);
+        apply_min_length_constraints(&mut ranks, &ir.constraints, id_map);
+    }
+
+    let max_rank = ranks.iter().copied().max().unwrap_or(0);
+    let mut rank_buckets: Vec<Vec<usize>> = vec![vec![]; max_rank + 1];
+    for (i, &r) in ranks.iter().enumerate() {
+        rank_buckets[r].push(i);
+    }
+    for bucket in &mut rank_buckets {
+        bucket.sort_unstable();
+    }
+
+    if let Some(ref id_map) = node_id_map {
+        apply_order_constraints(&mut rank_buckets, &ir.constraints, id_map, &ranks);
+    }
+
+    let cluster_map = build_cluster_map(ir, n);
+    let (_initial, final_crossings) = minimize_crossings(
+        &mut rank_buckets,
+        &graph,
+        config.layout_iteration_budget,
+        &cluster_map,
+    );
+
+    let mut node_rects: Vec<LayoutRect> = vec![
+        LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        };
+        n
+    ];
+    let mut cursor_y = 0.0;
+    let mut max_rank_width = 0;
+    for bucket in &rank_buckets {
+        if bucket.is_empty() {
+            continue;
+        }
+        max_rank_width = max_rank_width.max(bucket.len());
+        let mut cursor_x = 0.0;
+        let row_height = c4_spacing.node_height;
+        for &node_idx in bucket {
+            node_rects[node_idx] = LayoutRect {
+                x: cursor_x,
+                y: cursor_y,
+                width: c4_spacing.node_width,
+                height: c4_spacing.node_height,
+            };
+            cursor_x += c4_spacing.node_width + c4_spacing.node_gap;
+        }
+        cursor_y += row_height + c4_spacing.rank_gap;
+    }
+
+    if let Some(ref id_map) = node_id_map {
+        apply_pin_constraints(&mut node_rects, &ir.constraints, id_map);
+    }
+
+    let mut nodes: Vec<LayoutNodeBox> = Vec::with_capacity(n);
+    for (i, rect) in node_rects.iter().enumerate() {
+        let label_rect = ir.nodes[i].label.map(|_| LayoutRect {
+            x: rect.x + c4_spacing.label_padding,
+            y: rect.y + c4_spacing.label_padding,
+            width: rect.width - 2.0 * c4_spacing.label_padding,
+            height: rect.height - 2.0 * c4_spacing.label_padding,
+        });
+        nodes.push(LayoutNodeBox {
+            node_idx: i,
+            rect: *rect,
+            label_rect,
+            rank: ranks[i],
+            order: rank_buckets[ranks[i]]
+                .iter()
+                .position(|&idx| idx == i)
+                .unwrap_or(0),
+        });
+    }
+
+    let clusters = compute_cluster_bounds(ir, &node_rects, &c4_spacing);
+
+    let mut edges: Vec<LayoutEdgePath> = Vec::with_capacity(ir.edges.len());
+    for (idx, edge) in ir.edges.iter().enumerate() {
+        let Some(from_idx) = endpoint_node_idx(ir, &edge.from) else {
+            continue;
+        };
+        let Some(to_idx) = endpoint_node_idx(ir, &edge.to) else {
+            continue;
+        };
+        let from_r = &node_rects[from_idx];
+        let to_r = &node_rects[to_idx];
+        let from_cx = from_r.x + from_r.width / 2.0;
+        let from_by = from_r.y + from_r.height;
+        let to_cx = to_r.x + to_r.width / 2.0;
+        let to_ty = to_r.y;
+
+        let waypoints = if (from_cx - to_cx).abs() < 0.1 {
+            vec![
+                LayoutPoint {
+                    x: from_cx,
+                    y: from_by,
+                },
+                LayoutPoint { x: to_cx, y: to_ty },
+            ]
+        } else {
+            let mid_y = (from_by + to_ty) / 2.0;
+            vec![
+                LayoutPoint {
+                    x: from_cx,
+                    y: from_by,
+                },
+                LayoutPoint {
+                    x: from_cx,
+                    y: mid_y,
+                },
+                LayoutPoint { x: to_cx, y: mid_y },
+                LayoutPoint { x: to_cx, y: to_ty },
+            ]
+        };
+
+        edges.push(LayoutEdgePath {
+            edge_idx: idx,
+            waypoints,
+            bundle_count: 1,
+            bundle_members: Vec::new(),
+        });
+    }
+
+    let total_bends: usize = edges
+        .iter()
+        .map(|e| e.waypoints.len().saturating_sub(2))
+        .sum();
+    let bounding_box = compute_bounding_box(&nodes, &clusters, &edges);
+    let pos_var = compute_position_variance(&nodes);
+
+    DiagramLayout {
+        nodes,
+        clusters,
+        edges,
+        bounding_box,
+        stats: LayoutStats {
+            iterations_used: 0,
+            max_iterations: config.layout_iteration_budget,
+            budget_exceeded: false,
+            crossings: final_crossings,
+            ranks: max_rank + 1,
+            max_rank_width,
+            total_bends,
+            position_variance: pos_var,
+        },
+        degradation: None,
+    }
+}
+
 fn layout_journey_diagram(
     ir: &MermaidDiagramIr,
     config: &MermaidConfig,
@@ -3222,6 +3431,10 @@ pub fn layout_diagram_with_spacing(
     }
     if ir.diagram_type == DiagramType::QuadrantChart {
         return layout_quadrant_diagram(ir, config, spacing);
+    }
+
+    if ir.diagram_type.is_c4() {
+        return layout_c4_diagram(ir, config, spacing);
     }
     if ir.diagram_type == DiagramType::Journey {
         return layout_journey_diagram(ir, config, spacing);
