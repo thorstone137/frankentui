@@ -1158,4 +1158,219 @@ mod tests {
         assert!(data.is_empty());
         assert!(!data.source.hint_lines.is_empty());
     }
+
+    fn make_cockpit_with_timeline() -> ExplainabilityCockpit {
+        let mut cockpit = ExplainabilityCockpit::with_evidence_path(None);
+        let parsed = parse_evidence_lines(&sample_lines());
+        cockpit.data = ExplainabilityData {
+            source: SourceStatus {
+                label: "test".to_string(),
+                status: "ok".to_string(),
+                hint_lines: vec![],
+            },
+            diff: parsed.diff,
+            resize: parsed.resize,
+            budget: parsed.budget,
+            timeline: parsed.timeline,
+        };
+        cockpit
+    }
+
+    fn key_event(c: char) -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char(c)))
+    }
+
+    fn arrow_event(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code))
+    }
+
+    fn mouse_click(x: u16, y: u16) -> Event {
+        Event::Mouse(MouseEvent::new(
+            MouseEventKind::Down(MouseButton::Left),
+            x,
+            y,
+        ))
+    }
+
+    fn mouse_scroll_up(x: u16, y: u16) -> Event {
+        Event::Mouse(MouseEvent::new(MouseEventKind::ScrollUp, x, y))
+    }
+
+    fn mouse_scroll_down(x: u16, y: u16) -> Event {
+        Event::Mouse(MouseEvent::new(MouseEventKind::ScrollDown, x, y))
+    }
+
+    #[test]
+    fn default_focus_is_timeline() {
+        let cockpit = ExplainabilityCockpit::with_evidence_path(None);
+        assert_eq!(cockpit.focused_panel, FocusPanel::Timeline);
+    }
+
+    #[test]
+    fn number_keys_change_focus() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.update(&key_event('1'));
+        assert_eq!(cockpit.focused_panel, FocusPanel::Diff);
+        cockpit.update(&key_event('2'));
+        assert_eq!(cockpit.focused_panel, FocusPanel::Resize);
+        cockpit.update(&key_event('3'));
+        assert_eq!(cockpit.focused_panel, FocusPanel::Budget);
+        cockpit.update(&key_event('4'));
+        assert_eq!(cockpit.focused_panel, FocusPanel::Timeline);
+    }
+
+    #[test]
+    fn n_key_scrolls_timeline_up() {
+        let mut cockpit = make_cockpit_with_timeline();
+        assert_eq!(cockpit.timeline_scroll, 0);
+        cockpit.update(&key_event('n'));
+        assert_eq!(cockpit.timeline_scroll, 1);
+        cockpit.update(&key_event('n'));
+        assert_eq!(cockpit.timeline_scroll, 2);
+    }
+
+    #[test]
+    fn p_key_scrolls_timeline_down() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.timeline_scroll = 3;
+        cockpit.update(&key_event('p'));
+        assert_eq!(cockpit.timeline_scroll, 2);
+        cockpit.update(&key_event('p'));
+        assert_eq!(cockpit.timeline_scroll, 1);
+    }
+
+    #[test]
+    fn p_key_clamps_at_zero() {
+        let mut cockpit = make_cockpit_with_timeline();
+        assert_eq!(cockpit.timeline_scroll, 0);
+        cockpit.update(&key_event('p'));
+        assert_eq!(cockpit.timeline_scroll, 0);
+    }
+
+    #[test]
+    fn arrow_up_scrolls_timeline() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.update(&arrow_event(KeyCode::Up));
+        assert_eq!(cockpit.timeline_scroll, 1);
+    }
+
+    #[test]
+    fn arrow_down_scrolls_timeline() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.timeline_scroll = 2;
+        cockpit.update(&arrow_event(KeyCode::Down));
+        assert_eq!(cockpit.timeline_scroll, 1);
+    }
+
+    #[test]
+    fn n_key_clamps_at_max() {
+        let mut cockpit = make_cockpit_with_timeline();
+        let max = cockpit.data.timeline.len().saturating_sub(1);
+        for _ in 0..100 {
+            cockpit.update(&key_event('n'));
+        }
+        assert_eq!(cockpit.timeline_scroll, max);
+    }
+
+    #[test]
+    fn mouse_click_focuses_panel() {
+        let mut cockpit = make_cockpit_with_timeline();
+        // Simulate cached layout rects as if view() was called.
+        cockpit.layout_diff.set(Rect::new(0, 3, 27, 6));
+        cockpit.layout_resize.set(Rect::new(27, 3, 26, 6));
+        cockpit.layout_budget.set(Rect::new(53, 3, 27, 6));
+        cockpit.layout_timeline.set(Rect::new(0, 9, 80, 6));
+
+        cockpit.update(&mouse_click(5, 5)); // Inside diff panel
+        assert_eq!(cockpit.focused_panel, FocusPanel::Diff);
+
+        cockpit.update(&mouse_click(30, 5)); // Inside resize panel
+        assert_eq!(cockpit.focused_panel, FocusPanel::Resize);
+
+        cockpit.update(&mouse_click(60, 5)); // Inside budget panel
+        assert_eq!(cockpit.focused_panel, FocusPanel::Budget);
+
+        cockpit.update(&mouse_click(40, 12)); // Inside timeline
+        assert_eq!(cockpit.focused_panel, FocusPanel::Timeline);
+    }
+
+    #[test]
+    fn mouse_click_outside_panels_no_change() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.layout_diff.set(Rect::new(0, 3, 27, 6));
+        cockpit.focused_panel = FocusPanel::Diff;
+
+        // Click outside all cached rects (default Rect(0,0,0,0) for others).
+        cockpit.update(&mouse_click(200, 200));
+        assert_eq!(cockpit.focused_panel, FocusPanel::Diff);
+    }
+
+    #[test]
+    fn mouse_scroll_up_on_timeline() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.layout_timeline.set(Rect::new(0, 10, 80, 8));
+
+        cockpit.update(&mouse_scroll_up(40, 14)); // Inside timeline
+        assert_eq!(cockpit.timeline_scroll, 1);
+        cockpit.update(&mouse_scroll_up(40, 14));
+        assert_eq!(cockpit.timeline_scroll, 2);
+    }
+
+    #[test]
+    fn mouse_scroll_down_on_timeline() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.layout_timeline.set(Rect::new(0, 10, 80, 8));
+        cockpit.timeline_scroll = 3;
+
+        cockpit.update(&mouse_scroll_down(40, 14)); // Inside timeline
+        assert_eq!(cockpit.timeline_scroll, 2);
+    }
+
+    #[test]
+    fn mouse_scroll_outside_timeline_no_effect() {
+        let mut cockpit = make_cockpit_with_timeline();
+        cockpit.layout_timeline.set(Rect::new(0, 10, 80, 8));
+
+        cockpit.update(&mouse_scroll_up(40, 5)); // Above timeline
+        assert_eq!(cockpit.timeline_scroll, 0);
+    }
+
+    #[test]
+    fn space_toggles_pause() {
+        let mut cockpit = make_cockpit_with_timeline();
+        assert!(!cockpit.paused);
+        cockpit.update(&key_event(' '));
+        assert!(cockpit.paused);
+        cockpit.update(&key_event(' '));
+        assert!(!cockpit.paused);
+    }
+
+    #[test]
+    fn c_key_clears_evidence() {
+        let mut cockpit = make_cockpit_with_timeline();
+        assert!(!cockpit.data.timeline.is_empty());
+        cockpit.update(&key_event('c'));
+        assert!(cockpit.data.timeline.is_empty());
+        assert!(cockpit.data.diff.is_none());
+    }
+
+    #[test]
+    fn keybindings_returns_entries() {
+        let cockpit = ExplainabilityCockpit::with_evidence_path(None);
+        let bindings = cockpit.keybindings();
+        assert!(bindings.len() >= 6);
+        let keys: Vec<&str> = bindings.iter().map(|e| e.key).collect();
+        assert!(keys.contains(&"r"));
+        assert!(keys.contains(&"n/p"));
+        assert!(keys.contains(&"1/2/3/4"));
+    }
+
+    #[test]
+    fn tick_does_not_refresh_when_paused() {
+        let mut cockpit = ExplainabilityCockpit::with_evidence_path(None);
+        cockpit.paused = true;
+        let initial_tick = cockpit.last_refresh_tick;
+        cockpit.tick(100);
+        assert_eq!(cockpit.last_refresh_tick, initial_tick);
+    }
 }
