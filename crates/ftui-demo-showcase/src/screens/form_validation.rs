@@ -517,11 +517,10 @@ impl Screen for FormValidationDemo {
             modifiers,
             ..
         }) = event
+            && matches!(*modifiers, Modifiers::NONE | Modifiers::SHIFT)
         {
-            if matches!(*modifiers, Modifiers::NONE | Modifiers::SHIFT) {
-                self.toggle_validation_mode();
-                return Cmd::None;
-            }
+            self.toggle_validation_mode();
+            return Cmd::None;
         }
         if let Event::Key(KeyEvent {
             code,
