@@ -7,8 +7,8 @@ Mermaid Showcase | Flow Basic (1/24) | Layout: Auto | Score: 0.8 | Viewport: aut
 │  Flow Unicode [flow, S, unic││                                                            ││Render: braille (b)     │ 
 │  Flow Styles [flow, M, class││                                                            ││Wrap: wordchar (w)      │ 
 │  Sequence Mini [sequence, S,││                                                            ││Styles: on (s)          │ 
-│  Sequence Checkout [sequence││                                                            ││Links: off (u)          │ 
-│  Sequence Dense [sequence, L││                                                            ││Init: on (I)            │ 
+│  Sequence Checkout [sequence││                                                            ││Links: inline (u)       │ 
+│  Sequence Dense [sequence, L││                                                            ││Init: off (I)           │ 
 │  Class Basic [class, S, inhe││                                                            ││Errors: panel (e)       │ 
 │  Class Members [class, M, fi││                                                            ││Viewport: auto (v)      │ 
 │  State Basic [state, S, star││                                            ┌─────────────┐ ││Zoom: 100% (+/-)        │ 
@@ -23,8 +23,9 @@ Mermaid Showcase | Flow Basic (1/24) | Layout: Auto | Score: 0.8 | Viewport: aut
 │  Journey Basic [journey, M, ││                                          No┌─────────────┐ │╭────────Metrics─────────╮ 
 │  Requirement Basic [requirem││                                            │▄▄▄▄▄▄▄▄▄▄▄▄▄│ ││Cache: hit 0  miss 1  la│ 
 │  Block Beta Basic [block-bet││                                            │     Fix     │ ││Warnings: 0             │ 
-│  Block Beta Nested [block-be││                                            │▀▀▀▀▀▀▀▀▀▀▀▀▀│ ││Parse: 0.00 ms          │ 
-│                             ││                                            └─────────────┘ ││Layout: 0.00 ms         │ 
+│  Block Beta Nested [block-be││                                            │▀▀▀▀▀▀▀▀▀▀▀▀▀│ ││Links: 2/2              │ 
+│                             ││                                            └─────────────┘ ││Parse: 0.00 ms          │ 
+│                             ││                                                            ││Layout: 0.00 ms         │ 
 │                             ││                                                            ││Render: 0.00 ms         │ 
 │                             ││                                                            ││Viewport: auto          │ 
 │                             ││                                                            ││Zoom: 100%              │ 
@@ -35,6 +36,5 @@ Mermaid Showcase | Flow Basic (1/24) | Layout: Auto | Score: 0.8 | Viewport: aut
 │                             ││                                                            ││Sym: 0.67               │ 
 │                             ││                                                            ││Comp: 0.35              │ 
 │                             ││                                                            ││Edge var: 0.47          │ 
-│                             ││                                                            ││Label col: 0            │ 
 ╰─────────────────────────────╯╰────────────────────────────────────────────────────────────╯╰────────────────────────╯ 
 j/k sample  Enter render  l layout  t tier  u links  I init  e errors  x guard  v view  +/- zoom  m metrics  ? help | pa

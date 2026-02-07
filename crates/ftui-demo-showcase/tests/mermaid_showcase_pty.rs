@@ -291,25 +291,117 @@ fn pty_mermaid_harness_jsonl_schema() -> Result<(), String> {
         );
     }
 
-    // Verify run_id consistency across all frame events.
+    // Verify run_id consistency and required telemetry fields across frame events.
     let text = String::from_utf8_lossy(&output);
+    let mut frame_json_count = 0usize;
     for line in text.lines() {
         if !line.contains("\"event\":\"mermaid_frame\"") {
             continue;
         }
-        for field in ["\"run_id\":", "\"frame\":", "\"hash\":", "\"sample_idx\":"] {
+        frame_json_count = frame_json_count.saturating_add(1);
+        let frame_json = extract_json_object(line)
+            .ok_or_else(|| format!("failed to locate JSON object in mermaid_frame line: {line}"))?;
+        let value: Value = serde_json::from_str(frame_json).map_err(|err| {
+            format!("failed to parse mermaid_frame JSONL object: {err}: {frame_json}")
+        })?;
+
+        for field in [
+            "run_id",
+            "frame",
+            "sample_idx",
+            "hash",
+            "cols",
+            "rows",
+            "tick_ms",
+            "sample_id",
+            "sample_family",
+            "diagram_type",
+            "tier",
+            "glyph_mode",
+            "cache_hit",
+            "checksum",
+            "render_time_ms",
+            "warnings",
+            "guard_triggers",
+            "config_hash",
+            "init_config_hash",
+            "capability_profile",
+            "link_count",
+            "link_mode",
+            "legend_height",
+            "parse_ms",
+            "layout_ms",
+            "route_ms",
+            "render_ms",
+        ] {
             assert!(
-                line.contains(field),
-                "mermaid_frame event missing {field}: {line}"
+                value.get(field).is_some(),
+                "mermaid_frame event missing field '{field}': {line}"
             );
         }
-        if let Some(frame_run_id) = parse_string_field(line, "\"run_id\":") {
-            assert_eq!(
-                frame_run_id, start_run_id,
-                "run_id mismatch between start and frame events"
-            );
-        }
+
+        assert_eq!(
+            value["run_id"].as_str(),
+            Some(start_run_id),
+            "run_id mismatch between start and frame events"
+        );
+        assert_eq!(
+            value["cols"].as_u64(),
+            Some(MERMAID_COLS as u64),
+            "frame cols mismatch"
+        );
+        assert_eq!(
+            value["rows"].as_u64(),
+            Some(MERMAID_ROWS as u64),
+            "frame rows mismatch"
+        );
+        assert_eq!(
+            value["tick_ms"].as_u64(),
+            Some(MERMAID_TICK_MS),
+            "frame tick_ms mismatch"
+        );
+
+        let hash = value["hash"]
+            .as_u64()
+            .ok_or("mermaid_frame hash should be u64")?;
+        let checksum = value["checksum"]
+            .as_u64()
+            .ok_or("mermaid_frame checksum should be u64")?;
+        assert_eq!(hash, checksum, "checksum should match frame hash");
+
+        assert!(
+            value["render_time_ms"].is_number() || value["render_time_ms"].is_null(),
+            "render_time_ms should be number|null: {line}"
+        );
+        assert!(
+            value["parse_ms"].is_number() || value["parse_ms"].is_null(),
+            "parse_ms should be number|null: {line}"
+        );
+        assert!(
+            value["layout_ms"].is_number() || value["layout_ms"].is_null(),
+            "layout_ms should be number|null: {line}"
+        );
+        assert!(
+            value["route_ms"].is_number() || value["route_ms"].is_null(),
+            "route_ms should be number|null: {line}"
+        );
+        assert!(
+            value["render_ms"].is_number() || value["render_ms"].is_null(),
+            "render_ms should be number|null: {line}"
+        );
+        assert!(
+            matches!(
+                value["link_mode"].as_str(),
+                Some("off") | Some("inline") | Some("footnote")
+            ),
+            "unexpected link_mode value: {line}"
+        );
     }
+    assert_eq!(
+        frame_json_count,
+        frames.len(),
+        "frame JSONL line count should match extracted frame count"
+    );
 
     // --- Verify mermaid_harness_done event ---
     let done_line = find_event_line(&output, "mermaid_harness_done")

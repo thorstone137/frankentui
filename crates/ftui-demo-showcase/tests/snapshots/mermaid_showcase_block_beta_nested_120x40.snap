@@ -17,8 +17,8 @@ Mermaid Showcase | Block Beta Nested (24/24) | Layout: Auto | Score: 983.8 | Vie
 │  Gantt Basic [gantt, M, sect││                                                            ││                        │ 
 │  Mindmap Seed [mindmap, S, t││                                                            ││                        │ 
 │  Mindmap Deep [mindmap, L, d││                                                            ││                        │ 
-│  Pie Basic [pie, S, title, s││ ⣤⣤⣤⣤⣤⣤ ⢠⣤⣤⣤⣤⣤⡄ ⣤⣤⣤⣤⣤⡄ ⣤⣤⣤⣤⣤⡄ ⣤⣤⣤⣤⣤⡄ ⣤⣤⣤⣤⣤⡄ ⣤⣤⣤⣤⣤⣤⣤⣤ ⢠⣤⣤⣤⣤⣤ ││                        │ 
-│  Pie Many [pie, M, many-slic││ ⠛⠛⠛⠛⠛⠛ ⠘⠛⠛⠛⠛⠛⠃ ⠛⠛⠛⠛⠛⠃ ⠛⠛⠛⠛⠛⠃ ⠛⠛⠛⠛⠛⠃ ⠛⠛⠛⠛⠛⠃ ⠛⠛⠛⠛⠛⠛⠛⠛ ⠘⠛⠛⠛⠛⠛ ││                        │ 
+│  Pie Basic [pie, S, title, s││ ┌────┐  ┌───┐  ┌───┐  ┌───┐  ┌───┐  ┌───┐  ┌──────┐  ┌───┐ ││                        │ 
+│  Pie Many [pie, M, many-slic││ └────┘  └───┘  └───┘  └───┘  └───┘  └───┘  └──────┘  └───┘ ││                        │ 
 │  Gitgraph Basic [gitgraph, M││                                                            │╰────────────────────────╯ 
 │  Journey Basic [journey, M, ││                                                            │╭────────Metrics─────────╮ 
 │  Requirement Basic [requirem││                                                            ││Cache: hit 0  miss 1  la│ 
