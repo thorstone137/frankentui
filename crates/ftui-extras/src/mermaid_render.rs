@@ -8558,7 +8558,7 @@ mod tests {
             .filter(|&(x, y)| {
                 buf.get(x, y)
                     .and_then(|c| c.content.as_char())
-                    .map_or(false, |ch| ch != ' ')
+                    .is_some_and(|ch| ch != ' ')
             })
             .count();
         assert!(non_empty > 10, "sequence render should produce visible content, got {non_empty}");
