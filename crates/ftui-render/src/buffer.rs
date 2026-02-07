@@ -1176,13 +1176,18 @@ impl Buffer {
                         continue;
                     }
 
-                    // Write the cell
-                    self.set(target_x, target_y, *cell);
-
-                    // If it was a wide char, skip the tails in the source iteration
-                    // because `set` already handled them (or rejected the whole char).
-                    // Use saturating_add to prevent infinite loop on overflow.
                     let width = cell.content.width();
+
+                    // If the wide character's tail extends beyond the copy region,
+                    // write a default cell instead to avoid silent rejection by `set`
+                    // (which atomically rejects writes where not all cells fit).
+                    if width > 1 && dx.saturating_add(width as u16) > src_rect.width {
+                        self.set(target_x, target_y, Cell::default());
+                    } else {
+                        self.set(target_x, target_y, *cell);
+                    }
+
+                    // Skip tails in source iteration.
                     if width > 1 {
                         dx = dx.saturating_add(width as u16);
                     } else {
