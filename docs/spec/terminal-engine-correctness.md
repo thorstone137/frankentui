@@ -281,6 +281,11 @@ This repo already gates most of these in `.github/workflows/ci.yml`. The WASM
 target check is added as part of bd-lff4p.8 to prevent accidental host coupling
 in the core crates.
 
+Note: `ftui-core` includes native-only terminal lifecycle (`TerminalSession`)
+that is not available on `wasm32-unknown-unknown`. The WASM build check gates
+the host-agnostic portions (events/geometry/parsing helpers) and catches
+unintentional platform coupling early.
+
 ## "Never Regress" List (Must Have Goldens)
 
 These behaviors are not allowed to regress without an explicit, reviewed update
@@ -298,4 +303,3 @@ When any of these change intentionally:
 - Update the relevant golden artifacts.
 - Update the hash registry/checksums.
 - Record the new semantics in this spec (do not rely on code archaeology).
-

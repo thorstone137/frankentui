@@ -631,3 +631,41 @@ jobs:
 
       - name: Check MSRV
         run: cargo check --workspace
+
+  # ==========================================================================
+  # WASM Build Check (host-agnostic surfaces)
+  # ==========================================================================
+  wasm:
+    name: WASM Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check host-agnostic crates for wasm32-unknown-unknown
+        run: |
+          set -euo pipefail
+          cargo check --target wasm32-unknown-unknown -p ftui-core
+          cargo check --target wasm32-unknown-unknown -p ftui-render
+          cargo check --target wasm32-unknown-unknown -p ftui-style
+          cargo check --target wasm32-unknown-unknown -p ftui-layout
+          cargo check --target wasm32-unknown-unknown -p ftui-text
+          cargo check --target wasm32-unknown-unknown -p ftui-i18n
