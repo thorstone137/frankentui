@@ -14,6 +14,7 @@
 
 pub mod glyph_atlas;
 pub mod input;
+pub mod patch_feed;
 pub mod renderer;
 
 #[cfg(target_arch = "wasm32")]

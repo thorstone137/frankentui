@@ -17,6 +17,7 @@ default = []
 
 [dependencies]
 frankenterm-core = { path = "../frankenterm-core", version = "0.1.0" }
+ftui-render = { path = "../ftui-render", version = "0.1.1" }
 bitflags = "2.10.0"
 serde = { version = "1.0.227", features = ["derive"] }
 serde_json = "1.0.145"
