@@ -30,6 +30,7 @@ pub mod asciicast;
 pub mod bocpd;
 pub mod conformal_alert;
 pub mod conformal_predictor;
+pub mod cost_model;
 pub mod debug_trace;
 pub mod eprocess_throttle;
 pub mod evidence_sink;
@@ -115,6 +116,10 @@ pub use conformal_alert::{
 pub use conformal_predictor::{
     BucketKey, ConformalConfig, ConformalPrediction, ConformalPredictor, ConformalUpdate,
     DiffBucket, ModeBucket,
+};
+pub use cost_model::{
+    BatchCostParams, BatchCostResult, CacheCostParams, CacheCostResult, PipelineCostParams,
+    PipelineCostResult, StageStats,
 };
 pub use eprocess_throttle::{
     EProcessThrottle, ThrottleConfig, ThrottleDecision, ThrottleLog, ThrottleStats,

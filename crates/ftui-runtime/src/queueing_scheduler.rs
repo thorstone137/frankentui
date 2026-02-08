@@ -32,6 +32,11 @@
 //! priority = (weight / remaining_time) + aging_factor * wait_time
 //! ```
 //!
+//! Equivalent minimization form (used for evidence logging):
+//! ```text
+//! loss_proxy = 1 / max(priority, w_min)
+//! ```
+//!
 //! This combines:
 //! - Smith's rule: `weight / remaining_time`
 //! - Aging: linear increase with wait time
@@ -391,10 +396,16 @@ pub struct JobEvidence {
     pub weight: f64,
     /// Base ratio (w/p).
     pub ratio: f64,
+    /// Aging contribution (`aging_factor * age_ms`).
+    pub aging_reward: f64,
+    /// Starvation floor (`ratio * starve_boost_ratio`) when guard applies, else 0.
+    pub starvation_floor: f64,
     /// Age in queue (ms).
     pub age_ms: f64,
     /// Effective priority (ratio + aging, with starvation guard).
     pub effective_priority: f64,
+    /// Monotone loss proxy minimized by policy (lower is better).
+    pub objective_loss_proxy: f64,
     /// Estimate source.
     pub estimate_source: EstimateSource,
     /// Weight source.
@@ -586,10 +597,16 @@ impl JobEvidence {
         let _ = write!(out, "{:.6}", self.weight);
         out.push_str(",\"ratio\":");
         let _ = write!(out, "{:.6}", self.ratio);
+        out.push_str(",\"aging_reward\":");
+        let _ = write!(out, "{:.6}", self.aging_reward);
+        out.push_str(",\"starvation_floor\":");
+        let _ = write!(out, "{:.6}", self.starvation_floor);
         out.push_str(",\"age_ms\":");
         let _ = write!(out, "{:.6}", self.age_ms);
         out.push_str(",\"effective_priority\":");
         let _ = write!(out, "{:.6}", self.effective_priority);
+        out.push_str(",\"objective_loss_proxy\":");
+        let _ = write!(out, "{:.6}", self.objective_loss_proxy);
         out.push_str(",\"estimate_source\":\"");
         out.push_str(self.estimate_source.as_str());
         out.push('"');
@@ -691,6 +708,13 @@ pub struct QueueingScheduler {
 
     /// Statistics.
     stats: SchedulerStats,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PriorityTerms {
+    aging_reward: f64,
+    starvation_floor: f64,
+    effective_priority: f64,
 }
 
 impl QueueingScheduler {
@@ -891,14 +915,18 @@ impl QueueingScheduler {
             .iter()
             .map(|pj| {
                 let age_ms = (self.current_time - pj.job.arrival_time).max(0.0);
+                let terms = self.compute_priority_terms(&pj.job);
                 JobEvidence {
                     job_id: pj.job.id,
                     name: pj.job.name.clone(),
                     estimate_ms: pj.job.remaining_time,
                     weight: pj.job.weight,
                     ratio: pj.base_ratio,
+                    aging_reward: terms.aging_reward,
+                    starvation_floor: terms.starvation_floor,
                     age_ms,
                     effective_priority: pj.priority,
+                    objective_loss_proxy: 1.0 / pj.priority.max(self.config.w_min),
                     estimate_source: pj.job.estimate_source,
                     weight_source: pj.job.weight_source,
                 }
@@ -1031,21 +1059,44 @@ impl QueueingScheduler {
         weight / remaining
     }
 
-    /// Compute effective priority (base ratio + aging, with starvation guard).
-    fn compute_priority(&self, job: &Job) -> f64 {
+    /// Compute the scheduling objective terms.
+    ///
+    /// We maximize:
+    /// `priority = base_ratio + aging_reward`, then apply starvation floor.
+    ///
+    /// The equivalent minimized quantity is:
+    /// `loss_proxy = 1 / max(priority, w_min)`.
+    fn compute_priority_terms(&self, job: &Job) -> PriorityTerms {
         if self.config.mode() == SchedulingMode::Fifo {
-            return 0.0;
+            return PriorityTerms {
+                aging_reward: 0.0,
+                starvation_floor: 0.0,
+                effective_priority: 0.0,
+            };
         }
+
         let base_ratio = self.compute_base_ratio(job);
         let wait_time = (self.current_time - job.arrival_time).max(0.0);
-        let aging_boost = self.config.aging_factor * wait_time;
-        let mut effective = base_ratio + aging_boost;
+        let aging_reward = self.config.aging_factor * wait_time;
+        let starvation_floor =
+            if self.config.wait_starve_ms > 0.0 && wait_time >= self.config.wait_starve_ms {
+                base_ratio * self.config.starve_boost_ratio
+            } else {
+                0.0
+            };
 
-        if self.config.wait_starve_ms > 0.0 && wait_time >= self.config.wait_starve_ms {
-            effective = effective.max(base_ratio * self.config.starve_boost_ratio);
+        let effective_priority = (base_ratio + aging_reward).max(starvation_floor);
+
+        PriorityTerms {
+            aging_reward,
+            starvation_floor,
+            effective_priority,
         }
+    }
 
-        effective
+    /// Compute effective priority (base ratio + aging, with starvation guard).
+    fn compute_priority(&self, job: &Job) -> f64 {
+        self.compute_priority_terms(job).effective_priority
     }
 
     /// Build a priority-queue entry for a job.
@@ -1679,6 +1730,29 @@ mod tests {
         let evidence = scheduler.evidence();
         assert!(evidence.mean_wait_time > 0.0);
         assert!(evidence.max_wait_time > 0.0);
+    }
+
+    #[test]
+    fn evidence_reports_priority_objective_terms() {
+        let mut config = test_config();
+        config.aging_factor = 0.5;
+        config.wait_starve_ms = 10.0;
+        config.starve_boost_ratio = 2.0;
+        let mut scheduler = QueueingScheduler::new(config);
+
+        scheduler.submit(1.0, 20.0);
+        scheduler.current_time = 20.0;
+        scheduler.refresh_priorities();
+
+        let evidence = scheduler.evidence();
+        let job = evidence.jobs.first().expect("job evidence");
+        assert!(job.aging_reward > 0.0);
+        assert!(job.starvation_floor > 0.0);
+        assert!(job.effective_priority >= job.ratio + job.aging_reward);
+        assert!(
+            (job.objective_loss_proxy - (1.0 / job.effective_priority.max(DEFAULT_W_MIN))).abs()
+                < 1e-9
+        );
     }
 
     // =========================================================================
