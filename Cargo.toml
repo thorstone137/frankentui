@@ -20,6 +20,7 @@ members = [
   "crates/frankenterm-web",
   "crates/ftui-backend",
   "crates/ftui-tty",
+  "crates/ftui-web",
 ]
 
 [profile.release]

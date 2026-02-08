@@ -1,0 +1,19 @@
+[package]
+name = "ftui-web"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "WASM backend implementation for FrankenTUI (host-driven, deterministic)."
+repository = "https://github.com/Dicklesworthstone/frankentui"
+homepage = "https://github.com/Dicklesworthstone/frankentui"
+documentation = "https://docs.rs/ftui-web"
+readme = "../../README.md"
+
+[dependencies]
+ftui-backend = { path = "../ftui-backend", version = "0.1.0" }
+ftui-core = { path = "../ftui-core", version = "0.1.1" }
+ftui-render = { path = "../ftui-render", version = "0.1.1" }
+
+[dev-dependencies]
+# Used only for small deterministic unit tests.
+pretty_assertions = "1.4.1"
