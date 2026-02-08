@@ -183,6 +183,10 @@ impl Atlas {
         (self.width, self.height)
     }
 
+    fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
     fn take_dirty(&mut self) -> Vec<AtlasRect> {
         std::mem::take(&mut self.dirty)
     }
@@ -341,6 +345,11 @@ impl GlyphAtlasCache {
     #[must_use]
     pub fn atlas_dims(&self) -> (u16, u16) {
         self.atlas.dims()
+    }
+
+    #[must_use]
+    pub fn atlas_pixels(&self) -> &[u8] {
+        self.atlas.pixels()
     }
 
     /// Take the list of dirty rects written since last call.

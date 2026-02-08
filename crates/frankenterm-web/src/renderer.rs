@@ -7,11 +7,14 @@
 //! This skeleton covers:
 //! - WebGPU device initialization + surface configuration
 //! - Resize handling (surface reconfiguration + instance buffer growth)
-//! - Per-cell background + lightweight foreground style rendering
+//! - Per-cell background + glyph-atlas foreground sampling
 //! - Dirty-span patch updates via `queue.write_buffer` slices
 //!
-//! Glyph-atlas sampling is still pending on bd-lff4p.2.4 integration.
+//! Atlas glyph generation is currently deterministic/procedural pending final
+//! font-raster contract from bd-lff4p.2.4.
 
+#[cfg(target_arch = "wasm32")]
+use crate::glyph_atlas::{GlyphMetrics, GlyphPlacement, GlyphRaster};
 use std::fmt;
 
 // ---------------------------------------------------------------------------
@@ -24,6 +27,22 @@ pub const CELL_DATA_BYTES: usize = 16;
 /// Size of the uniform buffer in bytes (2 × vec4 = 32 bytes).
 #[cfg(any(target_arch = "wasm32", test))]
 const UNIFORM_BYTES: usize = 32;
+
+/// Size of one glyph metadata entry in bytes (4 × f32 = 16 bytes).
+#[cfg(target_arch = "wasm32")]
+const GLYPH_META_BYTES: usize = 16;
+
+/// Glyph atlas dimensions (R8 texture, power-of-two for straightforward uploads).
+#[cfg(target_arch = "wasm32")]
+const GLYPH_ATLAS_WIDTH: u16 = 2048;
+#[cfg(target_arch = "wasm32")]
+const GLYPH_ATLAS_HEIGHT: u16 = 2048;
+
+/// Maximum glyph metadata entries mirrored to the GPU.
+///
+/// Slot 0 is reserved for "no glyph", so real glyphs start at 1.
+#[cfg(target_arch = "wasm32")]
+const MAX_GLYPH_SLOTS: usize = 4096;
 
 /// Per-cell data sent to the GPU via a storage buffer.
 ///
@@ -65,6 +84,109 @@ impl CellData {
 impl Default for CellData {
     fn default() -> Self {
         Self::EMPTY
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GlyphMetaEntry {
+    uv_min_x: f32,
+    uv_min_y: f32,
+    uv_max_x: f32,
+    uv_max_y: f32,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl GlyphMetaEntry {
+    const EMPTY: Self = Self {
+        uv_min_x: 0.0,
+        uv_min_y: 0.0,
+        uv_max_x: 0.0,
+        uv_max_y: 0.0,
+    };
+
+    #[must_use]
+    fn from_placement(placement: GlyphPlacement, atlas_width: u16, atlas_height: u16) -> Self {
+        let inv_w = 1.0f32 / f32::from(atlas_width.max(1));
+        let inv_h = 1.0f32 / f32::from(atlas_height.max(1));
+        let x0 = f32::from(placement.draw.x) * inv_w;
+        let y0 = f32::from(placement.draw.y) * inv_h;
+        let x1 = f32::from(placement.draw.x.saturating_add(placement.draw.w)) * inv_w;
+        let y1 = f32::from(placement.draw.y.saturating_add(placement.draw.h)) * inv_h;
+
+        Self {
+            uv_min_x: x0.clamp(0.0, 1.0),
+            uv_min_y: y0.clamp(0.0, 1.0),
+            uv_max_x: x1.clamp(0.0, 1.0),
+            uv_max_y: y1.clamp(0.0, 1.0),
+        }
+    }
+
+    #[must_use]
+    fn to_bytes(self) -> [u8; GLYPH_META_BYTES] {
+        let mut out = [0u8; GLYPH_META_BYTES];
+        out[0..4].copy_from_slice(&self.uv_min_x.to_le_bytes());
+        out[4..8].copy_from_slice(&self.uv_min_y.to_le_bytes());
+        out[8..12].copy_from_slice(&self.uv_max_x.to_le_bytes());
+        out[12..16].copy_from_slice(&self.uv_max_y.to_le_bytes());
+        out
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+fn glyph_meta_to_bytes(meta: &[GlyphMetaEntry]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(meta.len() * GLYPH_META_BYTES);
+    for entry in meta {
+        bytes.extend_from_slice(&entry.to_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_arch = "wasm32")]
+fn rasterize_procedural_glyph(codepoint: u32, width: u16, height: u16) -> GlyphRaster {
+    let w = width.max(1);
+    let h = height.max(1);
+    let mut pixels = vec![0u8; (w as usize) * (h as usize)];
+
+    let Some(ch) = char::from_u32(codepoint) else {
+        return GlyphRaster {
+            width: w,
+            height: h,
+            pixels,
+            metrics: GlyphMetrics {
+                advance_x: i16::try_from(w).unwrap_or(i16::MAX),
+                bearing_x: 0,
+                bearing_y: i16::try_from(h).unwrap_or(i16::MAX),
+            },
+        };
+    };
+
+    if !ch.is_whitespace() {
+        let seed = codepoint.wrapping_mul(0x9E37_79B9) ^ (u32::from(w) << 16) ^ u32::from(h);
+        for y in 0..h {
+            for x in 0..w {
+                let border = x == 0 || y == 0 || x + 1 == w || y + 1 == h;
+                let bit_index = (u32::from(x) + u32::from(y) * 7) & 31;
+                let hash_bit = ((seed >> bit_index) & 1) == 1;
+                let stripe = ((u32::from(x) * 3 + u32::from(y) + seed) % 11) == 0;
+                let dot = ((u32::from(x) + u32::from(y) * 5 + seed) % 17) == 0;
+                if border || (hash_bit && stripe) || dot {
+                    pixels[(y as usize) * (w as usize) + (x as usize)] = 0xFF;
+                }
+            }
+        }
+    }
+
+    GlyphRaster {
+        width: w,
+        height: h,
+        pixels,
+        metrics: GlyphMetrics {
+            advance_x: i16::try_from(w).unwrap_or(i16::MAX),
+            bearing_x: 0,
+            bearing_y: i16::try_from(h).unwrap_or(i16::MAX),
+        },
     }
 }
 
@@ -150,6 +272,16 @@ struct CellData {
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read> cells: array<CellData>;
+@group(0) @binding(2) var glyph_atlas: texture_2d<f32>;
+@group(0) @binding(3) var glyph_sampler: sampler;
+
+struct GlyphMeta {
+    // UV coordinates in normalized atlas space.
+    uv_min: vec2<f32>,
+    uv_max: vec2<f32>,
+}
+
+@group(0) @binding(4) var<storage, read> glyph_meta: array<GlyphMeta>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -244,23 +376,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         uv.x = clamp(uv.x + (0.5 - uv.y) * 0.18, 0.0, 1.0);
     }
 
-    let stroke = select(0.20, 0.14, (in.attrs & ATTR_BOLD) != 0u);
-    let has_glyph = in.glyph_id != 0u;
-    let glyph_fill =
-        has_glyph
-        && uv.x >= stroke
-        && uv.x <= (1.0 - stroke)
-        && uv.y >= stroke
-        && uv.y <= (1.0 - stroke);
     let underline = (in.attrs & ATTR_UNDERLINE) != 0u && in.uv.y >= 0.90;
     let strike = (in.attrs & ATTR_STRIKETHROUGH) != 0u
         && abs(in.uv.y - 0.55) <= 0.03;
-    let draw_fg = glyph_fill || underline || strike;
 
-    if (draw_fg) {
-        return bg * (1.0 - fg.a) + fg * fg.a;
+    var glyph_alpha = 0.0;
+    if (in.glyph_id != 0u) {
+        let meta = glyph_meta[in.glyph_id];
+        let atlas_uv = vec2<f32>(
+            mix(meta.uv_min.x, meta.uv_max.x, clamp(uv.x, 0.0, 1.0)),
+            mix(meta.uv_min.y, meta.uv_max.y, clamp(uv.y, 0.0, 1.0)),
+        );
+        glyph_alpha = textureSample(glyph_atlas, glyph_sampler, atlas_uv).r;
     }
-    return bg;
+
+    let decoration_alpha = select(0.0, 1.0, underline || strike);
+    let ink_alpha = max(glyph_alpha, decoration_alpha) * fg.a;
+    let out_rgb = bg.rgb * (1.0 - ink_alpha) + fg.rgb * ink_alpha;
+    let out_a = max(bg.a, ink_alpha);
+    return vec4<f32>(out_rgb, out_a);
 }
 "#;
 
@@ -271,6 +405,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 #[cfg(target_arch = "wasm32")]
 mod gpu {
     use super::*;
+    use crate::glyph_atlas::{GlyphAtlasCache, GlyphKey};
+    use std::collections::HashMap;
     use web_sys::HtmlCanvasElement;
     use wgpu;
 
@@ -288,11 +424,21 @@ mod gpu {
         cell_buffer: wgpu::Buffer,
         bind_group: wgpu::BindGroup,
         bind_group_layout: wgpu::BindGroupLayout,
+        glyph_meta_buffer: wgpu::Buffer,
+        _atlas_texture: wgpu::Texture,
+        atlas_view: wgpu::TextureView,
+        atlas_sampler: wgpu::Sampler,
         cols: u16,
         rows: u16,
         cell_width: u16,
         cell_height: u16,
         dpr: f32,
+        atlas_width: u16,
+        atlas_height: u16,
+        glyph_cache: GlyphAtlasCache,
+        glyph_slot_by_codepoint: HashMap<u32, u32>,
+        glyph_meta_cpu: Vec<GlyphMetaEntry>,
+        next_glyph_slot: u32,
         /// Shadow copy of cell data for resize-time buffer rebuilds.
         cells_cpu: Vec<CellData>,
         /// Scratch buffer reused for patch uploads to avoid per-patch allocs.
@@ -370,7 +516,7 @@ mod gpu {
                 source: wgpu::ShaderSource::Wgsl(CELL_SHADER_WGSL.into()),
             });
 
-            // Bind group layout: uniform + storage.
+            // Bind group layout: uniform + cell storage + atlas + glyph metadata.
             let bind_group_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("cell_bgl"),
@@ -388,6 +534,32 @@ mod gpu {
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
                             visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
@@ -448,6 +620,50 @@ mod gpu {
                 queue.write_buffer(&cell_buffer, 0, &cell_bytes);
             }
 
+            let atlas_width = GLYPH_ATLAS_WIDTH;
+            let atlas_height = GLYPH_ATLAS_HEIGHT;
+            let glyph_cache = GlyphAtlasCache::new(
+                atlas_width,
+                atlas_height,
+                usize::from(atlas_width) * usize::from(atlas_height),
+            );
+
+            let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("glyph_atlas"),
+                size: wgpu::Extent3d {
+                    width: u32::from(atlas_width),
+                    height: u32::from(atlas_height),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let atlas_view = atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("glyph_atlas_sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+
+            let glyph_meta_cpu = vec![GlyphMetaEntry::EMPTY; MAX_GLYPH_SLOTS];
+            let glyph_meta_bytes = glyph_meta_to_bytes(&glyph_meta_cpu);
+            let glyph_meta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("glyph_meta"),
+                size: glyph_meta_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&glyph_meta_buffer, 0, &glyph_meta_bytes);
+
             let uniform_bytes = uniforms_bytes(
                 pixel_width as f32,
                 pixel_height as f32,
@@ -476,6 +692,18 @@ mod gpu {
                         binding: 1,
                         resource: cell_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&atlas_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&atlas_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: glyph_meta_buffer.as_entire_binding(),
+                    },
                 ],
             });
 
@@ -489,11 +717,21 @@ mod gpu {
                 cell_buffer,
                 bind_group,
                 bind_group_layout,
+                glyph_meta_buffer,
+                _atlas_texture: atlas_texture,
+                atlas_view,
+                atlas_sampler,
                 cols,
                 rows,
                 cell_width: config.cell_width,
                 cell_height: config.cell_height,
                 dpr,
+                atlas_width,
+                atlas_height,
+                glyph_cache,
+                glyph_slot_by_codepoint: HashMap::new(),
+                glyph_meta_cpu,
+                next_glyph_slot: 1,
                 cells_cpu,
                 patch_upload_scratch: Vec::new(),
                 last_dirty_cells: 0,
@@ -554,8 +792,95 @@ mod gpu {
                         binding: 1,
                         resource: self.cell_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&self.atlas_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.glyph_meta_buffer.as_entire_binding(),
+                    },
                 ],
             });
+        }
+
+        fn glyph_pixel_size(&self) -> (u16, u16) {
+            let w = (f32::from(self.cell_width) * self.dpr).round();
+            let h = (f32::from(self.cell_height) * self.dpr).round();
+            (
+                w.clamp(1.0, f32::from(u16::MAX)) as u16,
+                h.clamp(1.0, f32::from(u16::MAX)) as u16,
+            )
+        }
+
+        fn upload_full_atlas(&mut self) {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self._atlas_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                self.glyph_cache.atlas_pixels(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(u32::from(self.atlas_width)),
+                    rows_per_image: Some(u32::from(self.atlas_height)),
+                },
+                wgpu::Extent3d {
+                    width: u32::from(self.atlas_width),
+                    height: u32::from(self.atlas_height),
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        fn ensure_glyph_slot(&mut self, codepoint: u32) -> u32 {
+            if codepoint == 0 {
+                return 0;
+            }
+            if let Some(slot) = self.glyph_slot_by_codepoint.get(&codepoint).copied() {
+                return slot;
+            }
+            if (self.next_glyph_slot as usize) >= MAX_GLYPH_SLOTS {
+                return 0;
+            }
+
+            let Some(ch) = char::from_u32(codepoint) else {
+                return 0;
+            };
+            let (cell_w, cell_h) = self.glyph_pixel_size();
+            let glyph_w = cell_w.saturating_sub(2).max(1);
+            let glyph_h = cell_h.saturating_sub(2).max(1);
+            let key = GlyphKey::from_char(ch, cell_h.max(1));
+
+            let placement = match self.glyph_cache.get_or_insert_with(key, |_| {
+                rasterize_procedural_glyph(codepoint, glyph_w, glyph_h)
+            }) {
+                Ok(placement) => placement,
+                Err(_) => return 0,
+            };
+
+            let slot = self.next_glyph_slot;
+            self.next_glyph_slot = self.next_glyph_slot.saturating_add(1);
+            self.glyph_slot_by_codepoint.insert(codepoint, slot);
+
+            let meta =
+                GlyphMetaEntry::from_placement(placement, self.atlas_width, self.atlas_height);
+            self.glyph_meta_cpu[slot as usize] = meta;
+            let byte_offset = (slot as u64) * (GLYPH_META_BYTES as u64);
+            self.queue
+                .write_buffer(&self.glyph_meta_buffer, byte_offset, &meta.to_bytes());
+
+            if !self.glyph_cache.take_dirty_rects().is_empty() {
+                self.upload_full_atlas();
+            }
+
+            slot
         }
 
         /// Apply dirty-span cell patches. Only modified cells are uploaded.
@@ -574,21 +899,17 @@ mod gpu {
                 if count == 0 {
                     continue;
                 }
-                let cells = &patch.cells[..count];
-
-                // Update CPU shadow.
-                for (i, cell) in cells.iter().enumerate() {
-                    self.cells_cpu[(start as usize) + i] = *cell;
-                }
-
                 // Upload only the dirty range to the GPU.
                 let byte_offset = (start as u64) * (CELL_DATA_BYTES as u64);
                 self.patch_upload_scratch.clear();
-                self.patch_upload_scratch
-                    .reserve(cells.len() * CELL_DATA_BYTES);
-                for cell in cells {
+                self.patch_upload_scratch.reserve(count * CELL_DATA_BYTES);
+
+                for i in 0..count {
+                    let mut gpu_cell = patch.cells[i];
+                    gpu_cell.glyph_id = self.ensure_glyph_slot(gpu_cell.glyph_id);
+                    self.cells_cpu[(start as usize) + i] = gpu_cell;
                     self.patch_upload_scratch
-                        .extend_from_slice(&cell.to_bytes());
+                        .extend_from_slice(&gpu_cell.to_bytes());
                 }
                 self.queue
                     .write_buffer(&self.cell_buffer, byte_offset, &self.patch_upload_scratch);
