@@ -224,6 +224,9 @@ Already in CI (ftui today):
 - E2E PTY + JSONL strict validation: `.github/workflows/ci.yml` job `e2e-pty`
 - Demo showcase E2E + JSONL strict validation: `.github/workflows/ci.yml` job `demo-showcase`
 - Fuzz smoke (input parser): `.github/workflows/ci.yml` job `fuzz`
+- WASM build check (host-agnostic crates): `.github/workflows/ci.yml` job `wasm`
+  - `cargo check --target wasm32-unknown-unknown -p ftui-core -p ftui-render -p ftui-style -p ftui-layout -p ftui-text -p ftui-i18n`
+  - Note: native terminal lifecycle (`ftui_core::terminal_session::TerminalSession`) is intentionally not available on wasm; this gate is about preventing accidental platform coupling in the core surfaces.
 
 Required for FrankenTerm / ftui-web before claiming "replacement-ready":
 - WASM build checks (at minimum):
@@ -245,4 +248,3 @@ This spec unblocks:
 - bd-lff4p.1.1 (VT/ANSI support matrix + conformance fixtures)
 - bd-lff4p.1.3 / bd-lff4p.1.6 (grid + parser implementation)
 - bd-lff4p.1.9 / bd-lff4p.1.11 (proptest + fuzz entrypoints)
-
