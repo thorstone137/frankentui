@@ -669,3 +669,5 @@ jobs:
           cargo check --target wasm32-unknown-unknown -p ftui-layout
           cargo check --target wasm32-unknown-unknown -p ftui-text
           cargo check --target wasm32-unknown-unknown -p ftui-i18n
+          cargo check --target wasm32-unknown-unknown -p frankenterm-core
+          cargo check --target wasm32-unknown-unknown -p frankenterm-web
