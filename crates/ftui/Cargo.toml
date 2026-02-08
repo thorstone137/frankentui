@@ -10,9 +10,10 @@ documentation = "https://docs.rs/ftui"
 readme = "../../README.md"
 
 [features]
-default = ["runtime", "extras"]
+default = ["runtime", "extras", "crossterm"]
 runtime = ["dep:ftui-runtime"]
 extras = ["dep:ftui-extras"]
+crossterm = ["ftui-core/crossterm"]
 
 [dependencies]
 ftui-core = { path = "../ftui-core", version = "0.1.1" }
