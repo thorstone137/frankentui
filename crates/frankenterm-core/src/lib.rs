@@ -29,11 +29,13 @@ pub mod modes;
 pub mod parser;
 pub mod patch;
 pub mod scrollback;
+pub mod selection;
 
-pub use cell::{Cell, CellFlags, Color, HyperlinkId, SgrAttrs, SgrFlags};
+pub use cell::{Cell, CellFlags, Color, HyperlinkId, HyperlinkRegistry, SgrAttrs, SgrFlags};
 pub use cursor::{Cursor, SavedCursor};
 pub use grid::Grid;
 pub use modes::{AnsiModes, DecModes, Modes};
 pub use parser::{Action, Parser};
 pub use patch::{CellUpdate, ChangeRun, DirtySpan, DirtyTracker, GridDiff, Patch};
 pub use scrollback::{Scrollback, ScrollbackLine};
+pub use selection::{BufferPos, Selection};

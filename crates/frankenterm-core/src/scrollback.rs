@@ -98,14 +98,17 @@ impl Scrollback {
     ///
     /// `wrapped` indicates whether the row was a soft-wrap continuation.
     /// If over capacity, the oldest line is evicted.
-    pub fn push_row(&mut self, cells: &[Cell], wrapped: bool) {
+    pub fn push_row(&mut self, cells: &[Cell], wrapped: bool) -> Option<ScrollbackLine> {
         if self.capacity == 0 {
-            return;
+            return None;
         }
-        if self.lines.len() == self.capacity {
-            self.lines.pop_front();
-        }
+        let evicted = if self.lines.len() == self.capacity {
+            self.lines.pop_front()
+        } else {
+            None
+        };
         self.lines.push_back(ScrollbackLine::new(cells, wrapped));
+        evicted
     }
 
     /// Pop the most recent (newest) line from scrollback.
@@ -166,15 +169,15 @@ mod tests {
     #[test]
     fn capacity_zero_drops_lines() {
         let mut sb = Scrollback::new(0);
-        sb.push_row(&make_row("hello"), false);
+        let _ = sb.push_row(&make_row("hello"), false);
         assert!(sb.is_empty());
     }
 
     #[test]
     fn push_and_retrieve() {
         let mut sb = Scrollback::new(10);
-        sb.push_row(&make_row("first"), false);
-        sb.push_row(&make_row("second"), true);
+        let _ = sb.push_row(&make_row("first"), false);
+        let _ = sb.push_row(&make_row("second"), true);
         assert_eq!(sb.len(), 2);
 
         let line0 = sb.get(0).unwrap();
@@ -189,9 +192,9 @@ mod tests {
     #[test]
     fn bounded_capacity_evicts_oldest() {
         let mut sb = Scrollback::new(2);
-        sb.push_row(&make_row("a"), false);
-        sb.push_row(&make_row("b"), false);
-        sb.push_row(&make_row("c"), false);
+        let _ = sb.push_row(&make_row("a"), false);
+        let _ = sb.push_row(&make_row("b"), false);
+        let _ = sb.push_row(&make_row("c"), false);
         assert_eq!(sb.len(), 2);
         assert_eq!(row_text(&sb.get(0).unwrap().cells), "b");
         assert_eq!(row_text(&sb.get(1).unwrap().cells), "c");
@@ -200,8 +203,8 @@ mod tests {
     #[test]
     fn pop_newest_returns_most_recent() {
         let mut sb = Scrollback::new(10);
-        sb.push_row(&make_row("old"), false);
-        sb.push_row(&make_row("new"), false);
+        let _ = sb.push_row(&make_row("old"), false);
+        let _ = sb.push_row(&make_row("new"), false);
         let popped = sb.pop_newest().unwrap();
         assert_eq!(row_text(&popped.cells), "new");
         assert_eq!(sb.len(), 1);
@@ -216,7 +219,7 @@ mod tests {
     #[test]
     fn peek_newest() {
         let mut sb = Scrollback::new(10);
-        sb.push_row(&make_row("line"), false);
+        let _ = sb.push_row(&make_row("line"), false);
         assert_eq!(row_text(&sb.peek_newest().unwrap().cells), "line");
         assert_eq!(sb.len(), 1); // not consumed
     }
@@ -225,7 +228,7 @@ mod tests {
     fn set_capacity_evicts_excess() {
         let mut sb = Scrollback::new(10);
         for i in 0..5 {
-            sb.push_row(&make_row(&format!("line{i}")), false);
+            let _ = sb.push_row(&make_row(&format!("line{i}")), false);
         }
         sb.set_capacity(2);
         assert_eq!(sb.len(), 2);
@@ -236,9 +239,9 @@ mod tests {
     #[test]
     fn iter_oldest_to_newest() {
         let mut sb = Scrollback::new(10);
-        sb.push_row(&make_row("a"), false);
-        sb.push_row(&make_row("b"), false);
-        sb.push_row(&make_row("c"), false);
+        let _ = sb.push_row(&make_row("a"), false);
+        let _ = sb.push_row(&make_row("b"), false);
+        let _ = sb.push_row(&make_row("c"), false);
         let texts: Vec<String> = sb.iter().map(|l| row_text(&l.cells)).collect();
         assert_eq!(texts, vec!["a", "b", "c"]);
     }
@@ -246,8 +249,8 @@ mod tests {
     #[test]
     fn iter_rev_newest_to_oldest() {
         let mut sb = Scrollback::new(10);
-        sb.push_row(&make_row("a"), false);
-        sb.push_row(&make_row("b"), false);
+        let _ = sb.push_row(&make_row("a"), false);
+        let _ = sb.push_row(&make_row("b"), false);
         let texts: Vec<String> = sb.iter_rev().map(|l| row_text(&l.cells)).collect();
         assert_eq!(texts, vec!["b", "a"]);
     }
@@ -255,7 +258,7 @@ mod tests {
     #[test]
     fn clear_empties_buffer() {
         let mut sb = Scrollback::new(10);
-        sb.push_row(&make_row("x"), false);
+        let _ = sb.push_row(&make_row("x"), false);
         sb.clear();
         assert!(sb.is_empty());
     }
@@ -271,7 +274,7 @@ mod tests {
             underline_color: None,
         };
         cells[1].hyperlink = 42;
-        sb.push_row(&cells, false);
+        let _ = sb.push_row(&cells, false);
 
         let stored = sb.get(0).unwrap();
         assert!(stored.cells[0].attrs.flags.contains(SgrFlags::BOLD));

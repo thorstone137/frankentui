@@ -4,7 +4,7 @@
 //! of cells indexed by `(row, col)` and provides methods for the operations
 //! that the VT parser dispatches (print, erase, scroll, resize).
 
-use crate::cell::{Cell, Color};
+use crate::cell::{Cell, Color, HyperlinkRegistry};
 use crate::scrollback::Scrollback;
 
 /// 2D terminal cell grid.
@@ -60,6 +60,19 @@ impl Grid {
         } else {
             None
         }
+    }
+
+    /// Map a grid position to a hyperlink URI via the registry (OSC 8).
+    ///
+    /// This is intended for click/hover hit-testing in host renderers.
+    pub fn hyperlink_uri_at<'a>(
+        &self,
+        row: u16,
+        col: u16,
+        registry: &'a HyperlinkRegistry,
+    ) -> Option<&'a str> {
+        let id = self.cell(row, col)?.hyperlink;
+        registry.get(id)
     }
 
     /// Get a slice of cells for the given row.
@@ -340,7 +353,7 @@ impl Grid {
         // Push evicted rows to scrollback.
         for r in top..top + count {
             if let Some(row) = self.row_cells(r) {
-                scrollback.push_row(row, false);
+                let _ = scrollback.push_row(row, false);
             }
         }
 
@@ -498,7 +511,7 @@ impl Grid {
 
             for r in 0..rows_to_push {
                 if let Some(row) = self.row_cells(r) {
-                    scrollback.push_row(row, false);
+                    let _ = scrollback.push_row(row, false);
                 }
             }
 
@@ -1041,8 +1054,8 @@ mod tests {
         fill_grid_letters(&mut g);
         let mut sb = Scrollback::new(100);
         // Put some lines in scrollback.
-        sb.push_row(&[Cell::new('X'), Cell::new('X'), Cell::new('X')], false);
-        sb.push_row(&[Cell::new('Y'), Cell::new('Y'), Cell::new('Y')], false);
+        let _ = sb.push_row(&[Cell::new('X'), Cell::new('X'), Cell::new('X')], false);
+        let _ = sb.push_row(&[Cell::new('Y'), Cell::new('Y'), Cell::new('Y')], false);
 
         g.scroll_down_from(0, 4, 2, &mut sb);
         // Y then X should be at top (newest popped first, placed bottom-up).
@@ -1094,7 +1107,7 @@ mod tests {
         let mut g = Grid::new(3, 4);
         fill_grid_letters(&mut g);
         let mut sb = Scrollback::new(100);
-        sb.push_row(&[Cell::new('Z'), Cell::new('Z'), Cell::new('Z')], false);
+        let _ = sb.push_row(&[Cell::new('Z'), Cell::new('Z'), Cell::new('Z')], false);
 
         // Request 3 rows from scrollback but only 1 is available.
         g.scroll_down_from(0, 4, 3, &mut sb);
@@ -1129,8 +1142,8 @@ mod tests {
         let mut g = Grid::new(3, 2);
         fill_grid_letters(&mut g); // A, B
         let mut sb = Scrollback::new(100);
-        sb.push_row(&[Cell::new('X'), Cell::new('X'), Cell::new('X')], false);
-        sb.push_row(&[Cell::new('Y'), Cell::new('Y'), Cell::new('Y')], false);
+        let _ = sb.push_row(&[Cell::new('X'), Cell::new('X'), Cell::new('X')], false);
+        let _ = sb.push_row(&[Cell::new('Y'), Cell::new('Y'), Cell::new('Y')], false);
 
         // Cursor at row 1, grow from 2 to 4 rows.
         let new_row = g.resize_with_scrollback(3, 4, 1, &mut sb);
