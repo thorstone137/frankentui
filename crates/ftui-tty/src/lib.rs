@@ -202,6 +202,12 @@ pub struct TtyEventSource {
     /// When true, escape sequences are actually written to stdout.
     /// False in test/headless mode.
     live: bool,
+    /// Resize notifications (SIGWINCH) are delivered through this channel.
+    #[cfg(unix)]
+    resize_rx: Option<mpsc::Receiver<()>>,
+    /// Owns the SIGWINCH handler thread (kept alive by this field).
+    #[cfg(unix)]
+    _resize_guard: Option<ResizeSignalGuard>,
     /// Parser state machine: decodes terminal byte sequences into Events.
     parser: InputParser,
     /// Buffered events from the most recent parse.
@@ -219,6 +225,10 @@ impl TtyEventSource {
             width,
             height,
             live: false,
+            #[cfg(unix)]
+            resize_rx: None,
+            #[cfg(unix)]
+            _resize_guard: None,
             parser: InputParser::new(),
             event_queue: VecDeque::new(),
             tty_reader: None,
@@ -229,11 +239,34 @@ impl TtyEventSource {
     /// escape sequences to stdout).
     fn live(width: u16, height: u16) -> io::Result<Self> {
         let tty_reader = std::fs::File::open("/dev/tty")?;
+        let mut w = width;
+        let mut h = height;
+        #[cfg(unix)]
+        if let Ok(ws) = rustix::termios::tcgetwinsize(&tty_reader) {
+            if ws.ws_col > 0 && ws.ws_row > 0 {
+                w = ws.ws_col;
+                h = ws.ws_row;
+            }
+        }
+
+        #[cfg(unix)]
+        let (resize_guard, resize_rx) = {
+            let (resize_tx, resize_rx) = mpsc::sync_channel(1);
+            match ResizeSignalGuard::new(resize_tx) {
+                Ok(guard) => (Some(guard), Some(resize_rx)),
+                Err(_) => (None, None),
+            }
+        };
+
         Ok(Self {
             features: BackendFeatures::default(),
-            width,
-            height,
+            width: w,
+            height: h,
             live: true,
+            #[cfg(unix)]
+            resize_rx,
+            #[cfg(unix)]
+            _resize_guard: resize_guard,
             parser: InputParser::new(),
             event_queue: VecDeque::new(),
             tty_reader: Some(tty_reader),
@@ -251,6 +284,10 @@ impl TtyEventSource {
             width,
             height,
             live: false,
+            #[cfg(unix)]
+            resize_rx: None,
+            #[cfg(unix)]
+            _resize_guard: None,
             parser: InputParser::new(),
             event_queue: VecDeque::new(),
             tty_reader: Some(reader),

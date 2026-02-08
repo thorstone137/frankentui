@@ -194,10 +194,10 @@ mod tests {
         let mut p = Parser::new();
         let actions = p.feed(b"\x1b[31m");
         assert_eq!(actions.len(), 1);
-        match &actions[0] {
-            Action::Escape(seq) => assert_eq!(seq.as_slice(), b"\x1b[31m"),
-            other => panic!("expected Escape, got {other:?}"),
-        }
+        assert!(matches!(
+            &actions[0],
+            Action::Escape(seq) if seq.as_slice() == b"\x1b[31m"
+        ));
     }
 
     #[test]
@@ -205,9 +205,9 @@ mod tests {
         let mut p = Parser::new();
         let actions = p.feed(b"\x1b]0;title\x07");
         assert_eq!(actions.len(), 1);
-        match &actions[0] {
-            Action::Escape(seq) => assert!(seq.starts_with(b"\x1b]0;")),
-            other => panic!("expected Escape, got {other:?}"),
-        }
+        assert!(matches!(
+            &actions[0],
+            Action::Escape(seq) if seq.starts_with(b"\x1b]0;")
+        ));
     }
 }

@@ -3,7 +3,6 @@ import argparse
 import json
 import sys
 import tempfile
-import textwrap
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -749,7 +748,6 @@ def main() -> int:
         default=str(default_schema),
         help="Path to JSON schema file",
     )
-    default_registry = Path(__file__).with_name("e2e_hash_registry.json")
     parser.add_argument(
         "--registry",
         default="",
