@@ -56,6 +56,20 @@ impl CoreTerminalHarness {
             Action::CursorDown(count) => self.cursor.move_down(count, self.rows),
             Action::CursorRight(count) => self.cursor.move_right(count, self.cols),
             Action::CursorLeft(count) => self.cursor.move_left(count),
+            Action::CursorNextLine(count) => {
+                self.cursor.move_down(count, self.rows);
+                self.cursor.col = 0;
+                self.cursor.pending_wrap = false;
+            }
+            Action::CursorPrevLine(count) => {
+                self.cursor.move_up(count);
+                self.cursor.col = 0;
+                self.cursor.pending_wrap = false;
+            }
+            Action::CursorRow(row) => {
+                self.cursor
+                    .move_to(row, self.cursor.col, self.rows, self.cols);
+            }
             Action::CursorColumn(col) => {
                 self.cursor
                     .move_to(self.cursor.row, col, self.rows, self.cols);

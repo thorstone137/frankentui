@@ -49,7 +49,7 @@ const VIEWPORT_OVERRIDE_MIN_ROWS: u16 = 1;
 const VIEWPORT_OVERRIDE_STEP_COLS: i16 = 4;
 const VIEWPORT_OVERRIDE_STEP_ROWS: i16 = 2;
 
-const INIT_DIRECTIVE_DEMO: &str = r##"%%{init: {"theme":"base","themeVariables":{"primaryColor":"#ffcc00","primaryTextColor":"#111111","primaryBorderColor":"#ff9900"}}}%%"##;
+const INIT_DIRECTIVE_DEMO: &str = r##"%%{init: {"theme":"base","themeVariables":{"primaryColor":"#ffcc00","primaryTextColor":"#111111","primaryBorderColor":"#ff9900"},"flowchart":{"direction":"TB"}}}%%"##;
 
 const LINK_DEMO_FLOW_BASIC: &str = r#"click C "https://example.com/ok" "OK"
 click D "https://example.com/fix" "Fix""#;
