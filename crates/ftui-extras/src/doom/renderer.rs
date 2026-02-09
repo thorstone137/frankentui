@@ -1079,10 +1079,12 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(80, 50);
         let mut fb = DoomFramebuffer::new(80, 50);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
-        player.angle = 0.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            angle: 0.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1097,9 +1099,11 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(80, 50);
         let mut fb = DoomFramebuffer::new(80, 50);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1136,9 +1140,11 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(80, 50);
         let mut fb = DoomFramebuffer::new(80, 50);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1178,7 +1184,7 @@ mod tests {
     fn render_with_sky_ceiling_sector() {
         use super::super::map::*;
         // Sky ceiling sector should not draw ceiling color
-        let sectors = vec![Sector {
+        let sectors = [Sector {
             floor_height: 0.0,
             ceiling_height: 128.0,
             floor_texture: "FLOOR".into(),
@@ -1195,9 +1201,11 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(100, 60);
         let mut fb = DoomFramebuffer::new(100, 60);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1440,11 +1448,13 @@ mod tests {
         let map = make_two_room_map();
         let mut renderer = DoomRenderer::new(80, 50);
         let mut fb = DoomFramebuffer::new(80, 50);
-        let mut player = Player::default();
         // Stand in front room looking toward the portal wall
-        player.x = 128.0;
-        player.y = 64.0;
-        player.angle = std::f32::consts::FRAC_PI_2; // look toward +Y
+        let player = Player {
+            x: 128.0,
+            y: 64.0,
+            angle: std::f32::consts::FRAC_PI_2, // look toward +Y
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1463,10 +1473,12 @@ mod tests {
         let map = make_two_room_map();
         let mut renderer = DoomRenderer::new(80, 50);
         let mut fb = DoomFramebuffer::new(80, 50);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 64.0;
-        player.angle = std::f32::consts::FRAC_PI_2;
+        let player = Player {
+            x: 128.0,
+            y: 64.0,
+            angle: std::f32::consts::FRAC_PI_2,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1494,9 +1506,11 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(2, 10);
         let mut fb = DoomFramebuffer::new(2, 10);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1517,18 +1531,22 @@ mod tests {
 
         // Render with no pitch
         let mut renderer = DoomRenderer::new(80, 50);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
-        player.pitch = 0.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            pitch: 0.0,
+            ..Player::default()
+        };
         renderer.render(&mut fb1, &map, &player, &palette);
 
         // Render with upward pitch
         let mut renderer2 = DoomRenderer::new(80, 50);
-        let mut player2 = Player::default();
-        player2.x = 128.0;
-        player2.y = 128.0;
-        player2.pitch = 0.3;
+        let player2 = Player {
+            x: 128.0,
+            y: 128.0,
+            pitch: 0.3,
+            ..Player::default()
+        };
         renderer2.render(&mut fb2, &map, &player2, &palette);
 
         // The framebuffers should differ because pitch shifts wall projection
@@ -1795,9 +1813,11 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(1, 1);
         let mut fb = DoomFramebuffer::new(1, 1);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1813,18 +1833,22 @@ mod tests {
 
         let mut renderer1 = DoomRenderer::new(40, 30);
         let mut fb1 = DoomFramebuffer::new(40, 30);
-        let mut p1 = Player::default();
-        p1.x = 128.0;
-        p1.y = 128.0;
-        p1.angle = 0.0;
+        let p1 = Player {
+            x: 128.0,
+            y: 128.0,
+            angle: 0.0,
+            ..Player::default()
+        };
         renderer1.render(&mut fb1, &map, &p1, &palette);
 
         let mut renderer2 = DoomRenderer::new(40, 30);
         let mut fb2 = DoomFramebuffer::new(40, 30);
-        let mut p2 = Player::default();
-        p2.x = 128.0;
-        p2.y = 128.0;
-        p2.angle = std::f32::consts::PI;
+        let p2 = Player {
+            x: 128.0,
+            y: 128.0,
+            angle: std::f32::consts::PI,
+            ..Player::default()
+        };
         renderer2.render(&mut fb2, &map, &p2, &palette);
 
         assert_ne!(
@@ -1840,9 +1864,11 @@ mod tests {
         let map = make_simple_map();
         let mut renderer = DoomRenderer::new(80, 50);
         let mut fb = DoomFramebuffer::new(80, 50);
-        let mut player = Player::default();
-        player.x = 128.0;
-        player.y = 128.0;
+        let player = Player {
+            x: 128.0,
+            y: 128.0,
+            ..Player::default()
+        };
         let palette = DoomPalette::default();
 
         renderer.render(&mut fb, &map, &player, &palette);
@@ -1857,10 +1883,11 @@ mod tests {
     #[test]
     fn wall_color_index_wraps_with_linedef() {
         // WALL_COLORS has 8 entries; linedef index % 8 gives the color
-        assert_eq!(WALL_COLORS.len(), 8);
-        // Index 0 and 8 should be the same color
-        assert_eq!(WALL_COLORS[0 % 8], WALL_COLORS[8 % 8]);
-        assert_eq!(WALL_COLORS[3 % 8], WALL_COLORS[11 % 8]);
+        let color_count = WALL_COLORS.len();
+        assert_eq!(color_count, 8);
+        // Index N and N+len should map to the same palette color.
+        assert_eq!(WALL_COLORS[0], WALL_COLORS[(0 + color_count) % color_count]);
+        assert_eq!(WALL_COLORS[3], WALL_COLORS[(3 + color_count) % color_count]);
     }
 
     // --- lerp_u8 with extreme t values ---

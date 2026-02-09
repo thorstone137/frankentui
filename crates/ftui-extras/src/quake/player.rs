@@ -505,6 +505,28 @@ mod tests {
     }
 
     #[test]
+    fn right_vector_is_independent_of_pitch() {
+        let shallow = Player {
+            yaw: 1.25,
+            pitch: -0.2,
+            ..Player::default()
+        };
+        let steep = Player {
+            yaw: 1.25,
+            pitch: 0.9,
+            ..Player::default()
+        };
+        let r1 = shallow.right();
+        let r2 = steep.right();
+        for i in 0..3 {
+            assert!(
+                (r1[i] - r2[i]).abs() < 1e-6,
+                "right vector should not depend on pitch (component {i} differs)"
+            );
+        }
+    }
+
+    #[test]
     fn up_at_zero_pitch_is_z_axis() {
         let p = Player::default();
         let up = p.up();
@@ -541,6 +563,120 @@ mod tests {
             p.vel[2] < 0.0,
             "gravity should make z velocity negative: got {}",
             p.vel[2]
+        );
+    }
+
+    #[test]
+    fn tick_lands_on_floor_and_zeroes_vertical_velocity() {
+        let mut map = QuakeMap::new();
+        use crate::quake::map::Room;
+        map.rooms.push(Room {
+            x: -500.0,
+            y: -500.0,
+            width: 1000.0,
+            height: 1000.0,
+            floor_z: 0.0,
+            ceil_z: 500.0,
+            light: 200.0,
+        });
+        let mut p = Player {
+            on_ground: false,
+            pos: [0.0, 0.0, 0.25],
+            vel: [0.0, 0.0, -50.0],
+            ..Player::default()
+        };
+        p.tick(&map, 1.0 / 72.0);
+        assert!(p.on_ground, "player should be grounded after landing");
+        assert!(
+            p.pos[2].abs() < 1e-6,
+            "player should snap to floor z=0, got {}",
+            p.pos[2]
+        );
+        assert!(
+            p.vel[2].abs() < 1e-6,
+            "vertical velocity should be cleared on landing, got {}",
+            p.vel[2]
+        );
+    }
+
+    #[test]
+    fn tick_supportive_floor_avoids_high_platform_snap_when_below_step_tolerance() {
+        let mut map = QuakeMap::new();
+        use crate::quake::map::Room;
+        map.rooms.push(Room {
+            x: -200.0,
+            y: -200.0,
+            width: 400.0,
+            height: 400.0,
+            floor_z: 0.0,
+            ceil_z: 320.0,
+            light: 200.0,
+        });
+        map.rooms.push(Room {
+            x: -200.0,
+            y: -200.0,
+            width: 400.0,
+            height: 400.0,
+            floor_z: 120.0,
+            ceil_z: 420.0,
+            light: 200.0,
+        });
+        let mut p = Player {
+            on_ground: false,
+            pos: [0.0, 0.0, 10.0],
+            vel: [0.0, 0.0, 0.0],
+            ..Player::default()
+        };
+        p.tick(&map, 1.0 / 72.0);
+        assert!(
+            !p.on_ground,
+            "player below step tolerance should remain airborne, not snap to high floor"
+        );
+        assert!(
+            p.pos[2] > 0.0 && p.pos[2] < 120.0,
+            "player z should stay between base/high floors, got {}",
+            p.pos[2]
+        );
+    }
+
+    #[test]
+    fn tick_collision_zeroes_blocked_horizontal_velocity_component() {
+        let mut map = QuakeMap::new();
+        use crate::quake::map::{Room, WallSeg};
+        map.rooms.push(Room {
+            x: -200.0,
+            y: -200.0,
+            width: 400.0,
+            height: 400.0,
+            floor_z: 0.0,
+            ceil_z: 300.0,
+            light: 200.0,
+        });
+        map.walls.push(WallSeg {
+            x1: 200.0,
+            y1: -200.0,
+            x2: 200.0,
+            y2: 200.0,
+            floor_z: 0.0,
+            ceil_z: 300.0,
+        });
+        let mut p = Player {
+            on_ground: false,
+            pos: [180.0, 0.0, 32.0],
+            vel: [800.0, 0.0, 0.0],
+            ..Player::default()
+        };
+        let x_before = p.pos[0];
+        p.tick(&map, 1.0 / 72.0);
+        assert!(
+            p.vel[0].abs() < 1e-6,
+            "blocked x movement should zero x velocity, got {}",
+            p.vel[0]
+        );
+        assert!(
+            p.pos[0] <= x_before + 0.01,
+            "player should not move through wall on x axis: before={x_before}, after={}",
+            p.pos[0]
         );
     }
 
