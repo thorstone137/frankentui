@@ -1,0 +1,22 @@
+{
+  "name": "decawm_off_overwrite",
+  "description": "With DECAWM disabled, characters at the right margin overwrite the last column instead of wrapping",
+  "initial_size": [10, 3],
+  "input_bytes_hex": "1b5b3f376c4142434445464748494a4b4c",
+  "comment": "Disable DECAWM (CSI ? 7 l). Print ABCDEFGHIJKL (12 chars). A-I fill cols 0-8. J goes to col 9 (sets pending_wrap). K and L overwrite col 9 (no wrap). Final: col 9 = L.",
+  "expected": {
+    "cursor": { "row": 0, "col": 9 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 1, "char": "B" },
+      { "row": 0, "col": 2, "char": "C" },
+      { "row": 0, "col": 3, "char": "D" },
+      { "row": 0, "col": 4, "char": "E" },
+      { "row": 0, "col": 5, "char": "F" },
+      { "row": 0, "col": 6, "char": "G" },
+      { "row": 0, "col": 7, "char": "H" },
+      { "row": 0, "col": 8, "char": "I" },
+      { "row": 0, "col": 9, "char": "L" }
+    ]
+  }
+}

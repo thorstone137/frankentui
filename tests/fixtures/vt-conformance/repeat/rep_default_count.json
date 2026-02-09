@@ -1,0 +1,14 @@
+{
+  "name": "rep_default_count",
+  "description": "REP (CSI b) with no numeric parameter defaults to repeating 1 time",
+  "initial_size": [10, 3],
+  "input_bytes_hex": "4d1b5b62",
+  "comment": "Print M at (0,0), REP with no param repeats M once at (0,1). Cursor at (0,2).",
+  "expected": {
+    "cursor": { "row": 0, "col": 2 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "M" },
+      { "row": 0, "col": 1, "char": "M" }
+    ]
+  }
+}

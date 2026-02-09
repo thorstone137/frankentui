@@ -1,0 +1,16 @@
+{
+  "name": "wrap_wide_char_forced_wrap",
+  "description": "A wide (double-width) character at the rightmost column wraps to the next line instead of splitting across lines",
+  "initial_size": [5, 3],
+  "input_bytes_hex": "41424344e4b8ad",
+  "comment": "Print ABCD (fills cols 0-3, cursor at col 4). Print wide char U+4E2D at col 4: col+1=5>=5, so wrap first then print at (1,0)-(1,1). Col 4 stays blank.",
+  "expected": {
+    "cursor": { "row": 1, "col": 2 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 1, "char": "B" },
+      { "row": 0, "col": 2, "char": "C" },
+      { "row": 0, "col": 3, "char": "D" }
+    ]
+  }
+}

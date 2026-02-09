@@ -1,0 +1,22 @@
+{
+  "name": "ed_above_uses_current_bg",
+  "description": "ED 1 (erase above) fills erased cells with current background color",
+  "initial_size": [5, 3],
+  "input_bytes_hex": "4142434445464748494a1b5b34316d1b5b323b33481b5b314a",
+  "comment": "Print ABCDE on row 0, FGHIJ on row 1. SGR 41 (red bg). CUP(2,3) to (1,2). ED 1 erases from start through (1,2). Erased cells have red bg. Row 2 is untouched empty.",
+  "expected": {
+    "cursor": { "row": 1, "col": 2 },
+    "cells": [
+      { "row": 0, "col": 0, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 0, "col": 1, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 0, "col": 2, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 0, "col": 3, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 0, "col": 4, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 1, "col": 0, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 1, "col": 1, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 1, "col": 2, "char": " ", "attrs": { "bg_color": { "named": 1 } } },
+      { "row": 1, "col": 3, "char": "I", "attrs": { "bg_color": "default" } },
+      { "row": 1, "col": 4, "char": "J", "attrs": { "bg_color": "default" } }
+    ]
+  }
+}

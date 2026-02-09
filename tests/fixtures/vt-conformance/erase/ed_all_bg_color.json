@@ -1,0 +1,18 @@
+{
+  "name": "ed_all_bg_color",
+  "description": "ED 2 (erase all) with SGR 43 (bg yellow) — entire screen erased with cursor bg color",
+  "initial_size": [5, 2],
+  "input_bytes_hex": "41421b5b34336d1b5b324a",
+  "comment": "Print 'AB' at (0,0)-(0,1), SGR 43 (bg yellow), ED 2 → all cells erased with yellow bg, cursor stays at (0,2)",
+  "expected": {
+    "cursor": { "row": 0, "col": 2 },
+    "cells": [
+      { "row": 0, "col": 0, "char": " ", "attrs": { "bg_color": { "named": 3 } } },
+      { "row": 0, "col": 1, "char": " ", "attrs": { "bg_color": { "named": 3 } } },
+      { "row": 0, "col": 2, "char": " ", "attrs": { "bg_color": { "named": 3 } } },
+      { "row": 0, "col": 4, "char": " ", "attrs": { "bg_color": { "named": 3 } } },
+      { "row": 1, "col": 0, "char": " ", "attrs": { "bg_color": { "named": 3 } } },
+      { "row": 1, "col": 4, "char": " ", "attrs": { "bg_color": { "named": 3 } } }
+    ]
+  }
+}

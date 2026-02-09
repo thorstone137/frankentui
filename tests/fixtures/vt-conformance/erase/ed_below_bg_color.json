@@ -1,0 +1,20 @@
+{
+  "name": "ed_below_bg_color",
+  "description": "ED 0 (erase below) with SGR 44 (bg blue) — erased cells from cursor to end of screen inherit cursor bg",
+  "initial_size": [10, 3],
+  "input_bytes_hex": "4141414141414141414142424242424242424242434343434343434343431b5b34346d1b5b323b3648 1b5b304a",
+  "comment": "Fill 10x3 with A/B/C rows, SGR 44 (bg blue), CUP(2,6) → cursor (1,5), ED 0 → erase (1,5)..(2,9) with blue bg",
+  "expected": {
+    "cursor": { "row": 1, "col": 5 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A", "attrs": { "bg_color": "default" } },
+      { "row": 0, "col": 9, "char": "A", "attrs": { "bg_color": "default" } },
+      { "row": 1, "col": 0, "char": "B", "attrs": { "bg_color": "default" } },
+      { "row": 1, "col": 4, "char": "B", "attrs": { "bg_color": "default" } },
+      { "row": 1, "col": 5, "char": " ", "attrs": { "bg_color": { "named": 4 } } },
+      { "row": 1, "col": 9, "char": " ", "attrs": { "bg_color": { "named": 4 } } },
+      { "row": 2, "col": 0, "char": " ", "attrs": { "bg_color": { "named": 4 } } },
+      { "row": 2, "col": 9, "char": " ", "attrs": { "bg_color": { "named": 4 } } }
+    ]
+  }
+}

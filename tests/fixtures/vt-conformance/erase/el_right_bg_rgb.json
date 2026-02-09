@@ -1,0 +1,16 @@
+{
+  "name": "el_right_bg_rgb",
+  "description": "EL 0 with SGR 48;2;255;128;0 (bg RGB orange) — erased cells inherit truecolor bg",
+  "initial_size": [8, 1],
+  "input_bytes_hex": "414141411b5b34383b323b3235353b3132383b306d1b5b304b",
+  "comment": "Print 4 A's (cursor at col 4), SGR 48;2;255;128;0 (bg RGB orange), EL 0 → cols 4-7 erased with rgb(255,128,0) bg",
+  "expected": {
+    "cursor": { "row": 0, "col": 4 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A", "attrs": { "bg_color": "default" } },
+      { "row": 0, "col": 3, "char": "A", "attrs": { "bg_color": "default" } },
+      { "row": 0, "col": 4, "char": " ", "attrs": { "bg_color": { "rgb": [255, 128, 0] } } },
+      { "row": 0, "col": 7, "char": " ", "attrs": { "bg_color": { "rgb": [255, 128, 0] } } }
+    ]
+  }
+}

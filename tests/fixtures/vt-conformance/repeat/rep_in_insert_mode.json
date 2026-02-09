@@ -1,0 +1,17 @@
+{
+  "name": "rep_in_insert_mode",
+  "description": "REP with insert mode (IRM) active inserts repeated characters, shifting existing content right",
+  "initial_size": [10, 3],
+  "input_bytes_hex": "4142431b5b34681b5b313b32485a1b5b3162",
+  "comment": "Print ABC. Enable IRM (SM 4). CUP to (0,1). Print Z (inserts at col 1, shifts BC right). REP(1) inserts another Z at (0,2). Result: A Z Z B C.",
+  "expected": {
+    "cursor": { "row": 0, "col": 3 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 1, "char": "Z" },
+      { "row": 0, "col": 2, "char": "Z" },
+      { "row": 0, "col": 3, "char": "B" },
+      { "row": 0, "col": 4, "char": "C" }
+    ]
+  }
+}
