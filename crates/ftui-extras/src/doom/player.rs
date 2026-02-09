@@ -435,9 +435,11 @@ mod tests {
     #[test]
     fn tick_applies_friction() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.mom_x = 10.0;
-        p.mom_y = 5.0;
+        let mut p = Player {
+            mom_x: 10.0,
+            mom_y: 5.0,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -455,10 +457,11 @@ mod tests {
     #[test]
     fn tick_clamps_excessive_speed() {
         let map = empty_map();
-        let mut p = Player::default();
-        // Set very high momentum (well above PLAYER_MAX_MOVE)
-        p.mom_x = 100.0;
-        p.mom_y = 100.0;
+        let mut p = Player {
+            mom_x: 100.0,
+            mom_y: 100.0,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -474,10 +477,11 @@ mod tests {
     #[test]
     fn tick_kills_tiny_momentum() {
         let map = empty_map();
-        let mut p = Player::default();
-        // Set very small momentum (below the 0.1 threshold after friction)
-        p.mom_x = 0.05;
-        p.mom_y = 0.05;
+        let mut p = Player {
+            mom_x: 0.05,
+            mom_y: 0.05,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -490,10 +494,12 @@ mod tests {
     #[test]
     fn tick_applies_noclip_movement() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.noclip = true;
-        p.mom_x = 5.0;
-        p.mom_y = 3.0;
+        let mut p = Player {
+            noclip: true,
+            mom_x: 5.0,
+            mom_y: 3.0,
+            ..Player::default()
+        };
 
         let old_x = p.x;
         let old_y = p.y;
@@ -515,10 +521,11 @@ mod tests {
     #[test]
     fn tick_gravity_when_airborne() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.on_ground = false;
-        p.view_z = PLAYER_VIEW_HEIGHT + 50.0; // well above floor
-        p.mom_z = 0.0;
+        let mut p = Player {
+            on_ground: false,
+            view_z: PLAYER_VIEW_HEIGHT + 50.0,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -533,11 +540,12 @@ mod tests {
     #[test]
     fn tick_landing_resets_on_ground() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.on_ground = false;
-        // Set view_z just barely above target (floor_z + VIEW_HEIGHT)
-        p.view_z = PLAYER_VIEW_HEIGHT + 0.5;
-        p.mom_z = -1.0;
+        let mut p = Player {
+            on_ground: false,
+            view_z: PLAYER_VIEW_HEIGHT + 0.5,
+            mom_z: -1.0,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -553,8 +561,10 @@ mod tests {
     #[test]
     fn tick_bob_increases_while_moving() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.mom_x = 5.0; // enough speed for bob (>0.5 after friction)
+        let mut p = Player {
+            mom_x: 5.0,
+            ..Player::default()
+        };
 
         assert_eq!(p.bob_amount, 0.0);
         p.tick(&map);
@@ -573,10 +583,10 @@ mod tests {
     #[test]
     fn tick_bob_decays_when_still() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.bob_amount = 0.8;
-        p.mom_x = 0.0;
-        p.mom_y = 0.0;
+        let mut p = Player {
+            bob_amount: 0.8,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -590,9 +600,11 @@ mod tests {
     #[test]
     fn tick_bob_capped_at_one() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.bob_amount = 1.0;
-        p.mom_x = 5.0; // moving fast enough
+        let mut p = Player {
+            bob_amount: 1.0,
+            mom_x: 5.0,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -731,13 +743,12 @@ mod tests {
     #[test]
     fn collision_blocks_movement_into_wall() {
         let map = boxed_room_map();
-        let mut p = Player::default();
-        // Place player near bottom wall (y=0), try to move through it
-        p.x = 128.0;
-        p.y = PLAYER_RADIUS + 1.0; // just inside the room
-        p.mom_x = 0.0;
-        p.mom_y = -50.0; // push hard into the wall at y=0
-        p.noclip = false;
+        let mut p = Player {
+            x: 128.0,
+            y: PLAYER_RADIUS + 1.0,
+            mom_y: -50.0,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -752,12 +763,13 @@ mod tests {
     #[test]
     fn collision_allows_free_movement_in_center() {
         let map = boxed_room_map();
-        let mut p = Player::default();
-        p.x = 128.0;
-        p.y = 128.0;
-        p.mom_x = 5.0;
-        p.mom_y = 3.0;
-        p.noclip = false;
+        let mut p = Player {
+            x: 128.0,
+            y: 128.0,
+            mom_x: 5.0,
+            mom_y: 3.0,
+            ..Player::default()
+        };
 
         let old_x = p.x;
         let old_y = p.y;
@@ -777,11 +789,13 @@ mod tests {
     #[test]
     fn noclip_ignores_walls() {
         let map = boxed_room_map();
-        let mut p = Player::default();
-        p.x = 128.0;
-        p.y = 10.0;
-        p.mom_y = -50.0;
-        p.noclip = true;
+        let mut p = Player {
+            x: 128.0,
+            y: 10.0,
+            mom_y: -50.0,
+            noclip: true,
+            ..Player::default()
+        };
 
         p.tick(&map);
 
@@ -859,9 +873,11 @@ mod tests {
     #[test]
     fn repeated_ticks_friction_converges_to_zero() {
         let map = empty_map();
-        let mut p = Player::default();
-        p.mom_x = 20.0;
-        p.mom_y = 15.0;
+        let mut p = Player {
+            mom_x: 20.0,
+            mom_y: 15.0,
+            ..Player::default()
+        };
 
         for _ in 0..100 {
             p.tick(&map);
