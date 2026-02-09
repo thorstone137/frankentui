@@ -1,0 +1,16 @@
+{
+  "name": "el_right_from_wide_continuation",
+  "description": "EL 0 (erase right) starting at the continuation cell of a wide char should clean up the head",
+  "initial_size": [8, 1],
+  "input_bytes_hex": "41e4b8ad4243441b5b313b33481b5b304b",
+  "comment": "Print A, 中 (wide: cols 1-2), BCD. CUP(1,3) → cursor at (0,2) the continuation cell. EL 0 erases from (0,2) to end of line. The wide char head at (0,1) is cleaned up because its continuation was erased.",
+  "expected": {
+    "cursor": { "row": 0, "col": 2 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 1, "char": " " },
+      { "row": 0, "col": 2, "char": " " },
+      { "row": 0, "col": 7, "char": " " }
+    ]
+  }
+}

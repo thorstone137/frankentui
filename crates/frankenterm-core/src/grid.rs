@@ -180,6 +180,25 @@ impl Grid {
             // Single row partial erase.
             let sc = start_col.min(self.cols);
             let ec = end_col.min(self.cols);
+
+            // Wide-char fixup (left): if erasing starts at a continuation
+            // cell, its head is outside the range and becomes orphaned.
+            if sc > 0 && sc < self.cols {
+                let idx = self.index(sr, sc);
+                if self.cells[idx].is_wide_continuation() {
+                    let head_idx = self.index(sr, sc - 1);
+                    self.cells[head_idx].erase(bg);
+                }
+            }
+            // Wide-char fixup (right): if the cell just past the erased
+            // range is a continuation, its head is being erased.
+            if ec < self.cols {
+                let idx = self.index(sr, ec);
+                if self.cells[idx].is_wide_continuation() {
+                    self.cells[idx].erase(bg);
+                }
+            }
+
             for c in sc..ec {
                 let idx = self.index(sr, c);
                 self.cells[idx].erase(bg);
@@ -187,6 +206,16 @@ impl Grid {
         } else {
             // First row partial.
             let sc = start_col.min(self.cols);
+
+            // Wide-char fixup (left) for first row.
+            if sc > 0 && sc < self.cols {
+                let idx = self.index(sr, sc);
+                if self.cells[idx].is_wide_continuation() {
+                    let head_idx = self.index(sr, sc - 1);
+                    self.cells[head_idx].erase(bg);
+                }
+            }
+
             for c in sc..self.cols {
                 let idx = self.index(sr, c);
                 self.cells[idx].erase(bg);
@@ -201,6 +230,15 @@ impl Grid {
             // Last row partial (if end_col > 0).
             if end_col > 0 && er < self.rows {
                 let ec = end_col.min(self.cols);
+
+                // Wide-char fixup (right) for last row.
+                if ec < self.cols {
+                    let idx = self.index(er, ec);
+                    if self.cells[idx].is_wide_continuation() {
+                        self.cells[idx].erase(bg);
+                    }
+                }
+
                 for c in 0..ec {
                     let idx = self.index(er, c);
                     self.cells[idx].erase(bg);
@@ -259,6 +297,13 @@ impl Grid {
         let start = self.index(row, 0);
         let row_slice = &mut self.cells[start..start + cols];
 
+        // Wide-char fixup: if inserting at a continuation cell, the head
+        // at col-1 loses its pair and must be erased.
+        let was_continuation = row_slice[c].is_wide_continuation();
+        if was_continuation && c > 0 {
+            row_slice[c - 1].erase(bg);
+        }
+
         // Shift right: copy from right to left to avoid overlap issues.
         for i in (c + n..cols).rev() {
             row_slice[i] = row_slice[i - n];
@@ -266,6 +311,18 @@ impl Grid {
         // Blank the inserted positions.
         for cell in &mut row_slice[c..c + n] {
             cell.erase(bg);
+        }
+
+        // Wide-char fixup: the continuation that was at col shifted to
+        // col+n; since its head was erased, clean it up.
+        if was_continuation && c + n < cols && row_slice[c + n].is_wide_continuation() {
+            row_slice[c + n].erase(bg);
+        }
+
+        // Wide-char fixup: if a wide head shifted to the last column,
+        // its continuation fell off the right margin.
+        if row_slice[cols - 1].is_wide() {
+            row_slice[cols - 1].erase(bg);
         }
     }
 
@@ -281,6 +338,12 @@ impl Grid {
         let start = self.index(row, 0);
         let row_slice = &mut self.cells[start..start + cols];
 
+        // Wide-char fixup: if deleting at a continuation cell, the head
+        // at col-1 loses its pair and must be erased.
+        if row_slice[c].is_wide_continuation() && c > 0 {
+            row_slice[c - 1].erase(bg);
+        }
+
         // Shift left.
         for i in c..cols - n {
             row_slice[i] = row_slice[i + n];
@@ -288,6 +351,12 @@ impl Grid {
         // Blank the vacated positions at the right.
         for cell in &mut row_slice[cols - n..] {
             cell.erase(bg);
+        }
+
+        // Wide-char fixup: after shift, if cell at col is an orphaned
+        // continuation (its head was deleted), clean it up.
+        if c < cols && row_slice[c].is_wide_continuation() {
+            row_slice[c].erase(bg);
         }
     }
 
@@ -297,7 +366,7 @@ impl Grid {
     /// above `bottom` up, and fill the gap at the bottom with blanks.
     ///
     /// `top` and `bottom` define the scroll region (0-indexed, exclusive bottom).
-    pub fn scroll_up(&mut self, top: u16, bottom: u16, count: u16) {
+    pub fn scroll_up(&mut self, top: u16, bottom: u16, count: u16, bg: Color) {
         let top = top.min(self.rows);
         let bottom = bottom.min(self.rows);
         if top >= bottom || count == 0 {
@@ -313,17 +382,17 @@ impl Grid {
         self.cells
             .copy_within(src_start..src_start + move_len, dst_start);
 
-        // Blank the vacated rows at the bottom.
+        // Blank the vacated rows at the bottom (BCE: inherit cursor bg).
         let blank_start = (bottom - count) as usize * cols;
         let blank_end = bottom as usize * cols;
         for cell in &mut self.cells[blank_start..blank_end] {
-            *cell = Cell::default();
+            cell.erase(bg);
         }
     }
 
     /// Scroll lines down: insert `count` blank rows at `top`, shifting
     /// everything down and discarding rows that fall past `bottom`.
-    pub fn scroll_down(&mut self, top: u16, bottom: u16, count: u16) {
+    pub fn scroll_down(&mut self, top: u16, bottom: u16, count: u16, bg: Color) {
         let top = top.min(self.rows);
         let bottom = bottom.min(self.rows);
         if top >= bottom || count == 0 {
@@ -339,10 +408,10 @@ impl Grid {
         self.cells
             .copy_within(src_start..src_start + src_len, dst_start);
 
-        // Blank the vacated rows at the top.
+        // Blank the vacated rows at the top (BCE: inherit cursor bg).
         let blank_end = (top + count) as usize * cols;
         for cell in &mut self.cells[top as usize * cols..blank_end] {
-            *cell = Cell::default();
+            cell.erase(bg);
         }
     }
 
@@ -357,6 +426,7 @@ impl Grid {
         bottom: u16,
         count: u16,
         scrollback: &mut Scrollback,
+        bg: Color,
     ) {
         let top = top.min(self.rows);
         let bottom = bottom.min(self.rows);
@@ -373,7 +443,7 @@ impl Grid {
         }
 
         // Now do the normal scroll-up.
-        self.scroll_up(top, bottom, count);
+        self.scroll_up(top, bottom, count, bg);
     }
 
     /// Scroll down, pulling lines from scrollback into the vacated rows at top.
@@ -386,6 +456,7 @@ impl Grid {
         bottom: u16,
         count: u16,
         scrollback: &mut Scrollback,
+        bg: Color,
     ) {
         let top = top.min(self.rows);
         let bottom = bottom.min(self.rows);
@@ -395,7 +466,7 @@ impl Grid {
         let count = count.min(bottom - top);
 
         // Normal scroll-down first (creates blank rows at top).
-        self.scroll_down(top, bottom, count);
+        self.scroll_down(top, bottom, count, bg);
 
         // Fill the vacated top rows from scrollback (newest first).
         for r in (top..top + count).rev() {
@@ -412,20 +483,20 @@ impl Grid {
 
     /// IL: Insert `count` blank lines at `row` within the scroll region
     /// `[top, bottom)`. Lines that fall past `bottom` are discarded.
-    pub fn insert_lines(&mut self, row: u16, count: u16, top: u16, bottom: u16) {
+    pub fn insert_lines(&mut self, row: u16, count: u16, top: u16, bottom: u16, bg: Color) {
         if row < top || row >= bottom {
             return;
         }
-        self.scroll_down(row, bottom, count);
+        self.scroll_down(row, bottom, count, bg);
     }
 
     /// DL: Delete `count` lines at `row` within the scroll region
     /// `[top, bottom)`. Blank lines appear at `bottom - count`.
-    pub fn delete_lines(&mut self, row: u16, count: u16, top: u16, bottom: u16) {
+    pub fn delete_lines(&mut self, row: u16, count: u16, top: u16, bottom: u16, bg: Color) {
         if row < top || row >= bottom {
             return;
         }
-        self.scroll_up(row, bottom, count);
+        self.scroll_up(row, bottom, count, bg);
     }
 
     // ── Wide character handling ──────────────────────────────────────
@@ -734,7 +805,7 @@ mod tests {
                 g.cell_mut(r, c).unwrap().set_content(ch, 1);
             }
         }
-        g.scroll_up(0, 4, 1);
+        g.scroll_up(0, 4, 1, Color::Default);
         assert_eq!(g.cell(0, 0).unwrap().content(), 'B');
         assert_eq!(g.cell(1, 0).unwrap().content(), 'C');
         assert_eq!(g.cell(2, 0).unwrap().content(), 'D');
@@ -750,7 +821,7 @@ mod tests {
                 g.cell_mut(r, c).unwrap().set_content(ch, 1);
             }
         }
-        g.scroll_down(0, 4, 1);
+        g.scroll_down(0, 4, 1, Color::Default);
         assert_eq!(g.cell(0, 0).unwrap().content(), ' ');
         assert_eq!(g.cell(1, 0).unwrap().content(), 'A');
         assert_eq!(g.cell(2, 0).unwrap().content(), 'B');
@@ -895,7 +966,7 @@ mod tests {
             }
         }
         // Insert 1 line at row 1 within region [0, 4)
-        g.insert_lines(1, 1, 0, 4);
+        g.insert_lines(1, 1, 0, 4, Color::Default);
         // Result: A _ B C (D lost)
         assert_eq!(g.cell(0, 0).unwrap().content(), 'A');
         assert_eq!(g.cell(1, 0).unwrap().content(), ' ');
@@ -913,7 +984,7 @@ mod tests {
             }
         }
         // Delete 1 line at row 1 within region [0, 4)
-        g.delete_lines(1, 1, 0, 4);
+        g.delete_lines(1, 1, 0, 4, Color::Default);
         // Result: A C D _
         assert_eq!(g.cell(0, 0).unwrap().content(), 'A');
         assert_eq!(g.cell(1, 0).unwrap().content(), 'C');
@@ -1043,7 +1114,7 @@ mod tests {
     fn scroll_zero_count_is_noop() {
         let mut g = Grid::new(3, 3);
         g.cell_mut(0, 0).unwrap().set_content('A', 1);
-        g.scroll_up(0, 3, 0);
+        g.scroll_up(0, 3, 0, Color::Default);
         assert_eq!(g.cell(0, 0).unwrap().content(), 'A');
     }
 
@@ -1090,7 +1161,7 @@ mod tests {
                 .set_content((b'A' + r as u8) as char, 1);
         }
         // Insert at row 0, but region is [1, 3) — row 0 is outside.
-        g.insert_lines(0, 1, 1, 3);
+        g.insert_lines(0, 1, 1, 3, Color::Default);
         assert_eq!(g.cell(0, 0).unwrap().content(), 'A');
     }
 
@@ -1118,7 +1189,7 @@ mod tests {
         let mut g = Grid::new(3, 4);
         fill_grid_letters(&mut g);
         let mut sb = Scrollback::new(100);
-        g.scroll_up_into(0, 4, 2, &mut sb);
+        g.scroll_up_into(0, 4, 2, &mut sb, Color::Default);
         // Rows A and B should be in scrollback.
         assert_eq!(sb.len(), 2);
         assert_eq!(
@@ -1155,7 +1226,7 @@ mod tests {
         let _ = sb.push_row(&[Cell::new('X'), Cell::new('X'), Cell::new('X')], false);
         let _ = sb.push_row(&[Cell::new('Y'), Cell::new('Y'), Cell::new('Y')], false);
 
-        g.scroll_down_from(0, 4, 2, &mut sb);
+        g.scroll_down_from(0, 4, 2, &mut sb, Color::Default);
         // Y then X should be at top (newest popped first, placed bottom-up).
         assert_eq!(row_text(&g, 0), "XXX");
         assert_eq!(row_text(&g, 1), "YYY");
@@ -1172,7 +1243,7 @@ mod tests {
         fill_grid_letters(&mut g);
         let mut sb = Scrollback::new(100);
         // Only scroll within region [1, 3).
-        g.scroll_up_into(1, 3, 1, &mut sb);
+        g.scroll_up_into(1, 3, 1, &mut sb, Color::Default);
         assert_eq!(sb.len(), 1);
         assert_eq!(
             sb.get(0)
@@ -1195,7 +1266,7 @@ mod tests {
         let mut g = Grid::new(3, 2);
         fill_grid_letters(&mut g);
         let mut sb = Scrollback::new(100);
-        g.scroll_up_into(0, 2, 0, &mut sb);
+        g.scroll_up_into(0, 2, 0, &mut sb, Color::Default);
         assert!(sb.is_empty());
         assert_eq!(row_text(&g, 0), "AAA");
     }
@@ -1208,7 +1279,7 @@ mod tests {
         let _ = sb.push_row(&[Cell::new('Z'), Cell::new('Z'), Cell::new('Z')], false);
 
         // Request 3 rows from scrollback but only 1 is available.
-        g.scroll_down_from(0, 4, 3, &mut sb);
+        g.scroll_down_from(0, 4, 3, &mut sb, Color::Default);
         // scroll_down shifts A,B,C,D down by 3: only A survives at row 3.
         // Then fill from scrollback in reverse order (row 2, 1, 0):
         // Z goes to row 2, rows 0-1 remain blank (no more scrollback).

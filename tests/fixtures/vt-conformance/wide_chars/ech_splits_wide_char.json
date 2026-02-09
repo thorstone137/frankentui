@@ -1,0 +1,16 @@
+{
+  "name": "ech_splits_wide_char",
+  "description": "ECH at the continuation cell of a wide char should clean up the entire wide char pair",
+  "initial_size": [8, 1],
+  "input_bytes_hex": "41e4b8ad421b5b313b33481b5b3158",
+  "comment": "Print A, 中 (wide: cols 1-2), B. CUP(1,3) → cursor at (0,2) the continuation cell. ECH 1 erases (0,2). The wide char head at (0,1) is also cleaned up because its continuation was destroyed.",
+  "expected": {
+    "cursor": { "row": 0, "col": 2 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 1, "char": " " },
+      { "row": 0, "col": 2, "char": " " },
+      { "row": 0, "col": 3, "char": "B" }
+    ]
+  }
+}

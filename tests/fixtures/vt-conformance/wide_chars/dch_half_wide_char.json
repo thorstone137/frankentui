@@ -1,0 +1,18 @@
+{
+  "name": "dch_half_wide_char",
+  "description": "DCH at the head cell of a wide char should delete it and clean up the orphaned continuation",
+  "initial_size": [8, 1],
+  "input_bytes_hex": "41e4b8ad4243441b5b313b3248 1b5b3150",
+  "comment": "Print A, 中 (wide: cols 1-2), BCD. CUP(1,2) → cursor at (0,1) the wide char head. DCH 1 deletes (0,1), shifts left. The continuation that shifts to (0,1) is orphaned and cleaned up.",
+  "expected": {
+    "cursor": { "row": 0, "col": 1 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 1, "char": " " },
+      { "row": 0, "col": 2, "char": "B" },
+      { "row": 0, "col": 3, "char": "C" },
+      { "row": 0, "col": 4, "char": "D" },
+      { "row": 0, "col": 5, "char": " " }
+    ]
+  }
+}
