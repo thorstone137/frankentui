@@ -253,6 +253,30 @@ mod tests {
     }
 
     #[test]
+    fn cell_from_render_emoji_scalar_passthrough() {
+        let ch = '🧪';
+        let cell = make_cell(ch, 0xFFFFFFFF, 0x000000FF, StyleFlags::empty());
+        let gpu = cell_from_render(&cell);
+        assert_eq!(gpu.glyph_id, ch as u32);
+    }
+
+    #[test]
+    fn cell_from_render_zwj_scalar_passthrough() {
+        let ch = '\u{200D}'; // zero-width joiner
+        let cell = make_cell(ch, 0xFFFFFFFF, 0x000000FF, StyleFlags::empty());
+        let gpu = cell_from_render(&cell);
+        assert_eq!(gpu.glyph_id, ch as u32);
+    }
+
+    #[test]
+    fn cell_from_render_variation_selector_scalar_passthrough() {
+        let ch = '\u{FE0F}'; // variation selector-16
+        let cell = make_cell(ch, 0xFFFFFFFF, 0x000000FF, StyleFlags::empty());
+        let gpu = cell_from_render(&cell);
+        assert_eq!(gpu.glyph_id, ch as u32);
+    }
+
+    #[test]
     fn cell_from_render_grapheme_uses_placeholder() {
         let cell = Cell {
             content: CellContent::from_grapheme(GraphemeId::new(7, 2)),
