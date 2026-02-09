@@ -70,9 +70,11 @@ pub fn diff_to_patches(buffer: &Buffer, diff: &BufferDiff) -> Vec<CellPatch> {
     // already sorted by (y, x) which is also linear-offset order.
     let cols = u32::from(buffer.width());
 
-    let mut patches = Vec::new();
+    // Heuristic: most sparse diffs produce one patch per ~8 dirty cells.
+    let est_patches = diff.len().div_ceil(8).max(1);
+    let mut patches = Vec::with_capacity(est_patches);
     let mut span_start: u32 = 0;
-    let mut span_cells: Vec<CellData> = Vec::new();
+    let mut span_cells: Vec<CellData> = Vec::with_capacity(diff.len());
     let mut prev_offset: u32 = 0;
     let mut has_span = false;
 
