@@ -182,6 +182,7 @@ impl Painter {
     }
 
     /// Set a single pixel.
+    #[inline]
     pub fn point(&mut self, x: i32, y: i32) {
         let xu = x as u32;
         let yu = y as u32;
@@ -197,6 +198,7 @@ impl Painter {
     }
 
     /// Set a single pixel with color.
+    #[inline]
     pub fn point_colored(&mut self, x: i32, y: i32, color: PackedRgba) {
         let xu = x as u32;
         let yu = y as u32;
@@ -244,11 +246,13 @@ impl Painter {
     }
 
     /// Draw a line from (x0, y0) to (x1, y1) using Bresenham's algorithm.
+    #[inline]
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         self.line_colored(x0, y0, x1, y1, None);
     }
 
     /// Draw a colored line.
+    #[inline]
     pub fn line_colored(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Option<PackedRgba>) {
         let dx = (x1 - x0).abs();
         let dy = -(y1 - y0).abs();
@@ -288,6 +292,7 @@ impl Painter {
     }
 
     /// Draw an axis-aligned rectangle outline.
+    #[inline]
     pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32) {
         if w <= 0 || h <= 0 {
             return;
@@ -299,6 +304,7 @@ impl Painter {
     }
 
     /// Draw a filled rectangle.
+    #[inline]
     pub fn rect_filled(&mut self, x: i32, y: i32, w: i32, h: i32) {
         for dy in 0..h {
             for dx in 0..w {
@@ -308,6 +314,7 @@ impl Painter {
     }
 
     /// Draw a filled convex polygon.
+    #[inline]
     pub fn polygon_filled(&mut self, points: &[(i32, i32)]) {
         if points.len() < 3 {
             return;
@@ -331,6 +338,7 @@ impl Painter {
     }
 
     /// Draw a circle outline using the midpoint algorithm.
+    #[inline]
     pub fn circle(&mut self, cx: i32, cy: i32, radius: i32) {
         if radius <= 0 {
             self.point(cx, cy);
@@ -353,6 +361,7 @@ impl Painter {
         }
     }
 
+    #[inline]
     fn plot_circle_octants(&mut self, cx: i32, cy: i32, x: i32, y: i32) {
         self.point(cx + x, cy + y);
         self.point(cx - x, cy + y);

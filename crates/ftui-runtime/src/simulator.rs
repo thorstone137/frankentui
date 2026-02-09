@@ -152,7 +152,7 @@ impl<M: Model> ProgramSimulator<M> {
         let mut frame = Frame::new(width, height, &mut self.pool);
         self.model.view(&mut frame);
         self.frames.push(frame.buffer);
-        self.frames.last().unwrap()
+        self.frames.last().expect("frame just pushed")
     }
 
     /// Get all captured frame buffers.

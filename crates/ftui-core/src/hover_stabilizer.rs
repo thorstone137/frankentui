@@ -173,7 +173,9 @@ impl HoverStabilizer {
             return self.current_target;
         }
 
-        let current = self.current_target.unwrap();
+        let current = self
+            .current_target
+            .expect("current_target guaranteed by is_none early return");
 
         // Same target: decay any candidate and return stable
         if hit_target == Some(current) {

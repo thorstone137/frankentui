@@ -1089,8 +1089,10 @@ impl Buffer {
     /// Get the current effective scissor region.
     #[inline]
     pub fn current_scissor(&self) -> Rect {
-        // Safe: stack always has at least one element
-        *self.scissor_stack.last().unwrap()
+        *self
+            .scissor_stack
+            .last()
+            .expect("scissor stack always has at least one element")
     }
 
     /// Get the scissor stack depth.
@@ -1123,8 +1125,10 @@ impl Buffer {
     /// Get the current effective opacity.
     #[inline]
     pub fn current_opacity(&self) -> f32 {
-        // Safe: stack always has at least one element
-        *self.opacity_stack.last().unwrap()
+        *self
+            .opacity_stack
+            .last()
+            .expect("opacity stack always has at least one element")
     }
 
     /// Get the opacity stack depth.

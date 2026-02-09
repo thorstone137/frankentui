@@ -1189,7 +1189,10 @@ impl ResizeCoalescer {
             return 0.0;
         }
 
-        let first = *self.event_times.front().unwrap();
+        let first = *self
+            .event_times
+            .front()
+            .expect("event_times has >=2 elements per length guard");
         let window_duration = match now.checked_duration_since(first) {
             Some(duration) => duration,
             None => return 0.0,

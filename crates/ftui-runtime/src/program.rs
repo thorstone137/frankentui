@@ -314,7 +314,9 @@ impl<M> Cmd<M> {
         if cmds.is_empty() {
             Self::None
         } else if cmds.len() == 1 {
-            cmds.into_iter().next().unwrap()
+            cmds.into_iter()
+                .next()
+                .expect("non-empty vec has at least one element")
         } else {
             Self::Batch(cmds)
         }
@@ -325,7 +327,9 @@ impl<M> Cmd<M> {
         if cmds.is_empty() {
             Self::None
         } else if cmds.len() == 1 {
-            cmds.into_iter().next().unwrap()
+            cmds.into_iter()
+                .next()
+                .expect("non-empty vec has at least one element")
         } else {
             Self::Sequence(cmds)
         }

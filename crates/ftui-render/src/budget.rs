@@ -1044,7 +1044,11 @@ impl RenderBudget {
 
             // SAFETY: we just checked is_some; this avoids a borrow-checker
             // conflict with `&mut self` needed for degrade/upgrade below.
-            let decision = self.controller.as_mut().unwrap().update(frame_time);
+            let decision = self
+                .controller
+                .as_mut()
+                .expect("controller guaranteed by is_some guard")
+                .update(frame_time);
 
             match decision {
                 BudgetDecision::Degrade => self.degrade(),

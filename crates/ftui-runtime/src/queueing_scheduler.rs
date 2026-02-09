@@ -1145,7 +1145,10 @@ impl QueueingScheduler {
             let current_pj = self.make_priority_job(current.clone());
             if pj.cmp(&current_pj) == Ordering::Greater {
                 // Preempt
-                let old = self.current_job.take().unwrap();
+                let old = self
+                    .current_job
+                    .take()
+                    .expect("current_job guaranteed by if-let guard");
                 let priority_job = self.make_priority_job(old);
                 self.queue.push(priority_job);
                 self.stats.total_preemptions += 1;

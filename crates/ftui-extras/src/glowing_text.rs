@@ -1,5 +1,3 @@
-#![forbid(unsafe_code)]
-
 //! Animated text effects with glow, fade-in, and fade-out.
 //!
 //! This module provides widgets for displaying text with various animated
@@ -172,7 +170,7 @@ impl GlowingText {
 }
 
 impl Widget for GlowingText {
-    fn render(self, area: Rect, frame: &mut Frame) {
+    fn render(&self, area: Rect, frame: &mut Frame) {
         if area.height == 0 || area.width == 0 {
             return;
         }
@@ -248,11 +246,7 @@ impl TransitionOverlay {
     fn glow_intensity(&self) -> f64 {
         // Glow peaks at around p=0.3 and p=0.7
         let t = self.progress * 2.0;
-        if t <= 1.0 {
-            t * 0.8
-        } else {
-            (2.0 - t) * 0.8
-        }
+        if t <= 1.0 { t * 0.8 } else { (2.0 - t) * 0.8 }
     }
 
     /// Check if the overlay is visible (has non-zero opacity).
@@ -262,7 +256,7 @@ impl TransitionOverlay {
 }
 
 impl Widget for TransitionOverlay {
-    fn render(self, area: Rect, frame: &mut Frame) {
+    fn render(&self, area: Rect, frame: &mut Frame) {
         let opacity = self.opacity();
         if opacity < 0.01 || area.width < 10 || area.height < 3 {
             return;
@@ -363,7 +357,12 @@ impl TransitionState {
     }
 
     /// Start a new transition with the given title and subtitle.
-    pub fn start(&mut self, title: impl Into<String>, subtitle: impl Into<String>, color: PackedRgba) {
+    pub fn start(
+        &mut self,
+        title: impl Into<String>,
+        subtitle: impl Into<String>,
+        color: PackedRgba,
+    ) {
         self.title = title.into();
         self.subtitle = subtitle.into();
         self.color = color;
@@ -500,5 +499,476 @@ mod tests {
         }
         assert!(!state.is_active());
         assert!((state.progress() - 1.0).abs() < 0.01);
+    }
+
+    // ── Color utilities ─────────────────────────────────────────────
+
+    #[test]
+    fn lerp_color_clamps_below_zero() {
+        let a = PackedRgba::rgb(100, 100, 100);
+        let b = PackedRgba::rgb(200, 200, 200);
+        let result = lerp_color(a, b, -1.0);
+        assert_eq!(result.r(), 100);
+        assert_eq!(result.g(), 100);
+    }
+
+    #[test]
+    fn lerp_color_clamps_above_one() {
+        let a = PackedRgba::rgb(100, 100, 100);
+        let b = PackedRgba::rgb(200, 200, 200);
+        let result = lerp_color(a, b, 2.0);
+        assert_eq!(result.r(), 200);
+        assert_eq!(result.g(), 200);
+    }
+
+    #[test]
+    fn lerp_color_same_colors() {
+        let c = PackedRgba::rgb(42, 84, 168);
+        let result = lerp_color(c, c, 0.5);
+        assert_eq!(result.r(), 42);
+        assert_eq!(result.g(), 84);
+        assert_eq!(result.b(), 168);
+    }
+
+    #[test]
+    fn apply_alpha_full() {
+        let color = PackedRgba::rgb(200, 100, 50);
+        let full = apply_alpha(color, 1.0);
+        assert_eq!(full.r(), 200);
+        assert_eq!(full.g(), 100);
+        assert_eq!(full.b(), 50);
+    }
+
+    #[test]
+    fn apply_alpha_clamps_negative() {
+        let color = PackedRgba::rgb(200, 100, 50);
+        let result = apply_alpha(color, -0.5);
+        assert_eq!(result.r(), 0);
+        assert_eq!(result.g(), 0);
+        assert_eq!(result.b(), 0);
+    }
+
+    #[test]
+    fn apply_alpha_clamps_above_one() {
+        let color = PackedRgba::rgb(200, 100, 50);
+        let result = apply_alpha(color, 2.0);
+        assert_eq!(result.r(), 200);
+        assert_eq!(result.g(), 100);
+        assert_eq!(result.b(), 50);
+    }
+
+    #[test]
+    fn glow_color_zero_intensity() {
+        let base = PackedRgba::rgb(100, 50, 25);
+        let result = glow_color(base, 0.0);
+        // At zero intensity, glow_color lerps base toward white by 0,
+        // then lerp_color(base, result, 0) = base
+        assert_eq!(result.r(), base.r());
+        assert_eq!(result.g(), base.g());
+        assert_eq!(result.b(), base.b());
+    }
+
+    #[test]
+    fn glow_color_brightens_toward_white() {
+        let base = PackedRgba::rgb(100, 50, 25);
+        let result = glow_color(base, 1.0);
+        // At full intensity: lerp(base, white, 0.5), should be brighter
+        assert!(result.r() > base.r());
+        assert!(result.g() > base.g());
+        assert!(result.b() > base.b());
+    }
+
+    // ── GlowingText builder ─────────────────────────────────────────
+
+    #[test]
+    fn glowing_text_defaults() {
+        let text = GlowingText::new("hello");
+        assert_eq!(text.text, "hello");
+        assert_eq!(text.base_color, PackedRgba::rgb(255, 255, 255));
+        assert!(!text.bold);
+        assert!((text.fade - 1.0).abs() < f64::EPSILON);
+        assert!((text.glow_intensity - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn glowing_text_color_setter() {
+        let text = GlowingText::new("x").color(PackedRgba::rgb(10, 20, 30));
+        assert_eq!(text.base_color, PackedRgba::rgb(10, 20, 30));
+    }
+
+    #[test]
+    fn glowing_text_glow_setter() {
+        let text = GlowingText::new("x").glow(PackedRgba::rgb(50, 60, 70));
+        assert_eq!(text.glow_color, PackedRgba::rgb(50, 60, 70));
+    }
+
+    #[test]
+    fn glowing_text_glow_intensity_clamps() {
+        let t1 = GlowingText::new("x").glow_intensity(-1.0);
+        assert!((t1.glow_intensity - 0.0).abs() < f64::EPSILON);
+
+        let t2 = GlowingText::new("x").glow_intensity(5.0);
+        assert!((t2.glow_intensity - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn glowing_text_fade_clamps() {
+        let t1 = GlowingText::new("x").fade(-0.5);
+        assert!((t1.fade - 0.0).abs() < f64::EPSILON);
+
+        let t2 = GlowingText::new("x").fade(2.0);
+        assert!((t2.fade - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn effective_color_no_glow_no_fade() {
+        let text = GlowingText::new("x")
+            .color(PackedRgba::rgb(100, 50, 25))
+            .glow_intensity(0.0)
+            .fade(1.0);
+        let c = text.effective_color();
+        assert_eq!(c.r(), 100);
+        assert_eq!(c.g(), 50);
+        assert_eq!(c.b(), 25);
+    }
+
+    #[test]
+    fn effective_color_with_fade() {
+        let text = GlowingText::new("x")
+            .color(PackedRgba::rgb(200, 100, 50))
+            .glow_intensity(0.0)
+            .fade(0.5);
+        let c = text.effective_color();
+        assert_eq!(c.r(), 100);
+        assert_eq!(c.g(), 50);
+        assert_eq!(c.b(), 25);
+    }
+
+    #[test]
+    fn effective_color_with_glow() {
+        let text = GlowingText::new("x")
+            .color(PackedRgba::rgb(100, 50, 25))
+            .glow_intensity(1.0)
+            .fade(1.0);
+        let c = text.effective_color();
+        // With glow, color should be brighter than base
+        assert!(c.r() > 100);
+        assert!(c.g() > 50);
+        assert!(c.b() > 25);
+    }
+
+    #[test]
+    fn effective_color_zero_fade_is_black() {
+        let text = GlowingText::new("x")
+            .color(PackedRgba::rgb(200, 100, 50))
+            .fade(0.0);
+        let c = text.effective_color();
+        assert_eq!(c.r(), 0);
+        assert_eq!(c.g(), 0);
+        assert_eq!(c.b(), 0);
+    }
+
+    // ── GlowingText rendering ───────────────────────────────────────
+
+    #[test]
+    fn render_at_writes_cells_to_buffer() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(20, 5, &mut pool);
+
+        let text = GlowingText::new("Hi")
+            .color(PackedRgba::rgb(255, 0, 0))
+            .fade(1.0);
+        text.render_at(0, 0, &mut frame);
+
+        // Check that 'H' is written at (0,0) and 'i' at (1,0)
+        let cell_h = frame.buffer.get(0, 0).expect("cell should exist");
+        assert_eq!(cell_h.fg, PackedRgba::rgb(255, 0, 0));
+        assert!(cell_h.content.as_char().is_some());
+    }
+
+    #[test]
+    fn render_at_zero_fade_skips() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(20, 5, &mut pool);
+
+        let text = GlowingText::new("Hi").fade(0.0);
+        text.render_at(0, 0, &mut frame);
+
+        // Cell fg should remain the default cell fg (not modified by render)
+        let default_fg = Cell::default().fg;
+        let cell = frame.buffer.get(0, 0).expect("cell should exist");
+        assert_eq!(cell.fg, default_fg);
+    }
+
+    #[test]
+    fn widget_render_empty_area_noop() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(20, 5, &mut pool);
+
+        let text = GlowingText::new("Hi").fade(1.0);
+        let empty_area = Rect::new(0, 0, 0, 0);
+        text.render(empty_area, &mut frame);
+
+        // Should not panic and buffer should remain default
+        let default_fg = Cell::default().fg;
+        let cell = frame.buffer.get(0, 0).expect("cell should exist");
+        assert_eq!(cell.fg, default_fg);
+    }
+
+    #[test]
+    fn widget_render_writes_to_area() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(20, 5, &mut pool);
+
+        let text = GlowingText::new("AB")
+            .color(PackedRgba::rgb(0, 255, 0))
+            .fade(1.0);
+        let area = Rect::new(3, 2, 10, 1);
+        text.render(area, &mut frame);
+
+        // 'A' should be at (3,2) - the area origin
+        let cell_a = frame.buffer.get(3, 2).expect("cell should exist");
+        assert_eq!(cell_a.fg, PackedRgba::rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn bold_sets_style_flag() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(20, 5, &mut pool);
+
+        let text = GlowingText::new("B").fade(1.0).bold();
+        text.render_at(0, 0, &mut frame);
+
+        let cell = frame.buffer.get(0, 0).expect("cell should exist");
+        assert!(cell.attrs.flags().contains(CellStyleFlags::BOLD));
+    }
+
+    // ── TransitionOverlay ───────────────────────────────────────────
+
+    #[test]
+    fn transition_overlay_defaults() {
+        let overlay = TransitionOverlay::new("Title", "Sub");
+        assert_eq!(overlay.title, "Title");
+        assert_eq!(overlay.subtitle, "Sub");
+        assert!((overlay.progress - 0.0).abs() < f64::EPSILON);
+        assert_eq!(overlay.duration_ticks, 30);
+    }
+
+    #[test]
+    fn transition_overlay_progress_clamps() {
+        let o1 = TransitionOverlay::new("T", "S").progress(-0.5);
+        assert!((o1.progress - 0.0).abs() < f64::EPSILON);
+
+        let o2 = TransitionOverlay::new("T", "S").progress(2.0);
+        assert!((o2.progress - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn transition_overlay_color_setters() {
+        let overlay = TransitionOverlay::new("T", "S")
+            .primary_color(PackedRgba::rgb(10, 20, 30))
+            .secondary_color(PackedRgba::rgb(40, 50, 60));
+        assert_eq!(overlay.primary_color, PackedRgba::rgb(10, 20, 30));
+        assert_eq!(overlay.secondary_color, PackedRgba::rgb(40, 50, 60));
+    }
+
+    #[test]
+    fn transition_overlay_duration_setter() {
+        let overlay = TransitionOverlay::new("T", "S").duration(100);
+        assert_eq!(overlay.duration_ticks, 100);
+    }
+
+    #[test]
+    fn opacity_bell_curve_symmetric() {
+        let overlay = TransitionOverlay::new("T", "S");
+        let o_quarter = overlay.clone().progress(0.25);
+        let o_three_quarters = overlay.progress(0.75);
+        // Bell curve is symmetric around 0.5
+        assert!((o_quarter.opacity() - o_three_quarters.opacity()).abs() < 0.01);
+    }
+
+    #[test]
+    fn opacity_monotonic_first_half() {
+        let overlay = TransitionOverlay::new("T", "S");
+        let o1 = overlay.clone().progress(0.1).opacity();
+        let o2 = overlay.clone().progress(0.3).opacity();
+        let o3 = overlay.progress(0.5).opacity();
+        assert!(o1 < o2);
+        assert!(o2 < o3);
+    }
+
+    #[test]
+    fn glow_intensity_symmetric() {
+        let overlay = TransitionOverlay::new("T", "S");
+        let g_quarter = overlay.clone().progress(0.25).glow_intensity();
+        let g_three_quarters = overlay.progress(0.75).glow_intensity();
+        assert!((g_quarter - g_three_quarters).abs() < 0.01);
+    }
+
+    #[test]
+    fn glow_intensity_bounded() {
+        for i in 0..=100 {
+            let p = i as f64 / 100.0;
+            let g = TransitionOverlay::new("T", "S")
+                .progress(p)
+                .glow_intensity();
+            assert!(g >= 0.0, "glow negative at p={p}");
+            assert!(g <= 1.0, "glow exceeds 1.0 at p={p}");
+        }
+    }
+
+    #[test]
+    fn is_visible_at_extremes() {
+        let overlay = TransitionOverlay::new("T", "S");
+        assert!(!overlay.clone().progress(0.0).is_visible());
+        assert!(overlay.clone().progress(0.5).is_visible());
+        assert!(!overlay.progress(1.0).is_visible());
+    }
+
+    #[test]
+    fn is_visible_mid_range() {
+        let overlay = TransitionOverlay::new("T", "S");
+        assert!(overlay.clone().progress(0.1).is_visible());
+        assert!(overlay.clone().progress(0.9).is_visible());
+    }
+
+    #[test]
+    fn transition_overlay_render_small_area_noop() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(5, 2, &mut pool);
+
+        let overlay = TransitionOverlay::new("Title", "Sub").progress(0.5);
+        // Area too small (width < 10 or height < 3)
+        overlay.render(Rect::new(0, 0, 5, 2), &mut frame);
+
+        // Buffer should remain default
+        let default_fg = Cell::default().fg;
+        let cell = frame.buffer.get(0, 0).expect("cell should exist");
+        assert_eq!(cell.fg, default_fg);
+    }
+
+    #[test]
+    fn transition_overlay_render_centers_title() {
+        use ftui_render::grapheme_pool::GraphemePool;
+
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(40, 10, &mut pool);
+
+        let overlay = TransitionOverlay::new("Hi", "").progress(0.5);
+        overlay.render(Rect::new(0, 0, 40, 10), &mut frame);
+
+        // Title "Hi" is 2 chars, centered in 40-width area: x = (40 - 2) / 2 = 19
+        // title_y = 0 + 10 / 2 = 5
+        let cell = frame.buffer.get(19, 5).expect("cell should exist");
+        let default_fg = Cell::default().fg;
+        assert_ne!(cell.fg, default_fg, "title should be rendered at center");
+    }
+
+    // ── TransitionState ─────────────────────────────────────────────
+
+    #[test]
+    fn transition_state_defaults() {
+        let state = TransitionState::new();
+        assert!(!state.is_active());
+        assert!((state.progress() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn transition_state_set_speed_clamps() {
+        let mut state = TransitionState::new();
+
+        state.set_speed(0.001);
+        assert!((state.speed - 0.01).abs() < f64::EPSILON);
+
+        state.set_speed(1.0);
+        assert!((state.speed - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn transition_state_start_resets() {
+        let mut state = TransitionState::new();
+
+        // First transition
+        state.start("A", "B", PackedRgba::rgb(255, 0, 0));
+        for _ in 0..10 {
+            state.tick();
+        }
+        assert!(state.progress() > 0.0);
+
+        // Restart
+        state.start("C", "D", PackedRgba::rgb(0, 255, 0));
+        assert_eq!(state.progress(), 0.0);
+        assert!(state.is_active());
+        assert_eq!(state.title, "C");
+        assert_eq!(state.subtitle, "D");
+    }
+
+    #[test]
+    fn transition_state_tick_inactive_noop() {
+        let mut state = TransitionState::new();
+        state.tick();
+        assert_eq!(state.progress(), 0.0);
+    }
+
+    #[test]
+    fn transition_state_overlay_matches_state() {
+        let mut state = TransitionState::new();
+        state.start("Title", "Sub", PackedRgba::rgb(100, 200, 50));
+        for _ in 0..5 {
+            state.tick();
+        }
+
+        let overlay = state.overlay();
+        assert_eq!(overlay.title, "Title");
+        assert_eq!(overlay.subtitle, "Sub");
+        assert!((overlay.progress - state.progress()).abs() < f64::EPSILON);
+        assert_eq!(overlay.primary_color, PackedRgba::rgb(100, 200, 50));
+    }
+
+    #[test]
+    fn transition_state_completes_in_bounded_ticks() {
+        let mut state = TransitionState::new();
+        state.start("T", "S", PackedRgba::rgb(255, 255, 255));
+
+        let mut ticks = 0;
+        while state.is_active() && ticks < 1000 {
+            state.tick();
+            ticks += 1;
+        }
+        assert!(!state.is_active());
+        assert!(ticks < 1000, "transition did not complete");
+        assert!((state.progress() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn transition_state_is_visible_during_animation() {
+        let mut state = TransitionState::new();
+        state.start("T", "S", PackedRgba::rgb(255, 255, 255));
+        state.tick();
+        assert!(state.is_visible());
+    }
+
+    #[test]
+    fn transition_state_not_visible_when_complete() {
+        let mut state = TransitionState::new();
+        state.start("T", "S", PackedRgba::rgb(255, 255, 255));
+        for _ in 0..100 {
+            state.tick();
+        }
+        // At progress 1.0, is_visible checks progress > 0.0 && progress < 1.0
+        // Since progress == 1.0, the second condition fails, so not visible
+        assert!(!state.is_visible());
     }
 }

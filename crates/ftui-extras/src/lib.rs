@@ -138,6 +138,9 @@ pub mod theme;
 pub mod terminal;
 
 #[cfg(feature = "text-effects")]
+pub mod glowing_text;
+
+#[cfg(feature = "text-effects")]
 pub mod text_effects;
 
 #[cfg(feature = "visual-fx")]

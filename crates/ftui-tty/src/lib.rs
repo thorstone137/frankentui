@@ -1267,6 +1267,235 @@ mod tests {
         assert_eq!(count, expected_len, "all bytes should decode to key events");
     }
 
+    // ── Edge-case input parser tests ─────────────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn truncated_csi_followed_by_valid_input() {
+        use ftui_core::event::{KeyCode, KeyEvent, KeyEventKind, Modifiers};
+        let (reader, mut writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // Write an incomplete CSI sequence followed by a valid character.
+        // The incomplete `\x1b[` should be buffered; when `a` arrives
+        // (not a valid CSI final byte when directly after `[`), the parser
+        // should eventually recover. We follow with a clear valid sequence.
+        writer.write_all(b"\x1b[").unwrap();
+        // Give the poll a chance to consume the partial sequence.
+        let _ = src.poll_event(Duration::from_millis(50));
+        // Now send a valid key to force the parser forward.
+        writer.write_all(b"\x1b[Ax").unwrap();
+        assert!(src.poll_event(Duration::from_millis(100)).unwrap());
+        // Drain all events and verify we get at least the valid ones.
+        let mut events = Vec::new();
+        while let Some(e) = src.read_event().unwrap() {
+            events.push(e);
+        }
+        // The Up arrow (\x1b[A) and the 'x' key should both be parsed.
+        let has_up = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Up,
+                    ..
+                })
+            )
+        });
+        let has_x = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('x'),
+                    modifiers: Modifiers::NONE,
+                    kind: KeyEventKind::Press,
+                })
+            )
+        });
+        assert!(
+            has_up,
+            "should parse Up arrow after partial CSI: {events:?}"
+        );
+        assert!(has_x, "should parse 'x' after recovery: {events:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unknown_csi_sequence_does_not_block_parser() {
+        use ftui_core::event::{KeyCode, KeyEvent, KeyEventKind, Modifiers};
+        let (reader, mut writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // \x1b[999~ is an unknown tilde-code; the parser should silently
+        // drop it and still parse the subsequent 'z' key event.
+        writer.write_all(b"\x1b[999~z").unwrap();
+        assert!(src.poll_event(Duration::from_millis(100)).unwrap());
+        let mut events = Vec::new();
+        while let Some(e) = src.read_event().unwrap() {
+            events.push(e);
+        }
+        let has_z = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('z'),
+                    modifiers: Modifiers::NONE,
+                    kind: KeyEventKind::Press,
+                })
+            )
+        });
+        assert!(
+            has_z,
+            "valid key after unknown CSI must be parsed: {events:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn eof_on_pipe_does_not_panic() {
+        let (reader, writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // Close the writer end immediately to simulate EOF.
+        drop(writer);
+        // poll_event should return false (no data) without panicking.
+        let result = src.poll_event(Duration::from_millis(50));
+        assert!(result.is_ok(), "poll_event after EOF should not error");
+        // read_event should also return None cleanly.
+        let event = src.read_event().unwrap();
+        assert!(event.is_none(), "read_event after EOF should be None");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interleaved_invalid_and_valid_sequences() {
+        use ftui_core::event::{KeyCode, KeyEvent};
+        let (reader, mut writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // Mix of: invalid UTF-8 lead byte, valid 'a', unknown CSI, valid 'b',
+        // bare ESC followed by valid char, valid 'c'.
+        writer.write_all(b"\xC0a\x1b[999~b\x1b c").unwrap();
+        assert!(src.poll_event(Duration::from_millis(100)).unwrap());
+        let mut key_chars = Vec::new();
+        while let Some(e) = src.read_event().unwrap() {
+            if let Event::Key(KeyEvent {
+                code: KeyCode::Char(ch),
+                ..
+            }) = e
+            {
+                key_chars.push(ch);
+            }
+        }
+        // 'a', 'b', and 'c' must all appear (possibly with Alt modifier for 'c'
+        // since \x1b followed by space+c could parse as Alt+Space then 'c').
+        assert!(
+            key_chars.contains(&'a'),
+            "should parse 'a' amid invalid input: {key_chars:?}"
+        );
+        assert!(
+            key_chars.contains(&'b'),
+            "should parse 'b' amid invalid input: {key_chars:?}"
+        );
+        assert!(
+            key_chars.contains(&'c'),
+            "should parse 'c' amid invalid input: {key_chars:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn split_escape_sequence_across_writes() {
+        use ftui_core::event::{KeyCode, KeyEvent};
+        let (reader, mut writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // Write the escape sequence for Down arrow (\x1b[B) in two separate writes.
+        writer.write_all(b"\x1b").unwrap();
+        // First poll: the lone ESC may or may not produce an event depending
+        // on whether the parser waits for more bytes.
+        let _ = src.poll_event(Duration::from_millis(30));
+        // Complete the sequence.
+        writer.write_all(b"[B").unwrap();
+        assert!(src.poll_event(Duration::from_millis(100)).unwrap());
+        let mut events = Vec::new();
+        while let Some(e) = src.read_event().unwrap() {
+            events.push(e);
+        }
+        let has_down = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Down,
+                    ..
+                })
+            )
+        });
+        assert!(
+            has_down,
+            "Down arrow split across writes should be parsed: {events:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn poll_with_zero_timeout_returns_false_on_empty_pipe() {
+        let (reader, _writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // Zero-timeout poll with no data should return false immediately.
+        let ready = src.poll_event(Duration::ZERO).unwrap();
+        assert!(!ready, "empty pipe with zero timeout should not be ready");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn malformed_sgr_mouse_does_not_block() {
+        use ftui_core::event::{KeyCode, KeyEvent};
+        let (reader, mut writer) = pipe_pair();
+        let mut src = TtyEventSource::from_reader(80, 24, reader);
+        // Malformed SGR mouse: missing coordinates followed by valid 'q'.
+        writer.write_all(b"\x1b[<M q").unwrap();
+        assert!(src.poll_event(Duration::from_millis(100)).unwrap());
+        let mut events = Vec::new();
+        while let Some(e) = src.read_event().unwrap() {
+            events.push(e);
+        }
+        // Parser must recover; 'q' should appear somewhere in the events.
+        let has_q = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('q'),
+                    ..
+                })
+            )
+        });
+        assert!(
+            has_q,
+            "should parse 'q' after malformed SGR mouse: {events:?}"
+        );
+    }
+
+    // ── Presenter edge-case tests ────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "buffer width must be > 0")]
+    fn buffer_rejects_zero_width() {
+        let _buf = Buffer::new(0, 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "buffer height must be > 0")]
+    fn buffer_rejects_zero_height() {
+        let _buf = Buffer::new(5, 0);
+    }
+
+    #[test]
+    fn presenter_1x1_buffer_does_not_panic() {
+        let caps = TerminalCapabilities::detect();
+        let mut presenter = TtyPresenter::with_writer(Vec::<u8>::new(), caps);
+        let buf = Buffer::new(1, 1);
+        let diff = BufferDiff::full(1, 1);
+        presenter.present_ui(&buf, Some(&diff), false).unwrap();
+        // Verify output was emitted for the single cell.
+        let bytes = presenter.inner.unwrap().into_inner().unwrap();
+        assert!(!bytes.is_empty(), "1x1 buffer should produce output");
+    }
+
     #[test]
     fn presenter_capabilities() {
         let caps = TerminalCapabilities::detect();

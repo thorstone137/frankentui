@@ -911,7 +911,7 @@ impl<W: Write> Presenter<W> {
         let forward = same_row && self.cursor_x.is_some_and(|cx| x > cx);
 
         if same_row && forward {
-            let dx = x - self.cursor_x.unwrap();
+            let dx = x - self.cursor_x.expect("cursor_x guaranteed by forward check");
             let cuf = cost_model::cuf_cost(dx);
             let cha = cost_model::cha_cost(x);
             let cup = cost_model::cup_cost(y, x);
