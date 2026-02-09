@@ -410,6 +410,7 @@ impl QuakeRenderer {
 }
 
 /// Get the base color for a face from the wall color palette.
+#[inline]
 fn face_base_color(face: &Face) -> [u8; 3] {
     match face.tex_type {
         TexType::Floor => FLOOR_NEAR,

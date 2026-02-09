@@ -432,6 +432,7 @@ impl DoomRenderer {
 }
 
 /// Clip a line segment against the near plane (z > 0.1).
+#[inline]
 fn clip_near_plane(mut x1: f32, mut y1: f32, mut x2: f32, mut y2: f32) -> (f32, f32, f32, f32) {
     const NEAR: f32 = 0.1;
 
@@ -450,6 +451,7 @@ fn clip_near_plane(mut x1: f32, mut y1: f32, mut x2: f32, mut y2: f32) -> (f32, 
 }
 
 /// Get the front sector of a seg.
+#[inline]
 fn get_seg_front_sector<'a>(
     seg: &Seg,
     linedef: &super::map::LineDef,
@@ -469,6 +471,7 @@ fn get_seg_front_sector<'a>(
 }
 
 /// Get the back sector of a seg.
+#[inline]
 fn get_seg_back_sector<'a>(
     seg: &Seg,
     linedef: &super::map::LineDef,

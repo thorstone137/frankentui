@@ -1071,6 +1071,7 @@ impl Buffer {
     ///
     /// The effective scissor is the intersection of all pushed rects.
     /// If the intersection is empty, no cells will be drawn.
+    #[inline]
     pub fn push_scissor(&mut self, rect: Rect) {
         let current = self.current_scissor();
         let intersected = current.intersection(&rect);
@@ -1080,6 +1081,7 @@ impl Buffer {
     /// Pop a scissor region from the stack.
     ///
     /// Does nothing if only the base scissor remains.
+    #[inline]
     pub fn pop_scissor(&mut self) {
         if self.scissor_stack.len() > 1 {
             self.scissor_stack.pop();
@@ -1107,6 +1109,7 @@ impl Buffer {
     ///
     /// The effective opacity is the product of all pushed values.
     /// Values are clamped to `[0.0, 1.0]`.
+    #[inline]
     pub fn push_opacity(&mut self, opacity: f32) {
         let clamped = opacity.clamp(0.0, 1.0);
         let current = self.current_opacity();
@@ -1116,6 +1119,7 @@ impl Buffer {
     /// Pop an opacity value from the stack.
     ///
     /// Does nothing if only the base opacity remains.
+    #[inline]
     pub fn pop_opacity(&mut self) {
         if self.opacity_stack.len() > 1 {
             self.opacity_stack.pop();
