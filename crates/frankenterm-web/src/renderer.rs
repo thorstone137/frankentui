@@ -2025,6 +2025,22 @@ mod tests {
     use super::*;
     use crate::glyph_atlas::{AtlasRect, GlyphMetrics};
 
+    fn read_u32(bytes: &[u8]) -> u32 {
+        u32::from_le_bytes(
+            bytes
+                .try_into()
+                .expect("test slice must contain exactly 4 bytes"),
+        )
+    }
+
+    fn read_f32(bytes: &[u8]) -> f32 {
+        f32::from_le_bytes(
+            bytes
+                .try_into()
+                .expect("test slice must contain exactly 4 bytes"),
+        )
+    }
+
     #[test]
     fn cell_data_to_bytes_roundtrip() {
         let cell = CellData {
@@ -2035,16 +2051,10 @@ mod tests {
         };
         let bytes = cell.to_bytes();
         assert_eq!(bytes.len(), CELL_DATA_BYTES);
-        assert_eq!(
-            u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-            0xFF00FF80
-        );
-        assert_eq!(
-            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-            0x00FF00FF
-        );
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 42);
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 7);
+        assert_eq!(read_u32(&bytes[0..4]), 0xFF00FF80);
+        assert_eq!(read_u32(&bytes[4..8]), 0x00FF00FF);
+        assert_eq!(read_u32(&bytes[8..12]), 42);
+        assert_eq!(read_u32(&bytes[12..16]), 7);
     }
 
     #[test]
@@ -2089,18 +2099,18 @@ mod tests {
             },
         );
         assert_eq!(buf.len(), UNIFORM_BYTES);
-        let vw = f32::from_le_bytes(buf[0..4].try_into().unwrap());
-        let vh = f32::from_le_bytes(buf[4..8].try_into().unwrap());
-        let cw = f32::from_le_bytes(buf[8..12].try_into().unwrap());
-        let ch = f32::from_le_bytes(buf[12..16].try_into().unwrap());
-        let cols = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-        let rows = u32::from_le_bytes(buf[20..24].try_into().unwrap());
-        let hovered_link_id = u32::from_le_bytes(buf[32..36].try_into().unwrap());
-        let cursor_offset = u32::from_le_bytes(buf[36..40].try_into().unwrap());
-        let cursor_style = u32::from_le_bytes(buf[40..44].try_into().unwrap());
-        let selection_active = u32::from_le_bytes(buf[44..48].try_into().unwrap());
-        let selection_start = u32::from_le_bytes(buf[48..52].try_into().unwrap());
-        let selection_end = u32::from_le_bytes(buf[52..56].try_into().unwrap());
+        let vw = read_f32(&buf[0..4]);
+        let vh = read_f32(&buf[4..8]);
+        let cw = read_f32(&buf[8..12]);
+        let ch = read_f32(&buf[12..16]);
+        let cols = read_u32(&buf[16..20]);
+        let rows = read_u32(&buf[20..24]);
+        let hovered_link_id = read_u32(&buf[32..36]);
+        let cursor_offset = read_u32(&buf[36..40]);
+        let cursor_style = read_u32(&buf[40..44]);
+        let selection_active = read_u32(&buf[44..48]);
+        let selection_start = read_u32(&buf[48..52]);
+        let selection_end = read_u32(&buf[52..56]);
         assert_eq!(vw, 800.0);
         assert_eq!(vh, 600.0);
         assert_eq!(cw, 8.0);
@@ -2205,10 +2215,10 @@ mod tests {
         };
         let bytes = meta.to_bytes();
         assert_eq!(bytes.len(), GLYPH_META_BYTES);
-        assert_eq!(f32::from_le_bytes(bytes[16..20].try_into().unwrap()), -0.1);
-        assert_eq!(f32::from_le_bytes(bytes[20..24].try_into().unwrap()), 0.0);
-        assert_eq!(f32::from_le_bytes(bytes[24..28].try_into().unwrap()), 1.2);
-        assert_eq!(f32::from_le_bytes(bytes[28..32].try_into().unwrap()), 1.1);
+        assert_eq!(read_f32(&bytes[16..20]), -0.1);
+        assert_eq!(read_f32(&bytes[20..24]), 0.0);
+        assert_eq!(read_f32(&bytes[24..28]), 1.2);
+        assert_eq!(read_f32(&bytes[28..32]), 1.1);
     }
 
     // ── normalized_scale edge cases ────────────────────────────────────
@@ -2496,7 +2506,7 @@ mod tests {
         // Interaction fields are at offset 32..56
         for i in (32..56).step_by(4) {
             assert_eq!(
-                u32::from_le_bytes(buf[i..i + 4].try_into().unwrap()),
+                read_u32(&buf[i..i + 4]),
                 0,
                 "interaction uniform at offset {i} should be zero"
             );
@@ -2521,12 +2531,12 @@ mod tests {
                 selection_end: 0,
             },
         );
-        assert_eq!(f32::from_le_bytes(buf[0..4].try_into().unwrap()), 1920.0);
-        assert_eq!(f32::from_le_bytes(buf[4..8].try_into().unwrap()), 1080.0);
-        assert_eq!(f32::from_le_bytes(buf[8..12].try_into().unwrap()), 10.0);
-        assert_eq!(f32::from_le_bytes(buf[12..16].try_into().unwrap()), 20.0);
-        assert_eq!(u32::from_le_bytes(buf[16..20].try_into().unwrap()), 192);
-        assert_eq!(u32::from_le_bytes(buf[20..24].try_into().unwrap()), 54);
+        assert_eq!(read_f32(&buf[0..4]), 1920.0);
+        assert_eq!(read_f32(&buf[4..8]), 1080.0);
+        assert_eq!(read_f32(&buf[8..12]), 10.0);
+        assert_eq!(read_f32(&buf[12..16]), 20.0);
+        assert_eq!(read_u32(&buf[16..20]), 192);
+        assert_eq!(read_u32(&buf[20..24]), 54);
     }
 
     // ── FrameStats ─────────────────────────────────────────────────────

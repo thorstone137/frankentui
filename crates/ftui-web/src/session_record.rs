@@ -195,7 +195,9 @@ impl SessionTrace {
                     frame_count = frame_count.saturating_add(1);
                     last_checksum_chain = *checksum_chain;
                 }
-                TraceRecord::Input { .. } | TraceRecord::Resize { .. } | TraceRecord::Tick { .. } => {
+                TraceRecord::Input { .. }
+                | TraceRecord::Resize { .. }
+                | TraceRecord::Tick { .. } => {
                     if summary.is_some() {
                         let summary_idx = summary.map(|(i, _, _)| i).unwrap_or_default();
                         return Err(TraceValidationError::SummaryNotLast {
@@ -220,7 +222,9 @@ impl SessionTrace {
             return Err(TraceValidationError::MissingSummary);
         };
         if summary_idx != self.records.len().saturating_sub(1) {
-            return Err(TraceValidationError::SummaryNotLast { summary_index: summary_idx });
+            return Err(TraceValidationError::SummaryNotLast {
+                summary_index: summary_idx,
+            });
         }
         if summary_frames != frame_count {
             return Err(TraceValidationError::SummaryFrameCountMismatch {
@@ -928,7 +932,9 @@ fn parse_trace_line(line: &str, line_num: usize) -> Result<TraceRecord, TracePar
     let schema_version = extract_str(line, "schema_version")
         .ok_or_else(|| err("missing \"schema_version\" field"))?;
     if schema_version != SCHEMA_VERSION {
-        return Err(err(&format!("unsupported schema_version: {schema_version}")));
+        return Err(err(&format!(
+            "unsupported schema_version: {schema_version}"
+        )));
     }
 
     let event = extract_str(line, "event").ok_or_else(|| err("missing \"event\" field"))?;
@@ -1578,6 +1584,103 @@ mod tests {
         assert!(matches!(result, Err(ReplayError::MissingHeader)));
     }
 
+    #[test]
+    fn trace_validate_missing_summary_returns_typed_error() {
+        let trace = SessionTrace {
+            records: vec![TraceRecord::Header {
+                seed: 0,
+                cols: 80,
+                rows: 24,
+                profile: "modern".to_string(),
+            }],
+        };
+        let result = trace.validate();
+        assert_eq!(result, Err(TraceValidationError::MissingSummary));
+    }
+
+    #[test]
+    fn trace_validate_summary_frame_count_mismatch_returns_typed_error() {
+        let trace = SessionTrace {
+            records: vec![
+                TraceRecord::Header {
+                    seed: 0,
+                    cols: 80,
+                    rows: 24,
+                    profile: "modern".to_string(),
+                },
+                TraceRecord::Frame {
+                    frame_idx: 0,
+                    ts_ns: 0,
+                    checksum: 0x1,
+                    checksum_chain: 0x10,
+                },
+                TraceRecord::Summary {
+                    total_frames: 2,
+                    final_checksum_chain: 0x10,
+                },
+            ],
+        };
+        let result = trace.validate();
+        assert_eq!(
+            result,
+            Err(TraceValidationError::SummaryFrameCountMismatch {
+                expected: 1,
+                actual: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn trace_validate_frame_index_gap_returns_typed_error() {
+        let trace = SessionTrace {
+            records: vec![
+                TraceRecord::Header {
+                    seed: 0,
+                    cols: 80,
+                    rows: 24,
+                    profile: "modern".to_string(),
+                },
+                TraceRecord::Frame {
+                    frame_idx: 1,
+                    ts_ns: 0,
+                    checksum: 0x1,
+                    checksum_chain: 0x10,
+                },
+                TraceRecord::Summary {
+                    total_frames: 1,
+                    final_checksum_chain: 0x10,
+                },
+            ],
+        };
+        let result = trace.validate();
+        assert_eq!(
+            result,
+            Err(TraceValidationError::FrameIndexMismatch {
+                expected: 0,
+                actual: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn replay_validates_trace_before_execution() {
+        let trace = SessionTrace {
+            records: vec![TraceRecord::Header {
+                seed: 0,
+                cols: 80,
+                rows: 24,
+                profile: "modern".to_string(),
+            }],
+        };
+        let result = replay(new_counter(0), &trace);
+        assert_eq!(
+            result,
+            Err(ReplayError::InvalidTrace(
+                TraceValidationError::MissingSummary
+            ))
+        );
+    }
+
     // ---- Determinism: same input → same trace ----
 
     #[test]
@@ -1749,6 +1852,11 @@ mod tests {
         assert_eq!(
             ReplayError::MissingHeader.to_string(),
             "trace missing header record"
+        );
+        let invalid = ReplayError::InvalidTrace(TraceValidationError::MissingSummary);
+        assert_eq!(
+            invalid.to_string(),
+            "invalid trace: trace is missing summary"
         );
         let be = ReplayError::Backend(WebBackendError::Unsupported("test"));
         assert!(be.to_string().contains("test"));
@@ -1943,6 +2051,45 @@ mod tests {
         let line = r#"{"schema_version":"golden-trace-v1","ts_ns":0}"#;
         let result = SessionTrace::from_jsonl(line);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_jsonl_missing_schema_version_fails() {
+        let line = r#"{"event":"tick","ts_ns":0}"#;
+        let result = SessionTrace::from_jsonl(line);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("schema_version"));
+    }
+
+    #[test]
+    fn from_jsonl_unknown_schema_version_fails() {
+        let line = r#"{"schema_version":"golden-trace-v2","event":"tick","ts_ns":0}"#;
+        let result = SessionTrace::from_jsonl(line);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("unsupported schema_version")
+        );
+    }
+
+    #[test]
+    fn from_jsonl_validated_surfaces_validation_error_type() {
+        let jsonl = TraceRecord::Header {
+            seed: 0,
+            cols: 80,
+            rows: 24,
+            profile: "modern".to_string(),
+        }
+        .to_jsonl();
+        let result = SessionTrace::from_jsonl_validated(&jsonl);
+        assert!(matches!(
+            result,
+            Err(TraceLoadError::Validation(
+                TraceValidationError::MissingSummary
+            ))
+        ));
     }
 
     // ---- JSON helpers ----

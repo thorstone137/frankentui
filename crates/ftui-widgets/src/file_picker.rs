@@ -777,6 +777,67 @@ mod tests {
         assert_eq!(state.current_dir, PathBuf::from("/"));
     }
 
+    // ── go_back() edge cases ──────────────────────────────────────
+
+    #[test]
+    fn go_back_blocked_at_root() {
+        let root = std::env::temp_dir();
+        let mut state = FilePickerState::new(root.clone(), vec![]).with_root(root);
+
+        let changed = state.go_back().unwrap();
+        assert!(!changed, "go_back should be blocked when already at root");
+    }
+
+    #[test]
+    fn go_back_without_history_uses_parent_directory() {
+        let current = std::env::temp_dir();
+        let parent = current
+            .parent()
+            .expect("temp_dir should have a parent")
+            .to_path_buf();
+
+        let mut state = FilePickerState::new(current.clone(), vec![]);
+        let changed = state.go_back().unwrap();
+
+        assert!(
+            changed,
+            "go_back should navigate to parent when history is empty"
+        );
+        assert_eq!(state.current_dir, parent);
+        assert_eq!(state.cursor, 0, "parent navigation resets cursor to home");
+    }
+
+    #[test]
+    fn go_back_restores_history_cursor_with_clamp() {
+        let child = std::env::temp_dir();
+        let parent = child
+            .parent()
+            .expect("temp_dir should have a parent")
+            .to_path_buf();
+
+        let mut state = FilePickerState::new(
+            parent.clone(),
+            vec![
+                DirEntry::file("placeholder.txt", parent.join("placeholder.txt")),
+                DirEntry::dir("child", child.clone()),
+            ],
+        );
+        state.cursor = 1;
+
+        let entered = state.enter().unwrap();
+        assert!(entered, "enter should navigate into selected directory");
+
+        let went_back = state.go_back().unwrap();
+        assert!(
+            went_back,
+            "go_back should restore previous directory from history"
+        );
+        assert_eq!(state.current_dir, parent);
+
+        let expected_cursor = 1.min(state.entries.len().saturating_sub(1));
+        assert_eq!(state.cursor, expected_cursor);
+    }
+
     // ── adjust_scroll edge cases ──────────────────────────────────
 
     #[test]
