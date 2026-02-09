@@ -564,14 +564,14 @@ impl MetaballsCanvasAdapter {
 
         // Precompute dx^2 for each (x, ball) pair in column-major layout so the
         // inner loop can read contiguous data while preserving accumulation order.
-        for (x, &nx) in x_coords.iter().enumerate().take(w) {
-            let col_start = x * balls_len;
-            let col_end = col_start + balls_len;
-            let dx2_col = &mut self.dx2_cache[col_start..col_end];
+        let mut col_start = 0usize;
+        for &nx in x_coords.iter().take(w) {
+            let dx2_col = &mut self.dx2_cache[col_start..col_start + balls_len];
             for (i, ball) in balls.iter().enumerate() {
                 let dx = nx - ball.x;
                 dx2_col[i] = dx * dx;
             }
+            col_start += balls_len;
         }
 
         let dx2_cache = &self.dx2_cache;
@@ -588,14 +588,12 @@ impl MetaballsCanvasAdapter {
                 }
 
                 let row_offset = y * w;
+                let mut dx_col_start = 0usize;
                 for x in 0..w {
-                    let dx_col_start = x * balls_len;
-                    let dx_col_end = dx_col_start + balls_len;
-                    let dx2_col = &dx2_cache[dx_col_start..dx_col_end];
                     let mut sum = 0.0;
                     let mut weighted_hue = 0.0;
                     for (i, ball) in balls.iter().enumerate() {
-                        let dist_sq = dx2_col[i] + dy2_cache[i];
+                        let dist_sq = dx2_cache[dx_col_start + i] + dy2_cache[i];
                         if dist_sq > EPS {
                             let contrib = ball.r2 / dist_sq;
                             sum += contrib;
@@ -616,6 +614,7 @@ impl MetaballsCanvasAdapter {
                         let color = color_at_with_stops(&stops, avg_hue, intensity, theme);
                         painter.point_colored_at_index_in_bounds(row_offset + x, color);
                     }
+                    dx_col_start += balls_len;
                 }
             }
         } else {
@@ -627,8 +626,8 @@ impl MetaballsCanvasAdapter {
                 }
 
                 let row_offset = y * w;
+                let mut dx_col_start = 0usize;
                 for x in 0..w {
-                    let dx_col_start = x * balls_len;
                     let mut sum = 0.0;
                     let mut weighted_hue = 0.0;
                     for &i in active_indices {
@@ -654,6 +653,7 @@ impl MetaballsCanvasAdapter {
                         let color = color_at_with_stops(&stops, avg_hue, intensity, theme);
                         painter.point_colored_at_index_in_bounds(row_offset + x, color);
                     }
+                    dx_col_start += balls_len;
                 }
             }
         }
