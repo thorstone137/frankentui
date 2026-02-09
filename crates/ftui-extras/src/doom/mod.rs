@@ -1300,4 +1300,249 @@ mod tests {
         assert!(engine.player.noclip);
         assert!(engine.player.god_mode);
     }
+
+    // ---- draw_line_fb: additional Bresenham edge cases ----
+
+    #[test]
+    fn draw_line_reverse_horizontal() {
+        let mut fb = DoomFramebuffer::new(20, 10);
+        let color = PackedRgba::rgb(255, 0, 0);
+        draw_line_fb(&mut fb, 8, 5, 2, 5, color);
+        for x in 2..=8 {
+            assert_eq!(fb.get_pixel(x, 5), color, "pixel at ({x}, 5)");
+        }
+    }
+
+    #[test]
+    fn draw_line_reverse_vertical() {
+        let mut fb = DoomFramebuffer::new(10, 20);
+        let color = PackedRgba::rgb(0, 255, 0);
+        draw_line_fb(&mut fb, 5, 8, 5, 2, color);
+        for y in 2..=8 {
+            assert_eq!(fb.get_pixel(5, y), color, "pixel at (5, {y})");
+        }
+    }
+
+    #[test]
+    fn draw_line_steep_slope() {
+        let mut fb = DoomFramebuffer::new(10, 20);
+        let color = PackedRgba::rgb(128, 128, 0);
+        draw_line_fb(&mut fb, 2, 1, 4, 10, color);
+        // Start and end must be set
+        assert_eq!(fb.get_pixel(2, 1), color);
+        assert_eq!(fb.get_pixel(4, 10), color);
+    }
+
+    #[test]
+    fn draw_line_gentle_slope() {
+        let mut fb = DoomFramebuffer::new(20, 10);
+        let color = PackedRgba::rgb(0, 128, 128);
+        draw_line_fb(&mut fb, 1, 2, 10, 4, color);
+        assert_eq!(fb.get_pixel(1, 2), color);
+        assert_eq!(fb.get_pixel(10, 4), color);
+    }
+
+    #[test]
+    fn draw_line_at_origin() {
+        let mut fb = DoomFramebuffer::new(10, 10);
+        let color = PackedRgba::rgb(200, 200, 200);
+        draw_line_fb(&mut fb, 0, 0, 0, 0, color);
+        assert_eq!(fb.get_pixel(0, 0), color);
+    }
+
+    #[test]
+    fn draw_line_reverse_diagonal() {
+        let mut fb = DoomFramebuffer::new(10, 10);
+        let color = PackedRgba::rgb(100, 50, 200);
+        draw_line_fb(&mut fb, 7, 7, 2, 2, color);
+        assert_eq!(fb.get_pixel(7, 7), color);
+        assert_eq!(fb.get_pixel(2, 2), color);
+        // All diagonal pixels should be set
+        for i in 2..=7 {
+            assert_eq!(fb.get_pixel(i, i), color, "pixel at ({i}, {i})");
+        }
+    }
+
+    // ---- Lifecycle: additional edge cases ----
+
+    #[test]
+    fn lifecycle_zero_dt_update() {
+        let mut engine = DoomEngine::default();
+        engine.update(0.0);
+        assert_eq!(engine.time, 0.0);
+        assert_eq!(engine.frame, 0);
+    }
+
+    #[test]
+    fn lifecycle_very_small_dt_no_tick() {
+        let mut engine = DoomEngine::default();
+        // dt much smaller than DOOM_TICK_SECS (~0.0286s) should not trigger a tick
+        let tiny_dt = DOOM_TICK_SECS * 0.01;
+        engine.player.mom_x = 100.0;
+        let old_x = engine.player.x;
+        engine.update(tiny_dt);
+        assert!(engine.time > 0.0);
+        // No tick fired, so player position unchanged by tick logic
+        // (move_forward sets momentum, tick applies it)
+        assert!(
+            (engine.player.x - old_x).abs() < 0.01,
+            "no tick should have fired"
+        );
+    }
+
+    #[test]
+    fn lifecycle_update_without_render() {
+        let mut engine = DoomEngine::default();
+        for _ in 0..10 {
+            engine.update(DOOM_TICK_SECS);
+        }
+        assert!(engine.time > 0.0);
+        assert_eq!(engine.frame, 0, "frame should not advance without render");
+    }
+
+    #[test]
+    fn lifecycle_render_without_update() {
+        let mut engine = DoomEngine::default();
+        let mut painter = Painter::new(120, 80, crate::canvas::Mode::Braille);
+        engine.render(&mut painter, 60, 20, 1);
+        assert_eq!(engine.frame, 1);
+        assert_eq!(engine.time, 0.0, "time should not advance without update");
+    }
+
+    #[test]
+    fn lifecycle_fire_flash_fully_decays() {
+        let mut engine = DoomEngine::default();
+        engine.fire();
+        assert!((engine.fire_flash - 1.0).abs() < f32::EPSILON);
+        // Decay rate is 8.0/s, so 1.0/8.0 = 0.125s to fully decay
+        engine.update(0.2);
+        assert_eq!(engine.fire_flash, 0.0, "flash should be clamped to 0.0");
+    }
+
+    #[test]
+    fn lifecycle_all_controls_in_sequence() {
+        let mut engine = DoomEngine::default();
+        engine.move_forward(1.0);
+        engine.strafe(-1.0);
+        engine.look(0.3, 0.1);
+        engine.fire();
+        engine.toggle_noclip();
+        engine.toggle_god_mode();
+        engine.toggle_run();
+        engine.update(DOOM_TICK_SECS * 5.0);
+        let mut painter = Painter::new(120, 80, crate::canvas::Mode::Braille);
+        engine.render(&mut painter, 60, 20, 1);
+        engine.render(&mut painter, 60, 20, 1);
+        assert_eq!(engine.frame, 2);
+        assert!(engine.player.noclip);
+        assert!(engine.player.god_mode);
+        assert!(engine.player.running);
+    }
+
+    #[test]
+    fn lifecycle_render_various_strides() {
+        let mut engine = DoomEngine::default();
+        let mut painter = Painter::new(240, 160, crate::canvas::Mode::Braille);
+        for stride in [1, 2, 3, 4] {
+            engine.render(&mut painter, 120, 40, stride);
+        }
+        assert_eq!(engine.frame, 4);
+    }
+
+    // ---- Overlay edge cases ----
+
+    #[test]
+    fn render_minimap_without_map_is_noop() {
+        let mut engine = DoomEngine::new(); // No map loaded
+        engine.show_minimap = true;
+        let mut painter = Painter::new(240, 160, crate::canvas::Mode::Braille);
+        engine.render(&mut painter, 120, 40, 1);
+        assert_eq!(engine.frame, 1);
+    }
+
+    #[test]
+    fn draw_crosshair_sets_arm_pixels() {
+        let mut engine = DoomEngine {
+            show_crosshair: true,
+            show_minimap: false,
+            ..DoomEngine::default()
+        };
+        let mut painter = Painter::new(
+            engine.fb_width as u16 * 2,
+            engine.fb_height as u16 * 2,
+            crate::canvas::Mode::Braille,
+        );
+        engine.render(
+            &mut painter,
+            engine.fb_width as u16,
+            engine.fb_height as u16,
+            1,
+        );
+
+        let cx = engine.framebuffer.width / 2;
+        let cy = engine.framebuffer.height / 2;
+        let white = PackedRgba::rgb(255, 255, 255);
+        // Crosshair arms extend 1..=3 pixels from center
+        for i in 1..=3u32 {
+            assert_eq!(engine.framebuffer.get_pixel(cx + i, cy), white);
+            assert_eq!(engine.framebuffer.get_pixel(cx - i, cy), white);
+            assert_eq!(engine.framebuffer.get_pixel(cx, cy + i), white);
+            assert_eq!(engine.framebuffer.get_pixel(cx, cy - i), white);
+        }
+    }
+
+    #[test]
+    fn draw_muzzle_flash_zero_intensity_skipped() {
+        let mut engine = DoomEngine {
+            fire_flash: 0.0,
+            show_crosshair: false,
+            ..DoomEngine::default()
+        };
+        let mut painter = Painter::new(240, 160, crate::canvas::Mode::Braille);
+        engine.render(&mut painter, 120, 40, 1);
+        // fire_flash == 0.0 means draw_muzzle_flash is never called
+        assert_eq!(engine.frame, 1);
+    }
+
+    // ---- Framebuffer resize on render ----
+
+    #[test]
+    fn render_resizes_framebuffer_on_dimension_change() {
+        let mut engine = DoomEngine::default();
+        let mut painter = Painter::new(480, 320, crate::canvas::Mode::Braille);
+        engine.render(&mut painter, 240, 80, 1);
+        let old_w = engine.framebuffer.width;
+        let old_h = engine.framebuffer.height;
+
+        // Change desired resolution
+        engine.fb_width = 160;
+        engine.fb_height = 100;
+        engine.render(&mut painter, 80, 25, 1);
+        assert_eq!(engine.framebuffer.width, 160);
+        assert_eq!(engine.framebuffer.height, 100);
+        assert!(
+            engine.framebuffer.width != old_w || engine.framebuffer.height != old_h,
+            "framebuffer should have been resized"
+        );
+        assert_eq!(engine.frame, 2);
+    }
+
+    // ---- Test map structure details ----
+
+    #[test]
+    fn test_map_has_four_sectors() {
+        let map = generate_test_map();
+        assert_eq!(map.sectors.len(), 4);
+    }
+
+    #[test]
+    fn test_map_has_things_with_player_start() {
+        let map = generate_test_map();
+        assert!(!map.things.is_empty());
+        let start = map.player_start();
+        assert!(start.is_some());
+        let (x, y, _angle) = start.unwrap();
+        assert!((x).abs() < 0.01);
+        assert!((y).abs() < 0.01);
+    }
 }

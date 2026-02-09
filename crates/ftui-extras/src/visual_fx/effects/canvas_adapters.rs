@@ -677,20 +677,19 @@ impl MetaballsCanvasAdapter {
         // Hoist step==1 branching outside the hot pixel loop.
         if step == 1 {
             for (y, &ny) in y_coords.iter().enumerate().take(h) {
+                let mut min_dy2 = f64::MAX;
                 for (i, ball) in balls.iter().enumerate() {
                     let dy = ny - ball.y;
-                    dy2_cache[i] = dy * dy;
+                    let dy2 = dy * dy;
+                    dy2_cache[i] = dy2;
+                    if dy2 < min_dy2 {
+                        min_dy2 = dy2;
+                    }
                 }
 
                 // Cheap row-skip: if the closest ball is too far vertically
                 // for the aggregate field to reach `glow`, skip the row.
-                // Cost: balls_len comparisons.  No divisions.
-                let mut min_dy2 = f64::MAX;
-                for &d in dy2_cache.iter().take(balls_len) {
-                    if d < min_dy2 {
-                        min_dy2 = d;
-                    }
-                }
+                // Cost: one pass over balls with no divisions.
                 if min_dy2 > row_skip_dy2 {
                     continue;
                 }
@@ -806,18 +805,17 @@ impl MetaballsCanvasAdapter {
             // step > 1: use active_indices for reduced/minimal quality.
             let active_indices = self.active_indices.as_slice();
             for (y, &ny) in y_coords.iter().enumerate().take(h) {
+                let mut min_dy2 = f64::MAX;
                 for &i in active_indices {
                     let dy = ny - balls[i].y;
-                    dy2_cache[i] = dy * dy;
+                    let dy2 = dy * dy;
+                    dy2_cache[i] = dy2;
+                    if dy2 < min_dy2 {
+                        min_dy2 = dy2;
+                    }
                 }
 
                 // Cheap row-skip (same threshold as step==1 path).
-                let mut min_dy2 = f64::MAX;
-                for &i in active_indices {
-                    if dy2_cache[i] < min_dy2 {
-                        min_dy2 = dy2_cache[i];
-                    }
-                }
                 if min_dy2 > row_skip_dy2 {
                     continue;
                 }
