@@ -1769,4 +1769,39 @@ mod tests {
             }]
         );
     }
+
+    // ── feed_into equivalence ──────────────────────────────────────
+
+    #[test]
+    fn feed_into_is_equivalent_to_feed() {
+        let inputs: &[&[u8]] = &[
+            b"Hello, World!",
+            b"\x1b[31;1mBold Red\x1b[m",
+            b"\x1b[?1049h\x1b[?2004h",
+            b"\x1b[10;20H",
+            b"\x1b]0;title\x07",
+            b"\xc3\xa9\xc3\xa0",
+        ];
+        for &input in inputs {
+            let mut p1 = Parser::new();
+            let mut p2 = Parser::new();
+            let expected = p1.feed(input);
+            let mut actual = Vec::new();
+            p2.feed_into(input, &mut actual);
+            assert_eq!(expected, actual, "mismatch for input {:?}", input);
+        }
+    }
+
+    #[test]
+    fn feed_into_reuses_capacity() {
+        let mut p = Parser::new();
+        let mut out = Vec::new();
+        p.feed_into(b"\x1b[31m", &mut out);
+        assert!(!out.is_empty());
+        let cap = out.capacity();
+        out.clear();
+        p.feed_into(b"\x1b[32m", &mut out);
+        // Capacity should be retained from the previous call.
+        assert!(out.capacity() >= cap);
+    }
 }

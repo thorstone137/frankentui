@@ -36,6 +36,12 @@ impl QuakeFramebuffer {
         self.depth.fill(f32::MAX);
     }
 
+    /// Reset only the depth buffer (pixels left as-is).
+    #[inline]
+    pub fn clear_depth(&mut self) {
+        self.depth.fill(f32::MAX);
+    }
+
     /// Set a pixel at (x, y) with depth test.
     #[inline]
     pub fn set_pixel_depth(&mut self, x: u32, y: u32, z: f32, color: PackedRgba) {
@@ -348,7 +354,7 @@ mod tests {
     fn set_pixel_depth_updates_depth_buffer() {
         let mut fb = QuakeFramebuffer::new(5, 5);
         fb.set_pixel_depth(1, 1, 50.0, PackedRgba::RED);
-        assert_eq!(fb.depth[(1 * 5 + 1) as usize], 50.0);
+        assert_eq!(fb.depth[6], 50.0); // row 1, col 1 in 5-wide buffer
     }
 
     // --- draw_column ---
