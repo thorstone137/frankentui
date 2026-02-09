@@ -751,4 +751,400 @@ mod tests {
             "outside rooms should return lowest floor, got {h}"
         );
     }
+
+    // ── add_room_geometry unit tests ────────────────────────────────────
+
+    /// Helper: create a map with one room and return it.
+    fn single_room_map() -> QuakeMap {
+        let mut map = QuakeMap::new();
+        add_room_geometry(&mut map, 0.0, 0.0, 100.0, 200.0, 0.0, 128.0, 0.8, 1);
+        map
+    }
+
+    #[test]
+    fn room_geometry_adds_eight_vertices() {
+        let map = single_room_map();
+        assert_eq!(
+            map.vertices.len(),
+            8,
+            "box room should have 8 corner vertices"
+        );
+    }
+
+    #[test]
+    fn room_geometry_adds_six_faces() {
+        let map = single_room_map();
+        // floor + ceiling + 4 walls = 6
+        assert_eq!(map.faces.len(), 6, "box room should have 6 faces");
+    }
+
+    #[test]
+    fn room_geometry_adds_four_wall_segments() {
+        let map = single_room_map();
+        assert_eq!(
+            map.walls.len(),
+            4,
+            "box room should have 4 collision wall segments"
+        );
+    }
+
+    #[test]
+    fn room_floor_face_normal_points_up() {
+        let map = single_room_map();
+        let floor = &map.faces[0];
+        assert_eq!(floor.normal, [0.0, 0.0, 1.0]);
+        assert_eq!(floor.tex_type, TexType::Floor);
+    }
+
+    #[test]
+    fn room_ceiling_face_normal_points_down() {
+        let map = single_room_map();
+        let ceil = &map.faces[1];
+        assert_eq!(ceil.normal, [0.0, 0.0, -1.0]);
+        assert_eq!(ceil.tex_type, TexType::Ceiling);
+    }
+
+    #[test]
+    fn room_ceiling_light_is_dimmed() {
+        let map = single_room_map();
+        let floor_light = map.faces[0].light_level;
+        let ceil_light = map.faces[1].light_level;
+        assert!(
+            ceil_light < floor_light,
+            "ceiling should be dimmer than floor: ceil={ceil_light} floor={floor_light}"
+        );
+        // Ceiling is light * 0.7
+        assert!((ceil_light - 0.8 * 0.7).abs() < 0.01);
+    }
+
+    #[test]
+    fn room_wall_normals_are_axis_aligned() {
+        let map = single_room_map();
+        // faces[2..6] are walls: south, north, west, east
+        let expected_normals = [
+            [0.0, -1.0, 0.0], // south
+            [0.0, 1.0, 0.0],  // north
+            [-1.0, 0.0, 0.0], // west
+            [1.0, 0.0, 0.0],  // east
+        ];
+        for (i, expected) in expected_normals.iter().enumerate() {
+            assert_eq!(
+                map.faces[2 + i].normal,
+                *expected,
+                "wall {i} normal mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn room_ns_walls_brighter_than_ew_walls() {
+        let map = single_room_map();
+        // South/North walls get light * 0.8, East/West get light * 0.6
+        let south_light = map.faces[2].light_level;
+        let west_light = map.faces[4].light_level;
+        assert!(
+            south_light > west_light,
+            "N/S walls ({south_light}) should be brighter than E/W walls ({west_light})"
+        );
+        assert!((south_light - 0.8 * 0.8).abs() < 0.01);
+        assert!((west_light - 0.8 * 0.6).abs() < 0.01);
+    }
+
+    #[test]
+    fn room_wall_segments_match_room_bounds() {
+        let map = single_room_map();
+        // Room is at (0,0) size (100,200), floor=0, ceil=128
+        // South wall: (0,0)→(100,0)
+        let s = &map.walls[0];
+        assert!((s.x1 - 0.0).abs() < 0.01);
+        assert!((s.y1 - 0.0).abs() < 0.01);
+        assert!((s.x2 - 100.0).abs() < 0.01);
+        assert!((s.y2 - 0.0).abs() < 0.01);
+        assert!((s.floor_z - 0.0).abs() < 0.01);
+        assert!((s.ceil_z - 128.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn room_vertices_span_correct_bounds() {
+        let map = single_room_map();
+        // Room (0,0,100,200) floor=0 ceil=128
+        // Floor corners: (0,0,0), (100,0,0), (100,200,0), (0,200,0)
+        // Ceil corners: (0,0,128), (100,0,128), (100,200,128), (0,200,128)
+        let xs: Vec<f32> = map.vertices.iter().map(|v| v[0]).collect();
+        let ys: Vec<f32> = map.vertices.iter().map(|v| v[1]).collect();
+        let zs: Vec<f32> = map.vertices.iter().map(|v| v[2]).collect();
+
+        assert!((*xs.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() - 0.0).abs() < 0.01);
+        assert!(
+            (*xs.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() - 100.0).abs() < 0.01
+        );
+        assert!((*ys.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() - 0.0).abs() < 0.01);
+        assert!(
+            (*ys.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() - 200.0).abs() < 0.01
+        );
+        assert!((*zs.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() - 0.0).abs() < 0.01);
+        assert!(
+            (*zs.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() - 128.0).abs() < 0.01
+        );
+    }
+
+    #[test]
+    fn room_all_wall_faces_are_wall_type() {
+        let map = single_room_map();
+        for i in 2..6 {
+            assert_eq!(
+                map.faces[i].tex_type,
+                TexType::Wall,
+                "face {i} should be Wall type"
+            );
+        }
+    }
+
+    // ── add_pillar unit tests ───────────────────────────────────────────
+
+    #[test]
+    fn pillar_adds_eight_vertices() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 50.0, 50.0, 20.0, 0.0, 100.0, 0.7, 2);
+        assert_eq!(map.vertices.len(), 8);
+    }
+
+    #[test]
+    fn pillar_adds_four_faces() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 50.0, 50.0, 20.0, 0.0, 100.0, 0.7, 2);
+        assert_eq!(
+            map.faces.len(),
+            4,
+            "pillar should have 4 wall faces (no floor/ceil)"
+        );
+    }
+
+    #[test]
+    fn pillar_adds_four_wall_segments() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 50.0, 50.0, 20.0, 0.0, 100.0, 0.7, 2);
+        assert_eq!(map.walls.len(), 4);
+    }
+
+    #[test]
+    fn pillar_faces_use_metal_texture() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 50.0, 50.0, 20.0, 0.0, 100.0, 0.7, 2);
+        for face in &map.faces {
+            assert_eq!(face.tex_type, TexType::Metal);
+        }
+    }
+
+    #[test]
+    fn pillar_walls_form_square() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 100.0, 100.0, 40.0, 0.0, 200.0, 0.7, 2);
+        // half = 20.0, so corners at (80,80), (120,80), (120,120), (80,120)
+        let wall_xs: Vec<f32> = map.walls.iter().flat_map(|w| [w.x1, w.x2]).collect();
+        let wall_ys: Vec<f32> = map.walls.iter().flat_map(|w| [w.y1, w.y2]).collect();
+        let x_min = wall_xs.iter().cloned().fold(f32::MAX, f32::min);
+        let x_max = wall_xs.iter().cloned().fold(f32::MIN, f32::max);
+        let y_min = wall_ys.iter().cloned().fold(f32::MAX, f32::min);
+        let y_max = wall_ys.iter().cloned().fold(f32::MIN, f32::max);
+        assert!((x_min - 80.0).abs() < 0.01, "pillar x_min={x_min}");
+        assert!((x_max - 120.0).abs() < 0.01, "pillar x_max={x_max}");
+        assert!((y_min - 80.0).abs() < 0.01, "pillar y_min={y_min}");
+        assert!((y_max - 120.0).abs() < 0.01, "pillar y_max={y_max}");
+    }
+
+    #[test]
+    fn pillar_wall_z_ranges_match() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 50.0, 50.0, 20.0, -10.0, 150.0, 0.7, 2);
+        for wall in &map.walls {
+            assert!((wall.floor_z - (-10.0)).abs() < 0.01);
+            assert!((wall.ceil_z - 150.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn pillar_alternating_light_levels() {
+        let mut map = QuakeMap::new();
+        add_pillar(&mut map, 50.0, 50.0, 20.0, 0.0, 100.0, 1.0, 2);
+        // Even faces (south, north) get light * 0.8, odd (east, west) get * 0.6
+        assert!((map.faces[0].light_level - 0.8).abs() < 0.01);
+        assert!((map.faces[1].light_level - 0.6).abs() < 0.01);
+        assert!((map.faces[2].light_level - 0.8).abs() < 0.01);
+        assert!((map.faces[3].light_level - 0.6).abs() < 0.01);
+    }
+
+    // ── add_platform unit tests ─────────────────────────────────────────
+
+    #[test]
+    fn platform_adds_room_entry() {
+        let mut map = QuakeMap::new();
+        add_platform(&mut map, 10.0, 20.0, 50.0, 60.0, 32.0, 0.9, 4);
+        assert_eq!(map.rooms.len(), 1);
+        let room = &map.rooms[0];
+        assert!((room.x - 10.0).abs() < 0.01);
+        assert!((room.y - 20.0).abs() < 0.01);
+        assert!((room.width - 50.0).abs() < 0.01);
+        assert!((room.height - 60.0).abs() < 0.01);
+        assert!((room.floor_z - 32.0).abs() < 0.01);
+        assert!((room.ceil_z - 192.0).abs() < 0.01); // height + 160
+    }
+
+    #[test]
+    fn platform_adds_top_face() {
+        let mut map = QuakeMap::new();
+        add_platform(&mut map, 0.0, 0.0, 64.0, 64.0, 48.0, 0.9, 4);
+        // First face is the top surface
+        assert!(!map.faces.is_empty());
+        let top = &map.faces[0];
+        assert_eq!(top.normal, [0.0, 0.0, 1.0]);
+        assert!((top.dist - 48.0).abs() < 0.01);
+        assert_eq!(top.tex_type, TexType::Metal);
+    }
+
+    #[test]
+    fn platform_adds_south_step_face() {
+        let mut map = QuakeMap::new();
+        add_platform(&mut map, 0.0, 0.0, 64.0, 64.0, 48.0, 0.9, 4);
+        // Second face is the south step
+        assert!(map.faces.len() >= 2);
+        let step = &map.faces[1];
+        assert_eq!(step.normal, [0.0, -1.0, 0.0]);
+        assert_eq!(step.tex_type, TexType::Metal);
+    }
+
+    #[test]
+    fn platform_adds_eight_vertices() {
+        let mut map = QuakeMap::new();
+        add_platform(&mut map, 0.0, 0.0, 64.0, 64.0, 48.0, 0.9, 4);
+        // 4 top corners + 4 bottom corners = 8
+        assert_eq!(map.vertices.len(), 8);
+    }
+
+    #[test]
+    fn platform_top_vertices_at_correct_height() {
+        let mut map = QuakeMap::new();
+        add_platform(&mut map, 10.0, 20.0, 30.0, 40.0, 50.0, 0.9, 4);
+        // First 4 vertices are top corners at z=50
+        for i in 0..4 {
+            assert!(
+                (map.vertices[i][2] - 50.0).abs() < 0.01,
+                "top vertex {i} z={}",
+                map.vertices[i][2]
+            );
+        }
+        // Next 4 are bottom at z=0
+        for i in 4..8 {
+            assert!(
+                (map.vertices[i][2] - 0.0).abs() < 0.01,
+                "bottom vertex {i} z={}",
+                map.vertices[i][2]
+            );
+        }
+    }
+
+    // ── circle_intersects_segment extra edge cases ──────────────────────
+
+    #[test]
+    fn circle_intersects_diagonal_segment() {
+        // Circle at origin, segment from (-10,-10) to (10,10) passes through
+        assert!(circle_intersects_segment(
+            0.0, 0.0, 1.0, -10.0, -10.0, 10.0, 10.0
+        ));
+    }
+
+    #[test]
+    fn circle_misses_parallel_segment() {
+        // Circle at (0, 5), segment along x-axis at y=0, radius=4 (gap of 1)
+        assert!(!circle_intersects_segment(
+            0.0, 5.0, 4.0, -100.0, 0.0, 100.0, 0.0
+        ));
+    }
+
+    // ── map query edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn floor_height_single_room() {
+        let mut map = QuakeMap::new();
+        map.rooms.push(Room {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            floor_z: 10.0,
+            ceil_z: 200.0,
+            light: 1.0,
+        });
+        assert!((map.floor_height_at(50.0, 50.0) - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn point_in_solid_zero_radius() {
+        let mut map = QuakeMap::new();
+        map.walls.push(WallSeg {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 100.0,
+            y2: 0.0,
+            floor_z: 0.0,
+            ceil_z: 100.0,
+        });
+        // Zero radius: only collides if point is exactly on the segment
+        // (which it won't be since distance > 0 for any off-segment point)
+        assert!(!map.point_in_solid(50.0, 10.0, 50.0, 0.0));
+    }
+
+    #[test]
+    fn supportive_floor_slightly_above_platform() {
+        let mut map = QuakeMap::new();
+        map.rooms.push(Room {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            floor_z: 0.0,
+            ceil_z: 200.0,
+            light: 1.0,
+        });
+        map.rooms.push(Room {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            floor_z: 50.0,
+            ceil_z: 200.0,
+            light: 1.0,
+        });
+        // Player at z=52, slightly above the platform (50).
+        // Both floors (0 and 50) are <= z + STEPSIZE, so returns highest (50).
+        let h = map.supportive_floor_at(50.0, 50.0, 52.0);
+        assert!((h - 50.0).abs() < 0.01, "expected 50.0, got {h}");
+    }
+
+    #[test]
+    fn floor_height_at_room_boundary() {
+        let mut map = QuakeMap::new();
+        map.rooms.push(Room {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            floor_z: 5.0,
+            ceil_z: 200.0,
+            light: 1.0,
+        });
+        // Exactly on the room boundary edges (inclusive)
+        assert!((map.floor_height_at(0.0, 0.0) - 5.0).abs() < 0.01);
+        assert!((map.floor_height_at(100.0, 100.0) - 5.0).abs() < 0.01);
+        assert!((map.floor_height_at(100.0, 0.0) - 5.0).abs() < 0.01);
+        assert!((map.floor_height_at(0.0, 100.0) - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn empty_map_floor_height_fallback() {
+        let map = QuakeMap::new();
+        // No rooms → fold produces f32::MAX
+        let h = map.floor_height_at(0.0, 0.0);
+        assert_eq!(h, f32::MAX);
+    }
 }

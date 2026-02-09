@@ -323,17 +323,27 @@ impl QuakeRenderer {
         }
         let inv_area = 1.0 / area;
 
+        // Hoist per-triangle edge deltas (constant for all pixels in this triangle)
+        let e12_dy = s2[1] - s1[1];
+        let e12_dx = s2[0] - s1[0];
+        let e20_dy = s0[1] - s2[1];
+        let e20_dx = s0[0] - s2[0];
+
         // Scanline rasterization with barycentric interpolation
         let fb_width = fb.width;
         for py in min_y..=max_y {
             let fy = py as f32 + 0.5;
             let row_offset = py * fb_width;
+
+            // Hoist per-row fy-dependent terms (constant for all px in this row)
+            let row_w0_fy = (fy - s1[1]) * e12_dx;
+            let row_w1_fy = (fy - s2[1]) * e20_dx;
+
             for px in min_x..=max_x {
                 let fx = px as f32 + 0.5;
-                let p = [fx, fy, 0.0];
 
-                let w0 = edge_function(s1, s2, p) * inv_area;
-                let w1 = edge_function(s2, s0, p) * inv_area;
+                let w0 = ((fx - s1[0]) * e12_dy - row_w0_fy) * inv_area;
+                let w1 = ((fx - s2[0]) * e20_dy - row_w1_fy) * inv_area;
                 let w2 = 1.0 - w0 - w1;
 
                 // Inside triangle test

@@ -76,6 +76,10 @@ pub struct DoomRenderer {
     half_height: f32,
     /// Projection scale (distance to projection plane).
     projection: f32,
+    /// Cached per-row background gradient (recomputed only on resize).
+    bg_cache: Vec<PackedRgba>,
+    /// Dimensions used to build `bg_cache`.
+    bg_cache_dims: (u32, u32),
 }
 
 impl DoomRenderer {
@@ -103,6 +107,8 @@ impl DoomRenderer {
             half_width,
             half_height,
             projection,
+            bg_cache: Vec::new(),
+            bg_cache_dims: (0, 0),
         }
     }
 
@@ -414,28 +420,35 @@ impl DoomRenderer {
         self.stats = RenderStats::default();
     }
 
-    /// Draw the sky and floor background.
-    fn draw_background(&self, fb: &mut DoomFramebuffer) {
-        let horizon = self.height / 2;
+    /// Draw the sky and floor background using cached per-row colors.
+    fn draw_background(&mut self, fb: &mut DoomFramebuffer) {
+        // Cache per-row gradient colors (only recompute on dimension change)
+        if self.bg_cache_dims != (self.width, self.height) {
+            let horizon = self.height / 2;
+            self.bg_cache.clear();
+            self.bg_cache.reserve(self.height as usize);
+            for y in 0..self.height {
+                let color = if y < horizon {
+                    let t = y as f32 / horizon as f32;
+                    let r = lerp_u8(SKY_TOP[0], SKY_BOTTOM[0], t);
+                    let g = lerp_u8(SKY_TOP[1], SKY_BOTTOM[1], t);
+                    let b = lerp_u8(SKY_TOP[2], SKY_BOTTOM[2], t);
+                    PackedRgba::rgb(r, g, b)
+                } else {
+                    let t = ((y - horizon) as f32 / (self.height - horizon) as f32).min(1.0);
+                    let r = lerp_u8(FLOOR_FAR[0], FLOOR_NEAR[0], t);
+                    let g = lerp_u8(FLOOR_FAR[1], FLOOR_NEAR[1], t);
+                    let b = lerp_u8(FLOOR_FAR[2], FLOOR_NEAR[2], t);
+                    PackedRgba::rgb(r, g, b)
+                };
+                self.bg_cache.push(color);
+            }
+            self.bg_cache_dims = (self.width, self.height);
+        }
+
         let row_width = self.width as usize;
-
         for y in 0..self.height {
-            let color = if y < horizon {
-                // Sky gradient
-                let t = y as f32 / horizon as f32;
-                let r = lerp_u8(SKY_TOP[0], SKY_BOTTOM[0], t);
-                let g = lerp_u8(SKY_TOP[1], SKY_BOTTOM[1], t);
-                let b = lerp_u8(SKY_TOP[2], SKY_BOTTOM[2], t);
-                PackedRgba::rgb(r, g, b)
-            } else {
-                // Floor gradient (distance from horizon)
-                let t = ((y - horizon) as f32 / (self.height - horizon) as f32).min(1.0);
-                let r = lerp_u8(FLOOR_FAR[0], FLOOR_NEAR[0], t);
-                let g = lerp_u8(FLOOR_FAR[1], FLOOR_NEAR[1], t);
-                let b = lerp_u8(FLOOR_FAR[2], FLOOR_NEAR[2], t);
-                PackedRgba::rgb(r, g, b)
-            };
-
+            let color = self.bg_cache[y as usize];
             let row_start = y as usize * row_width;
             let row_end = row_start + row_width;
             fb.pixels[row_start..row_end].fill(color);
@@ -1131,7 +1144,7 @@ mod tests {
 
     #[test]
     fn render_background_fills_all_pixels() {
-        let r = DoomRenderer::new(40, 30);
+        let mut r = DoomRenderer::new(40, 30);
         let mut fb = DoomFramebuffer::new(40, 30);
         r.draw_background(&mut fb);
 
@@ -1698,7 +1711,7 @@ mod tests {
 
     #[test]
     fn background_sky_differs_from_floor() {
-        let r = DoomRenderer::new(1, 20);
+        let mut r = DoomRenderer::new(1, 20);
         let mut fb = DoomFramebuffer::new(1, 20);
         r.draw_background(&mut fb);
 
@@ -1713,7 +1726,7 @@ mod tests {
 
     #[test]
     fn background_sky_gradient_changes_with_y() {
-        let r = DoomRenderer::new(1, 40);
+        let mut r = DoomRenderer::new(1, 40);
         let mut fb = DoomFramebuffer::new(1, 40);
         r.draw_background(&mut fb);
 
