@@ -499,6 +499,7 @@ impl Buffer {
     }
 
     /// Count the number of dirty rows.
+    #[inline]
     pub fn dirty_row_count(&self) -> usize {
         self.dirty_rows.iter().filter(|&&d| d).count()
     }
@@ -583,6 +584,7 @@ impl Buffer {
     }
 
     /// Access the dirty-span configuration.
+    #[inline]
     pub fn dirty_span_config(&self) -> DirtySpanConfig {
         self.dirty_span_config
     }

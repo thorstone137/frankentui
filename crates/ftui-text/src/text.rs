@@ -277,6 +277,7 @@ impl Line {
     }
 
     /// Get the display width in cells.
+    #[inline]
     #[must_use]
     pub fn width(&self) -> usize {
         self.spans.iter().map(|s| s.width()).sum()
@@ -501,6 +502,7 @@ impl Text {
     }
 
     /// Get the maximum width across all lines.
+    #[inline]
     #[must_use]
     pub fn width(&self) -> usize {
         self.lines.iter().map(|l| l.width()).max().unwrap_or(0)
