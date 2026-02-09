@@ -1,0 +1,15 @@
+{
+  "name": "tab_default",
+  "description": "Default tab stops at every 8 columns: TAB from col 0 goes to col 8, from col 8 to col 16",
+  "initial_size": [80, 24],
+  "input_bytes_hex": "4109420943",
+  "comment": "Print A at col 0, TAB to col 8, print B, TAB to col 16, print C",
+  "expected": {
+    "cursor": { "row": 0, "col": 17 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 8, "char": "B" },
+      { "row": 0, "col": 16, "char": "C" }
+    ]
+  }
+}

@@ -95,6 +95,18 @@ pub enum Action {
     HyperlinkStart(String),
     /// OSC 8: end the current hyperlink.
     HyperlinkEnd,
+    /// HTS (`ESC H`): set a tab stop at the current cursor column.
+    SetTabStop,
+    /// TBC (`CSI Ps g`): tab clear. 0 = at cursor, 3 = all tab stops.
+    ClearTabStop(u16),
+    /// CBT (`CSI Ps Z`): cursor backward tabulation by count (default 1).
+    BackTab(u16),
+    /// DECKPAM (`ESC =`): application keypad mode.
+    ApplicationKeypad,
+    /// DECKPNM (`ESC >`): normal keypad mode.
+    NormalKeypad,
+    /// ECH (`CSI Ps X`): erase characters at cursor position (replace with blanks).
+    EraseChars(u16),
     /// A raw escape/CSI/OSC sequence captured verbatim (starts with ESC).
     Escape(Vec<u8>),
 }
@@ -290,6 +302,24 @@ impl Parser {
                 self.buf.clear();
                 Some(Action::FullReset)
             }
+            // HTS: set tab stop at current column (ESC H)
+            b'H' => {
+                self.state = State::Ground;
+                self.buf.clear();
+                Some(Action::SetTabStop)
+            }
+            // DECKPAM: application keypad mode (ESC =)
+            b'=' => {
+                self.state = State::Ground;
+                self.buf.clear();
+                Some(Action::ApplicationKeypad)
+            }
+            // DECKPNM: normal keypad mode (ESC >)
+            b'>' => {
+                self.state = State::Ground;
+                self.buf.clear();
+                Some(Action::NormalKeypad)
+            }
             _ => {
                 self.state = State::Ground;
                 Some(Action::Escape(self.take_buf()))
@@ -445,6 +475,19 @@ impl Parser {
                 Some(Action::SetScrollRegion { top, bottom })
             }
             b'm' => Some(Action::Sgr(params)),
+            // TBC: tab clear (CSI Ps g)
+            b'g' => {
+                let mode = params.first().copied().unwrap_or(0);
+                Some(Action::ClearTabStop(mode))
+            }
+            // CBT: cursor backward tabulation (CSI Ps Z)
+            b'Z' => Some(Action::BackTab(Self::csi_count_or_one(
+                params.first().copied(),
+            ))),
+            // ECH: erase characters at cursor (CSI Ps X)
+            b'X' => Some(Action::EraseChars(Self::csi_count_or_one(
+                params.first().copied(),
+            ))),
             // SM: set ANSI mode(s)
             b'h' => Some(Action::AnsiSet(params)),
             // RM: reset ANSI mode(s)
@@ -941,6 +984,76 @@ mod tests {
                 Action::DecRst(vec![1006]),
                 Action::DecRst(vec![2004]),
                 Action::DecRst(vec![1049]),
+            ]
+        );
+    }
+
+    // ── HTS / TBC / CBT (tab stop management) ────────────────────
+
+    #[test]
+    fn esc_h_is_set_tab_stop() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1bH"), vec![Action::SetTabStop]);
+    }
+
+    #[test]
+    fn csi_g_is_clear_tab_stop_at_cursor() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1b[g"), vec![Action::ClearTabStop(0)]);
+        assert_eq!(p.feed(b"\x1b[0g"), vec![Action::ClearTabStop(0)]);
+    }
+
+    #[test]
+    fn csi_3g_is_clear_all_tab_stops() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1b[3g"), vec![Action::ClearTabStop(3)]);
+    }
+
+    #[test]
+    fn csi_z_is_back_tab() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1b[Z"), vec![Action::BackTab(1)]);
+        assert_eq!(p.feed(b"\x1b[3Z"), vec![Action::BackTab(3)]);
+    }
+
+    // ── DECKPAM / DECKPNM (keypad modes) ─────────────────────────
+
+    #[test]
+    fn esc_eq_is_application_keypad() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1b="), vec![Action::ApplicationKeypad]);
+    }
+
+    #[test]
+    fn esc_gt_is_normal_keypad() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1b>"), vec![Action::NormalKeypad]);
+    }
+
+    // ── ECH (erase characters) ────────────────────────────────────
+
+    #[test]
+    fn csi_x_is_erase_chars() {
+        let mut p = Parser::new();
+        assert_eq!(p.feed(b"\x1b[X"), vec![Action::EraseChars(1)]);
+        assert_eq!(p.feed(b"\x1b[5X"), vec![Action::EraseChars(5)]);
+    }
+
+    // ── Mixed new sequences integration ───────────────────────────
+
+    #[test]
+    fn tab_stop_setup_and_clear_sequence() {
+        let mut p = Parser::new();
+        // Move to col 4, set tab, move to col 12, set tab, then clear all
+        let actions = p.feed(b"\x1b[5G\x1bH\x1b[13G\x1bH\x1b[3g");
+        assert_eq!(
+            actions,
+            vec![
+                Action::CursorColumn(4),
+                Action::SetTabStop,
+                Action::CursorColumn(12),
+                Action::SetTabStop,
+                Action::ClearTabStop(3),
             ]
         );
     }

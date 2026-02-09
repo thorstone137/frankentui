@@ -1,0 +1,15 @@
+{
+  "name": "hts_set_tab",
+  "description": "HTS (ESC H) sets a custom tab stop; TAB advances to the nearest set tab stop",
+  "initial_size": [80, 24],
+  "input_bytes_hex": "1b5b3547411b481b5b3147420943",
+  "comment": "CHA(5) → col 4, print A, ESC H (set tab at col 5), CHA(1) → col 0, print B at col 0, TAB → col 5 (custom), print C at col 5",
+  "expected": {
+    "cursor": { "row": 0, "col": 6 },
+    "cells": [
+      { "row": 0, "col": 4, "char": "A" },
+      { "row": 0, "col": 0, "char": "B" },
+      { "row": 0, "col": 5, "char": "C" }
+    ]
+  }
+}

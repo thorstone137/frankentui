@@ -1,0 +1,14 @@
+{
+  "name": "tbc_clear_tab",
+  "description": "TBC (CSI 0g) clears the tab stop at cursor position; TAB skips past cleared stop",
+  "initial_size": [80, 24],
+  "input_bytes_hex": "1b5b39471b5b671b5b3147410942",
+  "comment": "CHA(9) → col 8, CSI g (clear tab at col 8), CHA(1) → col 0, print A, TAB skips 8 (cleared) → col 16, print B",
+  "expected": {
+    "cursor": { "row": 0, "col": 17 },
+    "cells": [
+      { "row": 0, "col": 0, "char": "A" },
+      { "row": 0, "col": 16, "char": "B" }
+    ]
+  }
+}

@@ -241,6 +241,30 @@ impl CoreTerminalHarness {
                 self.scrollback = Scrollback::new(512);
             }
             Action::SetTitle(_) | Action::HyperlinkStart(_) | Action::HyperlinkEnd => {}
+            Action::SetTabStop => {
+                self.cursor.set_tab_stop();
+            }
+            Action::ClearTabStop(mode) => match mode {
+                0 => self.cursor.clear_tab_stop(),
+                3 | 5 => self.cursor.clear_all_tab_stops(),
+                _ => {}
+            },
+            Action::BackTab(count) => {
+                for _ in 0..count {
+                    self.cursor.col = self.cursor.prev_tab_stop();
+                }
+                self.cursor.pending_wrap = false;
+            }
+            Action::EraseChars(count) => {
+                self.grid.erase_chars(
+                    self.cursor.row,
+                    self.cursor.col,
+                    count,
+                    self.cursor.attrs.bg,
+                );
+            }
+            // Keypad mode changes tracked but not applied in conformance harness.
+            Action::ApplicationKeypad | Action::NormalKeypad => {}
             Action::Escape(_) => {}
         }
     }
