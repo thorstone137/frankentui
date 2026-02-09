@@ -1,0 +1,32 @@
+{
+  "name": "latin_extended",
+  "description": "Latin extended characters (2-byte UTF-8) are narrow (1-column)",
+  "initial_size": [
+    10,
+    3
+  ],
+  "input_bytes_hex": "c3a9c3b1c3bc",
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3
+    },
+    "cells": [
+      {
+        "row": 0,
+        "col": 0,
+        "char": "\u00e9"
+      },
+      {
+        "row": 0,
+        "col": 1,
+        "char": "\u00f1"
+      },
+      {
+        "row": 0,
+        "col": 2,
+        "char": "\u00fc"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "rep_no_prior_char",
+  "description": "REP with no prior graphic character does nothing",
+  "initial_size": [
+    10,
+    3
+  ],
+  "input_bytes_hex": "1b5b336258",
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 1
+    },
+    "cells": [
+      {
+        "row": 0,
+        "col": 0,
+        "char": "X"
+      }
+    ]
+  }
+}
