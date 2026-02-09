@@ -559,14 +559,26 @@ impl Default for PlasmaFx {
 struct PlasmaScratch {
     width: u16,
     height: u16,
-    x: Vec<f64>,
-    x_sq: Vec<f64>,
-    x_center_sq: Vec<f64>,
-    y: Vec<f64>,
-    sin_x2: Vec<f64>,
-    v1: Vec<f64>,
-    radial_center_phase: Vec<f64>,
-    radial_offset_phase: Vec<f64>,
+    // Per-column geometry bases (computed once per resize).
+    x_v1_sin: Vec<f64>,
+    x_v1_cos: Vec<f64>,
+    x_diag_sin: Vec<f64>,
+    x_diag_cos: Vec<f64>,
+    // Per-row geometry bases (computed once per resize).
+    y_v2_sin: Vec<f64>,
+    y_v2_cos: Vec<f64>,
+    y_diag_sin: Vec<f64>,
+    y_diag_cos: Vec<f64>,
+    // Per-pixel geometry bases for full quality (computed once per resize).
+    radial_center_sin: Vec<f64>,
+    radial_center_cos: Vec<f64>,
+    radial_offset_sin: Vec<f64>,
+    radial_offset_cos: Vec<f64>,
+    interference_sin: Vec<f64>,
+    interference_cos: Vec<f64>,
+    // Per-frame scratch.
+    v1_frame: Vec<f64>,
+    v2_frame: Vec<f64>,
 }
 
 impl PlasmaScratch {
@@ -574,14 +586,22 @@ impl PlasmaScratch {
         Self {
             width: 0,
             height: 0,
-            x: Vec::new(),
-            x_sq: Vec::new(),
-            x_center_sq: Vec::new(),
-            y: Vec::new(),
-            sin_x2: Vec::new(),
-            v1: Vec::new(),
-            radial_center_phase: Vec::new(),
-            radial_offset_phase: Vec::new(),
+            x_v1_sin: Vec::new(),
+            x_v1_cos: Vec::new(),
+            x_diag_sin: Vec::new(),
+            x_diag_cos: Vec::new(),
+            y_v2_sin: Vec::new(),
+            y_v2_cos: Vec::new(),
+            y_diag_sin: Vec::new(),
+            y_diag_cos: Vec::new(),
+            radial_center_sin: Vec::new(),
+            radial_center_cos: Vec::new(),
+            radial_offset_sin: Vec::new(),
+            radial_offset_cos: Vec::new(),
+            interference_sin: Vec::new(),
+            interference_cos: Vec::new(),
+            v1_frame: Vec::new(),
+            v2_frame: Vec::new(),
         }
     }
 
@@ -593,51 +613,95 @@ impl PlasmaScratch {
         self.height = height;
         let w_len = width as usize;
         let h_len = height as usize;
-        self.x.resize(w_len, 0.0);
-        self.x_sq.resize(w_len, 0.0);
-        self.x_center_sq.resize(w_len, 0.0);
-        self.sin_x2.resize(w_len, 0.0);
-        self.v1.resize(w_len, 0.0);
+
+        // Per-column bases.
+        self.x_v1_sin.resize(w_len, 0.0);
+        self.x_v1_cos.resize(w_len, 0.0);
+        self.x_diag_sin.resize(w_len, 0.0);
+        self.x_diag_cos.resize(w_len, 0.0);
+
+        let mut x_coords = vec![0.0f64; w_len];
+        let mut sin_x2 = vec![0.0f64; w_len];
+        let mut x_sq = vec![0.0f64; w_len];
+        let mut x_center_sq = vec![0.0f64; w_len];
 
         for dx in 0..w_len {
             let x = (dx as f64 / w) * 6.0;
-            let x_sq = x * x;
+            x_coords[dx] = x;
+            x_sq[dx] = x * x;
             let x_center = x - 3.0;
-            self.x[dx] = x;
-            self.x_sq[dx] = x_sq;
-            self.x_center_sq[dx] = x_center * x_center;
-            self.sin_x2[dx] = (x * 2.0).sin();
+            x_center_sq[dx] = x_center * x_center;
+            sin_x2[dx] = (x * 2.0).sin();
+
+            let (s1, c1) = (x * 1.5).sin_cos();
+            self.x_v1_sin[dx] = s1;
+            self.x_v1_cos[dx] = c1;
+            let (sd, cd) = (x * 1.2).sin_cos();
+            self.x_diag_sin[dx] = sd;
+            self.x_diag_cos[dx] = cd;
         }
 
-        self.y.resize(h_len, 0.0);
+        // Per-row bases.
+        self.y_v2_sin.resize(h_len, 0.0);
+        self.y_v2_cos.resize(h_len, 0.0);
+        self.y_diag_sin.resize(h_len, 0.0);
+        self.y_diag_cos.resize(h_len, 0.0);
+
+        let mut y_coords = vec![0.0f64; h_len];
+        let mut cos_y2 = vec![0.0f64; h_len];
+
         for dy in 0..h_len {
-            self.y[dy] = (dy as f64 / h) * 6.0;
+            let y = (dy as f64 / h) * 6.0;
+            y_coords[dy] = y;
+            cos_y2[dy] = (y * 2.0).cos();
+
+            let (s2, c2) = (y * 1.8).sin_cos();
+            self.y_v2_sin[dy] = s2;
+            self.y_v2_cos[dy] = c2;
+            let (sd, cd) = (y * 1.2).sin_cos();
+            self.y_diag_sin[dy] = sd;
+            self.y_diag_cos[dy] = cd;
         }
 
+        // Per-pixel bases for full quality.
         let total = w_len.saturating_mul(h_len);
-        self.radial_center_phase.resize(total, 0.0);
-        self.radial_offset_phase.resize(total, 0.0);
+        self.radial_center_sin.resize(total, 0.0);
+        self.radial_center_cos.resize(total, 0.0);
+        self.radial_offset_sin.resize(total, 0.0);
+        self.radial_offset_cos.resize(total, 0.0);
+        self.interference_sin.resize(total, 0.0);
+        self.interference_cos.resize(total, 0.0);
 
-        // Cache geometry-only radial phases so full-quality rendering avoids
-        // two sqrt operations per pixel on every frame.
-        for (dy, y) in self.y.iter().copied().enumerate() {
+        for dy in 0..h_len {
+            let y = y_coords[dy];
             let y_sq = y * y;
             let y_center = y - 3.0;
             let y_center_sq = y_center * y_center;
+            let cy2 = cos_y2[dy];
             let row_offset = dy * w_len;
 
             for dx in 0..w_len {
                 let idx = row_offset + dx;
-                self.radial_center_phase[idx] = (self.x_sq[dx] + y_sq).sqrt() * 2.0;
-                self.radial_offset_phase[idx] = (self.x_center_sq[dx] + y_center_sq).sqrt() * 1.8;
+
+                let radial_center = (x_sq[dx] + y_sq).sqrt() * 2.0;
+                let radial_offset = (x_center_sq[dx] + y_center_sq).sqrt() * 1.8;
+                let (sc, cc) = radial_center.sin_cos();
+                self.radial_center_sin[idx] = sc;
+                self.radial_center_cos[idx] = cc;
+                let (so, co) = radial_offset.sin_cos();
+                self.radial_offset_sin[idx] = so;
+                self.radial_offset_cos[idx] = co;
+
+                let base = sin_x2[dx] * cy2;
+                let (sb, cb) = base.sin_cos();
+                self.interference_sin[idx] = sb;
+                self.interference_cos[idx] = cb;
             }
         }
-    }
 
-    fn update_time(&mut self, time: f64) {
-        for (idx, x) in self.x.iter().enumerate() {
-            self.v1[idx] = (x * 1.5 + time).sin();
-        }
+        // Per-frame scratch buffers.
+        self.v1_frame.resize(w_len, 0.0);
+        self.v2_frame.resize(h_len, 0.0);
     }
 }
 
@@ -647,7 +711,6 @@ impl PlasmaFx {
     where
         F: FnMut(f64) -> PackedRgba,
     {
-        // Early return if quality is Off (decorative effects are non-essential)
         if !ctx.quality.is_enabled() || ctx.is_empty() {
             return;
         }
@@ -656,54 +719,101 @@ impl PlasmaFx {
         let w = ctx.width as f64;
         let h = ctx.height as f64;
         let time = ctx.time_seconds;
-
-        // Quality tiers:
-        // - Full: 6 wave components (v1-v6) with sqrt-based radial waves
-        // - Reduced: 4 wave components (v1-v4 skipping expensive sqrt radials)
-        // - Minimal: 3 wave components (v1-v3, cheapest)
         let quality = ctx.quality;
-        let breath = 0.85 + 0.15 * (time * 0.3).sin();
 
-        // Hoist per-frame time-derived constants.
-        let time_0_6 = time * 0.6;
-        let time_0_8 = time * 0.8;
-        let time_1_2 = time * 1.2;
-        let time_0_5 = time * 0.5;
-
-        // Precompute x-dependent terms once per frame (no per-frame allocation).
         let scratch = &mut self.scratch;
         scratch.ensure_geometry(ctx.width, ctx.height, w, h);
-        scratch.update_time(time);
 
-        for dy in 0..ctx.height {
-            let y = scratch.y[dy as usize];
-            let v2 = (y * 1.8 + time_0_8).sin();
-            let cos_y2 = (y * 2.0).cos();
+        // Per-frame time sin/cos pairs (replaces per-pixel trig).
+        let (sin_t1, cos_t1) = time.sin_cos();
+        let (sin_t2, cos_t2) = (time * 0.8).sin_cos();
+        let (sin_t3, cos_t3) = (time * 0.6).sin_cos();
+        let (sin_t4, cos_t4) = (time * 1.2).sin_cos();
+        let (sin_time, cos_time) = time.sin_cos();
+        let (sin_t6, cos_t6) = (time * 0.5).sin_cos();
+        let breath = 0.85 + 0.15 * (time * 0.3).sin();
 
-            for dx in 0..ctx.width {
-                let idx = dy as usize * ctx.width as usize + dx as usize;
-                let x = scratch.x[dx as usize];
-                let v1 = scratch.v1[dx as usize];
-                let v3 = ((x + y) * 1.2 + time_0_6).sin();
+        let ww = ctx.width as usize;
+        let hh = ctx.height as usize;
 
-                let wave = if quality == FxQuality::Minimal {
-                    let value = (v1 + v2 + v3) / 3.0;
-                    (value + 1.0) / 2.0
-                } else if quality == FxQuality::Reduced {
-                    // 4 components: skip sqrt-based v4/v5, keep interference v6
-                    let v6 = (scratch.sin_x2[dx as usize] * cos_y2 + time_0_5).sin();
-                    let value = (v1 + v2 + v3 + v6) / 4.0;
-                    ((value * breath) + 1.0) / 2.0
-                } else {
-                    let v4 = (scratch.radial_center_phase[idx] - time_1_2).sin();
-                    let v5 = (scratch.radial_offset_phase[idx] + time).cos();
-                    let v6 = (scratch.sin_x2[dx as usize] * cos_y2 + time_0_5).sin();
-                    let value = (v1 + v2 + v3 + v4 + v5 + v6) / 6.0;
-                    ((value * breath) + 1.0) / 2.0
-                };
+        // Pre-compute per-column v1 and per-row v2 via sin(a+b) identity.
+        for dx in 0..ww {
+            scratch.v1_frame[dx] = scratch.x_v1_sin[dx] * cos_t1 + scratch.x_v1_cos[dx] * sin_t1;
+        }
+        for dy in 0..hh {
+            scratch.v2_frame[dy] = scratch.y_v2_sin[dy] * cos_t2 + scratch.y_v2_cos[dy] * sin_t2;
+        }
 
-                out[idx] = sample(wave.clamp(0.0, 1.0));
+        // Quality-hoisted loops: zero sin/cos per pixel.
+        match quality {
+            FxQuality::Full => {
+                for dy in 0..hh {
+                    let v2 = scratch.v2_frame[dy];
+                    let y_sin = scratch.y_diag_sin[dy];
+                    let y_cos = scratch.y_diag_cos[dy];
+                    let row_offset = dy * ww;
+                    for dx in 0..ww {
+                        let v1 = scratch.v1_frame[dx];
+                        let sin_xy =
+                            scratch.x_diag_sin[dx] * y_cos + scratch.x_diag_cos[dx] * y_sin;
+                        let cos_xy =
+                            scratch.x_diag_cos[dx] * y_cos - scratch.x_diag_sin[dx] * y_sin;
+                        let v3 = sin_xy * cos_t3 + cos_xy * sin_t3;
+                        let idx = row_offset + dx;
+                        let v4 = scratch.radial_center_sin[idx] * cos_t4
+                            - scratch.radial_center_cos[idx] * sin_t4;
+                        let v5 = scratch.radial_offset_cos[idx] * cos_time
+                            - scratch.radial_offset_sin[idx] * sin_time;
+                        let v6 = scratch.interference_sin[idx] * cos_t6
+                            + scratch.interference_cos[idx] * sin_t6;
+                        let value = (v1 + v2 + v3 + v4 + v5 + v6) / 6.0;
+                        let wave = ((value * breath) + 1.0) / 2.0;
+                        out[idx] = sample(wave.clamp(0.0, 1.0));
+                    }
+                }
             }
+            FxQuality::Reduced => {
+                for dy in 0..hh {
+                    let v2 = scratch.v2_frame[dy];
+                    let y_sin = scratch.y_diag_sin[dy];
+                    let y_cos = scratch.y_diag_cos[dy];
+                    let row_offset = dy * ww;
+                    for dx in 0..ww {
+                        let v1 = scratch.v1_frame[dx];
+                        let sin_xy =
+                            scratch.x_diag_sin[dx] * y_cos + scratch.x_diag_cos[dx] * y_sin;
+                        let cos_xy =
+                            scratch.x_diag_cos[dx] * y_cos - scratch.x_diag_sin[dx] * y_sin;
+                        let v3 = sin_xy * cos_t3 + cos_xy * sin_t3;
+                        let idx = row_offset + dx;
+                        let v6 = scratch.interference_sin[idx] * cos_t6
+                            + scratch.interference_cos[idx] * sin_t6;
+                        let value = (v1 + v2 + v3 + v6) / 4.0;
+                        let wave = ((value * breath) + 1.0) / 2.0;
+                        out[idx] = sample(wave.clamp(0.0, 1.0));
+                    }
+                }
+            }
+            FxQuality::Minimal => {
+                for dy in 0..hh {
+                    let v2 = scratch.v2_frame[dy];
+                    let y_sin = scratch.y_diag_sin[dy];
+                    let y_cos = scratch.y_diag_cos[dy];
+                    let row_offset = dy * ww;
+                    for dx in 0..ww {
+                        let v1 = scratch.v1_frame[dx];
+                        let sin_xy =
+                            scratch.x_diag_sin[dx] * y_cos + scratch.x_diag_cos[dx] * y_sin;
+                        let cos_xy =
+                            scratch.x_diag_cos[dx] * y_cos - scratch.x_diag_sin[dx] * y_sin;
+                        let v3 = sin_xy * cos_t3 + cos_xy * sin_t3;
+                        let value = (v1 + v2 + v3) / 3.0;
+                        let wave = (value + 1.0) / 2.0;
+                        out[row_offset + dx] = sample(wave.clamp(0.0, 1.0));
+                    }
+                }
+            }
+            FxQuality::Off => {}
         }
     }
 }
@@ -1231,9 +1341,10 @@ mod tests {
         assert_eq!(size1, size2, "PlasmaFx size should not vary with palette");
 
         // Size should be reasonable (palette enum + scratch buffers for pre-computation)
-        // On 64-bit: palette (1-2 bytes) + PlasmaScratch (8 Vecs at 24 bytes each + 2×u16)
+        // On 64-bit: palette (1-2 bytes) + PlasmaScratch (16 Vecs at 24 bytes each + 2×u16)
+        // after sin/cos decomposition optimization
         assert!(
-            size1 <= 216,
+            size1 <= 408,
             "PlasmaFx should be reasonably sized, got {} bytes",
             size1
         );
