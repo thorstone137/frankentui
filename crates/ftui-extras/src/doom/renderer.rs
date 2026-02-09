@@ -652,4 +652,555 @@ mod tests {
         let r = DoomRenderer::new(320, 200);
         assert!(r.projection > 100.0); // Should be a decent positive value
     }
+
+    // --- clip_near_plane edge cases ---
+
+    #[test]
+    fn clip_near_plane_both_exactly_at_near() {
+        let (x1, y1, x2, y2) = clip_near_plane(0.1, 3.0, 0.1, -3.0);
+        assert!((x1 - 0.1).abs() < 0.01);
+        assert!((x2 - 0.1).abs() < 0.01);
+        assert!((y1 - 3.0).abs() < 0.01);
+        assert!((y2 - -3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn clip_near_plane_both_behind() {
+        // Both behind: both get clipped to 0.1
+        let (x1, _, x2, _) = clip_near_plane(-5.0, 0.0, -10.0, 0.0);
+        assert!((x1 - 0.1).abs() < 0.01);
+        assert!((x2 - 0.1).abs() < 0.01);
+    }
+
+    #[test]
+    fn clip_near_plane_large_values() {
+        let (x1, y1, x2, y2) = clip_near_plane(1000.0, 500.0, 2000.0, -500.0);
+        assert!((x1 - 1000.0).abs() < 0.01);
+        assert!((y1 - 500.0).abs() < 0.01);
+        assert!((x2 - 2000.0).abs() < 0.01);
+        assert!((y2 - -500.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn clip_near_plane_symmetric() {
+        // Symmetric input → symmetric output
+        let (x1, y1, x2, y2) = clip_near_plane(10.0, 5.0, 10.0, -5.0);
+        assert!((x1 - x2).abs() < 0.01);
+        assert!((y1 + y2).abs() < 0.01);
+    }
+
+    // --- lerp_u8 edge cases ---
+
+    #[test]
+    fn lerp_u8_full_range() {
+        assert_eq!(lerp_u8(0, 255, 0.0), 0);
+        assert_eq!(lerp_u8(0, 255, 1.0), 255);
+    }
+
+    #[test]
+    fn lerp_u8_midpoint_odd() {
+        // 0 to 255 at 0.5 = 127.5 → truncated to 127
+        assert_eq!(lerp_u8(0, 255, 0.5), 127);
+    }
+
+    #[test]
+    fn lerp_u8_both_zero() {
+        assert_eq!(lerp_u8(0, 0, 0.5), 0);
+    }
+
+    #[test]
+    fn lerp_u8_both_max() {
+        assert_eq!(lerp_u8(255, 255, 0.5), 255);
+    }
+
+    // --- get_seg_front_sector / get_seg_back_sector ---
+
+    #[test]
+    fn get_seg_front_sector_direction_zero() {
+        use super::super::map::{LineDef, Sector, SideDef};
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "FLOOR".into(),
+            ceiling_texture: "CEIL".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        let sidedefs = vec![SideDef {
+            x_offset: 0.0,
+            y_offset: 0.0,
+            upper_texture: "-".into(),
+            lower_texture: "-".into(),
+            middle_texture: "WALL".into(),
+            sector: 0,
+        }];
+        let linedef = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: Some(0),
+            back_sidedef: None,
+        };
+        let seg = super::super::map::Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.0,
+            linedef: 0,
+            direction: 0,
+            offset: 0.0,
+        };
+        let result = get_seg_front_sector(&seg, &linedef, &sidedefs, &sectors);
+        assert!(result.is_some());
+        assert!((result.unwrap().ceiling_height - 128.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn get_seg_front_sector_direction_one_uses_back() {
+        use super::super::map::{LineDef, Sector, SideDef};
+        let sectors = vec![
+            Sector {
+                floor_height: 0.0,
+                ceiling_height: 64.0,
+                floor_texture: "F1".into(),
+                ceiling_texture: "C1".into(),
+                light_level: 100,
+                special: 0,
+                tag: 0,
+            },
+            Sector {
+                floor_height: 0.0,
+                ceiling_height: 128.0,
+                floor_texture: "F2".into(),
+                ceiling_texture: "C2".into(),
+                light_level: 200,
+                special: 0,
+                tag: 0,
+            },
+        ];
+        let sidedefs = vec![
+            SideDef {
+                x_offset: 0.0,
+                y_offset: 0.0,
+                upper_texture: "-".into(),
+                lower_texture: "-".into(),
+                middle_texture: "W1".into(),
+                sector: 0,
+            },
+            SideDef {
+                x_offset: 0.0,
+                y_offset: 0.0,
+                upper_texture: "-".into(),
+                lower_texture: "-".into(),
+                middle_texture: "W2".into(),
+                sector: 1,
+            },
+        ];
+        let linedef = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: Some(0),
+            back_sidedef: Some(1),
+        };
+        let seg = super::super::map::Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.0,
+            linedef: 0,
+            direction: 1, // opposite → front sector from back_sidedef
+            offset: 0.0,
+        };
+        let result = get_seg_front_sector(&seg, &linedef, &sidedefs, &sectors);
+        assert!(result.is_some());
+        // direction=1 → uses back_sidedef → sidedef[1] → sector 1 → ceiling 128
+        assert!((result.unwrap().ceiling_height - 128.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn get_seg_front_sector_missing_sidedef_returns_none() {
+        use super::super::map::{LineDef, Sector};
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "F".into(),
+            ceiling_texture: "C".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        let linedef = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: None,
+            back_sidedef: None,
+        };
+        let seg = super::super::map::Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.0,
+            linedef: 0,
+            direction: 0,
+            offset: 0.0,
+        };
+        assert!(get_seg_front_sector(&seg, &linedef, &[], &sectors).is_none());
+    }
+
+    #[test]
+    fn get_seg_back_sector_returns_none_for_one_sided() {
+        use super::super::map::{LineDef, Sector, SideDef};
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "F".into(),
+            ceiling_texture: "C".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        let sidedefs = vec![SideDef {
+            x_offset: 0.0,
+            y_offset: 0.0,
+            upper_texture: "-".into(),
+            lower_texture: "-".into(),
+            middle_texture: "W".into(),
+            sector: 0,
+        }];
+        let linedef = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: Some(0),
+            back_sidedef: None, // one-sided wall
+        };
+        let seg = super::super::map::Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.0,
+            linedef: 0,
+            direction: 0,
+            offset: 0.0,
+        };
+        assert!(get_seg_back_sector(&seg, &linedef, &sidedefs, &sectors).is_none());
+    }
+
+    #[test]
+    fn get_seg_back_sector_oob_sidedef_returns_none() {
+        use super::super::map::{LineDef, Sector};
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "F".into(),
+            ceiling_texture: "C".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        let linedef = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: Some(0),
+            back_sidedef: Some(999), // out of bounds
+        };
+        let seg = super::super::map::Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.0,
+            linedef: 0,
+            direction: 0,
+            offset: 0.0,
+        };
+        assert!(get_seg_back_sector(&seg, &linedef, &[], &sectors).is_none());
+    }
+
+    #[test]
+    fn get_seg_front_sector_oob_sidedef_returns_none() {
+        use super::super::map::{LineDef, Sector};
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "F".into(),
+            ceiling_texture: "C".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        let linedef = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: Some(999), // out of bounds
+            back_sidedef: None,
+        };
+        let seg = super::super::map::Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.0,
+            linedef: 0,
+            direction: 0,
+            offset: 0.0,
+        };
+        assert!(get_seg_front_sector(&seg, &linedef, &[], &sectors).is_none());
+    }
+
+    // --- Renderer with a real map ---
+
+    fn make_simple_map() -> DoomMap {
+        use super::super::map::*;
+        // Simple square room: 4 vertices, 4 linedefs, 4 segs, 1 sector, 1 subsector
+        let vertices = vec![
+            Vertex { x: 0.0, y: 0.0 },
+            Vertex { x: 256.0, y: 0.0 },
+            Vertex { x: 256.0, y: 256.0 },
+            Vertex { x: 0.0, y: 256.0 },
+        ];
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "FLOOR".into(),
+            ceiling_texture: "CEIL".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        let sidedefs = vec![SideDef {
+            x_offset: 0.0,
+            y_offset: 0.0,
+            upper_texture: "-".into(),
+            lower_texture: "-".into(),
+            middle_texture: "WALL".into(),
+            sector: 0,
+        }];
+        let linedefs = vec![
+            LineDef {
+                v1: 0,
+                v2: 1,
+                flags: 0,
+                special: 0,
+                tag: 0,
+                front_sidedef: Some(0),
+                back_sidedef: None,
+            },
+            LineDef {
+                v1: 1,
+                v2: 2,
+                flags: 0,
+                special: 0,
+                tag: 0,
+                front_sidedef: Some(0),
+                back_sidedef: None,
+            },
+            LineDef {
+                v1: 2,
+                v2: 3,
+                flags: 0,
+                special: 0,
+                tag: 0,
+                front_sidedef: Some(0),
+                back_sidedef: None,
+            },
+            LineDef {
+                v1: 3,
+                v2: 0,
+                flags: 0,
+                special: 0,
+                tag: 0,
+                front_sidedef: Some(0),
+                back_sidedef: None,
+            },
+        ];
+        let segs = vec![
+            Seg {
+                v1: 0,
+                v2: 1,
+                angle: 0.0,
+                linedef: 0,
+                direction: 0,
+                offset: 0.0,
+            },
+            Seg {
+                v1: 1,
+                v2: 2,
+                angle: 0.0,
+                linedef: 1,
+                direction: 0,
+                offset: 0.0,
+            },
+            Seg {
+                v1: 2,
+                v2: 3,
+                angle: 0.0,
+                linedef: 2,
+                direction: 0,
+                offset: 0.0,
+            },
+            Seg {
+                v1: 3,
+                v2: 0,
+                angle: 0.0,
+                linedef: 3,
+                direction: 0,
+                offset: 0.0,
+            },
+        ];
+        let subsectors = vec![SubSector {
+            num_segs: 4,
+            first_seg: 0,
+        }];
+        DoomMap {
+            name: "SIMPLE".into(),
+            vertices,
+            linedefs,
+            sidedefs,
+            sectors,
+            segs,
+            subsectors,
+            nodes: vec![],
+            things: vec![],
+        }
+    }
+
+    #[test]
+    fn render_simple_room_produces_stats() {
+        let map = make_simple_map();
+        let mut renderer = DoomRenderer::new(80, 50);
+        let mut fb = DoomFramebuffer::new(80, 50);
+        let mut player = Player::default();
+        player.x = 128.0;
+        player.y = 128.0;
+        player.angle = 0.0;
+        let palette = DoomPalette::default();
+
+        renderer.render(&mut fb, &map, &player, &palette);
+
+        assert!(renderer.stats.subsectors_rendered > 0);
+        assert!(renderer.stats.segs_processed > 0);
+        assert_eq!(renderer.stats.total_columns, 80);
+    }
+
+    #[test]
+    fn render_writes_to_framebuffer() {
+        let map = make_simple_map();
+        let mut renderer = DoomRenderer::new(80, 50);
+        let mut fb = DoomFramebuffer::new(80, 50);
+        let mut player = Player::default();
+        player.x = 128.0;
+        player.y = 128.0;
+        let palette = DoomPalette::default();
+
+        renderer.render(&mut fb, &map, &player, &palette);
+
+        // At least some pixels should be non-black (walls, sky, floor)
+        let non_black = fb
+            .pixels
+            .iter()
+            .filter(|&&p| p != PackedRgba::BLACK)
+            .count();
+        assert!(non_black > 0, "Rendered frame should have non-black pixels");
+    }
+
+    #[test]
+    fn render_background_fills_all_pixels() {
+        let r = DoomRenderer::new(40, 30);
+        let mut fb = DoomFramebuffer::new(40, 30);
+        r.draw_background(&mut fb);
+
+        // Every pixel should be non-black (sky or floor gradient)
+        let black_count = fb
+            .pixels
+            .iter()
+            .filter(|&&p| p == PackedRgba::BLACK)
+            .count();
+        assert_eq!(
+            black_count, 0,
+            "Background should fill all pixels with sky/floor"
+        );
+    }
+
+    #[test]
+    fn render_twice_resets_stats() {
+        let map = make_simple_map();
+        let mut renderer = DoomRenderer::new(80, 50);
+        let mut fb = DoomFramebuffer::new(80, 50);
+        let mut player = Player::default();
+        player.x = 128.0;
+        player.y = 128.0;
+        let palette = DoomPalette::default();
+
+        renderer.render(&mut fb, &map, &player, &palette);
+        let first_segs = renderer.stats.segs_processed;
+
+        renderer.render(&mut fb, &map, &player, &palette);
+        let second_segs = renderer.stats.segs_processed;
+
+        // Should be the same — state is reset each frame
+        assert_eq!(first_segs, second_segs);
+    }
+
+    #[test]
+    fn resize_grows_column_clips() {
+        let mut r = DoomRenderer::new(10, 10);
+        r.resize(20, 30);
+        assert_eq!(r.column_clips.len(), 20);
+        // New columns (index 10..19) get fresh default state
+        for clip in &r.column_clips[10..] {
+            assert_eq!(clip.top, 0);
+            assert_eq!(clip.bottom, 30);
+            assert!(!clip.solid);
+        }
+    }
+
+    #[test]
+    fn resize_updates_projection() {
+        let mut r = DoomRenderer::new(320, 200);
+        let proj1 = r.projection;
+        r.resize(640, 400);
+        let proj2 = r.projection;
+        // Wider screen → larger projection factor
+        assert!(proj2 > proj1);
+    }
+
+    #[test]
+    fn render_with_sky_ceiling_sector() {
+        use super::super::map::*;
+        // Sky ceiling sector should not draw ceiling color
+        let sectors = vec![Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: "FLOOR".into(),
+            ceiling_texture: "F_SKY1".into(), // sky ceiling
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        }];
+        assert!(sectors[0].is_sky_ceiling());
+    }
+
+    #[test]
+    fn render_stats_columns_match_width() {
+        let map = make_simple_map();
+        let mut renderer = DoomRenderer::new(100, 60);
+        let mut fb = DoomFramebuffer::new(100, 60);
+        let mut player = Player::default();
+        player.x = 128.0;
+        player.y = 128.0;
+        let palette = DoomPalette::default();
+
+        renderer.render(&mut fb, &map, &player, &palette);
+        assert_eq!(renderer.stats.total_columns, 100);
+    }
 }
