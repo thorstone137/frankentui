@@ -1482,6 +1482,7 @@ impl std::ops::Add for CharacterOffset {
 ///     .opacity(0.5)
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct Shadow {
     /// Horizontal offset in cells (positive = right, negative = left).
     pub dx: i8,
@@ -1581,6 +1582,7 @@ impl Shadow {
 ///     .falloff(0.5)
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct GlowConfig {
     /// Glow color (usually bright, saturated).
     pub color: PackedRgba,
@@ -1736,6 +1738,7 @@ pub enum OutlineStyle {
 ///     .style(OutlineStyle::Solid)
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+#[must_use]
 pub struct OutlineConfig {
     /// Outline color.
     pub color: PackedRgba,
