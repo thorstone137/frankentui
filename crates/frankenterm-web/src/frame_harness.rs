@@ -1712,4 +1712,609 @@ mod tests {
         assert_eq!(mismatch.expected_frame_count, 2);
         assert_eq!(mismatch.actual_frame_count, 1);
     }
+
+    // ================================================================
+    // Edge-case tests (bd-3itzq)
+    // ================================================================
+
+    // --- FrameRecord ---
+
+    #[test]
+    fn frame_record_debug_clone_copy() {
+        let r = FrameRecord {
+            elapsed: Duration::from_micros(42),
+            cpu_submit: Some(Duration::from_micros(10)),
+            gpu_time: None,
+            dirty_cells: 5,
+            patch_count: 1,
+            bytes_uploaded: 80,
+        };
+        let r2 = r; // Copy
+        assert_eq!(r.elapsed, r2.elapsed);
+        let r3 = r.clone();
+        assert_eq!(r3.dirty_cells, 5);
+        let dbg = format!("{:?}", r);
+        assert!(dbg.contains("42"));
+    }
+
+    // --- FrameTimeCollector ---
+
+    #[test]
+    fn frame_count_accessor() {
+        let mut c = FrameTimeCollector::new("test", 80, 24);
+        assert_eq!(c.frame_count(), 0);
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(1),
+            cpu_submit: None,
+            gpu_time: None,
+            dirty_cells: 0,
+            patch_count: 0,
+            bytes_uploaded: 0,
+        });
+        assert_eq!(c.frame_count(), 1);
+    }
+
+    #[test]
+    fn to_jsonl_empty_collector() {
+        let c = FrameTimeCollector::new("empty", 80, 24);
+        assert!(c.to_jsonl().is_empty());
+    }
+
+    #[test]
+    fn to_jsonl_includes_optional_timings() {
+        let mut c = FrameTimeCollector::new("timed", 80, 24);
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(500),
+            cpu_submit: Some(Duration::from_micros(100)),
+            gpu_time: Some(Duration::from_micros(200)),
+            dirty_cells: 1,
+            patch_count: 1,
+            bytes_uploaded: 16,
+        });
+        let jsonl = c.to_jsonl();
+        let parsed: serde_json::Value =
+            serde_json::from_str(jsonl.lines().next().unwrap()).unwrap();
+        assert_eq!(parsed["cpu_submit_us"], 100);
+        assert_eq!(parsed["gpu_time_us"], 200);
+    }
+
+    #[test]
+    fn to_jsonl_omits_optional_timings_as_null() {
+        let mut c = FrameTimeCollector::new("notimed", 80, 24);
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(500),
+            cpu_submit: None,
+            gpu_time: None,
+            dirty_cells: 1,
+            patch_count: 1,
+            bytes_uploaded: 16,
+        });
+        let jsonl = c.to_jsonl();
+        let parsed: serde_json::Value =
+            serde_json::from_str(jsonl.lines().next().unwrap()).unwrap();
+        assert!(parsed["cpu_submit_us"].is_null());
+        assert!(parsed["gpu_time_us"].is_null());
+    }
+
+    // --- FrameTimeHistogram ---
+
+    #[test]
+    fn frame_time_histogram_default() {
+        let h = FrameTimeHistogram::default();
+        assert_eq!(h.count, 0);
+        assert_eq!(h.min_us, 0);
+        assert_eq!(h.max_us, 0);
+        assert_eq!(h.p50_us, 0);
+        assert_eq!(h.p95_us, 0);
+        assert_eq!(h.p99_us, 0);
+        assert_eq!(h.mean_us, 0);
+    }
+
+    #[test]
+    fn frame_time_histogram_clone_copy_debug() {
+        let h = FrameTimeHistogram {
+            count: 10,
+            min_us: 1,
+            max_us: 100,
+            p50_us: 50,
+            p95_us: 95,
+            p99_us: 99,
+            mean_us: 50,
+        };
+        let h2 = h; // Copy
+        assert_eq!(h.count, h2.count);
+        let h3 = h.clone();
+        assert_eq!(h3.p50_us, 50);
+        let dbg = format!("{:?}", h);
+        assert!(dbg.contains("FrameTimeHistogram"));
+    }
+
+    #[test]
+    fn frame_time_histogram_serialize() {
+        let h = FrameTimeHistogram {
+            count: 1,
+            min_us: 42,
+            max_us: 42,
+            p50_us: 42,
+            p95_us: 42,
+            p99_us: 42,
+            mean_us: 42,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["count"], 1);
+        assert_eq!(parsed["min_us"], 42);
+    }
+
+    // --- PatchStats ---
+
+    #[test]
+    fn patch_stats_default() {
+        let p = PatchStats::default();
+        assert_eq!(p.total_dirty_cells, 0);
+        assert_eq!(p.total_patches, 0);
+        assert_eq!(p.total_bytes_uploaded, 0);
+        assert!((p.avg_dirty_per_frame - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn patch_stats_serialize() {
+        let p = PatchStats {
+            total_dirty_cells: 100,
+            total_patches: 10,
+            total_bytes_uploaded: 1600,
+            avg_dirty_per_frame: 50.0,
+            avg_patches_per_frame: 5.0,
+            avg_bytes_per_frame: 800.0,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["total_dirty_cells"], 100);
+    }
+
+    // --- SessionReport ---
+
+    #[test]
+    fn session_report_clone_debug() {
+        let mut c = FrameTimeCollector::new("clone", 80, 24);
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(100),
+            cpu_submit: None,
+            gpu_time: None,
+            dirty_cells: 1,
+            patch_count: 1,
+            bytes_uploaded: 16,
+        });
+        let r = c.report();
+        let r2 = r.clone();
+        assert_eq!(r.run_id, r2.run_id);
+        let dbg = format!("{:?}", r);
+        assert!(dbg.contains("SessionReport"));
+    }
+
+    // --- GeometrySnapshot ---
+
+    #[test]
+    fn geometry_snapshot_debug_clone_copy_eq() {
+        let g = GeometrySnapshot {
+            cols: 80,
+            rows: 24,
+            pixel_width: 640,
+            pixel_height: 384,
+            cell_width_px: 8.0,
+            cell_height_px: 16.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let g2 = g; // Copy
+        assert_eq!(g, g2);
+        let g3 = g.clone();
+        assert_eq!(g, g3);
+        let dbg = format!("{:?}", g);
+        assert!(dbg.contains("GeometrySnapshot"));
+    }
+
+    #[test]
+    fn geometry_snapshot_partial_eq() {
+        let g1 = GeometrySnapshot {
+            cols: 80,
+            rows: 24,
+            pixel_width: 640,
+            pixel_height: 384,
+            cell_width_px: 8.0,
+            cell_height_px: 16.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let mut g2 = g1;
+        assert_eq!(g1, g2);
+        g2.zoom = 2.0;
+        assert_ne!(g1, g2);
+    }
+
+    #[test]
+    fn geometry_snapshot_from_grid_geometry() {
+        let gg = GridGeometry {
+            cols: 120,
+            rows: 40,
+            pixel_width: 1200,
+            pixel_height: 800,
+            cell_width_px: 10.0,
+            cell_height_px: 20.0,
+            dpr: 2.0,
+            zoom: 1.5,
+        };
+        let gs: GeometrySnapshot = gg.into();
+        assert_eq!(gs.cols, 120);
+        assert_eq!(gs.rows, 40);
+        assert_eq!(gs.pixel_width, 1200);
+        assert_eq!(gs.dpr, 2.0);
+        assert_eq!(gs.zoom, 1.5);
+    }
+
+    // --- InteractionSnapshot ---
+
+    #[test]
+    fn interaction_snapshot_default_fields() {
+        let i = InteractionSnapshot::default();
+        assert_eq!(i.hovered_link_id, 0);
+        assert_eq!(i.cursor_offset, 0);
+        assert_eq!(i.cursor_style, 0);
+        assert!(!i.selection_active);
+        assert_eq!(i.selection_start, 0);
+        assert_eq!(i.selection_end, 0);
+        assert!(!i.text_shaping_enabled);
+        assert_eq!(i.text_shaping_engine, 0);
+        assert!(!i.screen_reader_enabled);
+        assert!(!i.high_contrast_enabled);
+        assert!(!i.reduced_motion_enabled);
+        assert!(!i.focused);
+    }
+
+    #[test]
+    fn interaction_snapshot_effective_shaping_engine() {
+        let mut i = InteractionSnapshot::default();
+        i.text_shaping_engine = 2;
+        // When disabled, effective engine is 0
+        assert_eq!(i.effective_text_shaping_engine(), 0);
+        // When enabled, effective engine is the set value
+        i.text_shaping_enabled = true;
+        assert_eq!(i.effective_text_shaping_engine(), 2);
+    }
+
+    #[test]
+    fn interaction_snapshot_clone_copy_eq() {
+        let i = InteractionSnapshot {
+            hovered_link_id: 5,
+            cursor_offset: 10,
+            focused: true,
+            ..InteractionSnapshot::default()
+        };
+        let i2 = i; // Copy
+        assert_eq!(i, i2);
+        let i3 = i.clone();
+        assert_eq!(i, i3);
+    }
+
+    // --- FrameRegionSummary ---
+
+    #[test]
+    fn frame_region_summary_default() {
+        let s = FrameRegionSummary::default();
+        assert_eq!(s.cols, 0);
+        assert_eq!(s.rows, 0);
+        assert_eq!(s.total_cells, 0);
+        assert_eq!(s.non_empty_cells, 0);
+        assert_eq!(s.glyph_cells, 0);
+        assert_eq!(s.styled_cells, 0);
+        assert_eq!(s.linked_cells, 0);
+        assert!(s.active_min_col.is_none());
+        assert!(s.active_max_col.is_none());
+    }
+
+    #[test]
+    fn summarize_frame_region_empty_cells() {
+        let geometry = GeometrySnapshot {
+            cols: 4,
+            rows: 2,
+            pixel_width: 40,
+            pixel_height: 20,
+            cell_width_px: 10.0,
+            cell_height_px: 10.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let cells = vec![CellData::EMPTY; 8];
+        let s = summarize_frame_region(&cells, geometry);
+        assert_eq!(s.total_cells, 8);
+        assert_eq!(s.non_empty_cells, 0);
+        assert_eq!(s.glyph_cells, 0);
+        assert_eq!(s.styled_cells, 0);
+        assert_eq!(s.linked_cells, 0);
+        assert!(s.active_min_col.is_none());
+    }
+
+    #[test]
+    fn summarize_frame_region_no_cells() {
+        let geometry = GeometrySnapshot {
+            cols: 0,
+            rows: 0,
+            pixel_width: 0,
+            pixel_height: 0,
+            cell_width_px: 0.0,
+            cell_height_px: 0.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let s = summarize_frame_region(&[], geometry);
+        assert_eq!(s.total_cells, 0);
+        assert_eq!(s.non_empty_cells, 0);
+    }
+
+    // --- FrameGoldenMismatch ---
+
+    #[test]
+    fn frame_golden_mismatch_display() {
+        let m = FrameGoldenMismatch {
+            frame_idx: 3,
+            expected_hash: "fnv1a64:aaa".to_string(),
+            actual_hash: "fnv1a64:bbb".to_string(),
+            region_summary: FrameRegionSummary::default(),
+            reproduction_trace_id: "run-1#frame-3".to_string(),
+            expected_frame_count: 5,
+            actual_frame_count: 5,
+        };
+        let display = format!("{m}");
+        assert!(display.contains("frame_idx=3"));
+        assert!(display.contains("fnv1a64:aaa"));
+        assert!(display.contains("fnv1a64:bbb"));
+        assert!(display.contains("run-1#frame-3"));
+    }
+
+    #[test]
+    fn frame_golden_mismatch_error_trait() {
+        let m = FrameGoldenMismatch {
+            frame_idx: 0,
+            expected_hash: "a".to_string(),
+            actual_hash: "b".to_string(),
+            region_summary: FrameRegionSummary::default(),
+            reproduction_trace_id: "run#0".to_string(),
+            expected_frame_count: 1,
+            actual_frame_count: 1,
+        };
+        // Implements std::error::Error
+        let err: &dyn std::error::Error = &m;
+        assert!(err.to_string().contains("frame_idx=0"));
+    }
+
+    #[test]
+    fn frame_golden_mismatch_to_json() {
+        let m = FrameGoldenMismatch {
+            frame_idx: 2,
+            expected_hash: "exp".to_string(),
+            actual_hash: "act".to_string(),
+            region_summary: FrameRegionSummary {
+                cols: 10,
+                rows: 5,
+                total_cells: 50,
+                ..FrameRegionSummary::default()
+            },
+            reproduction_trace_id: "run-x#frame-2".to_string(),
+            expected_frame_count: 3,
+            actual_frame_count: 3,
+        };
+        let json = m.to_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["frame_idx"], 2);
+        assert_eq!(parsed["region_summary"]["cols"], 10);
+    }
+
+    // --- LinkClickSnapshot ---
+
+    #[test]
+    fn link_click_snapshot_debug_clone_eq() {
+        let click = LinkClickSnapshot {
+            x: 5,
+            y: 10,
+            button: Some(1),
+            link_id: 42,
+            url: Some("https://example.com".to_string()),
+            open_allowed: true,
+            open_reason: None,
+        };
+        let click2 = click.clone();
+        assert_eq!(click, click2);
+        let dbg = format!("{:?}", click);
+        assert!(dbg.contains("42"));
+    }
+
+    #[test]
+    fn link_click_jsonl_no_url_no_button_with_reason() {
+        let click = LinkClickSnapshot {
+            x: 0,
+            y: 0,
+            button: None,
+            link_id: 1,
+            url: None,
+            open_allowed: false,
+            open_reason: Some("blocked_by_policy".to_string()),
+        };
+        let line = link_click_jsonl("run", 0, "T0", 0, &click);
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!(parsed.get("button").is_none());
+        assert!(parsed.get("url").is_none());
+        assert_eq!(parsed["open_reason"], "blocked_by_policy");
+    }
+
+    // --- verify_golden_frame_hashes ---
+
+    #[test]
+    fn verify_golden_both_empty_is_ok() {
+        assert!(verify_golden_frame_hashes("run", &[], &[]).is_ok());
+    }
+
+    #[test]
+    fn verify_golden_extra_actual_frames() {
+        let geometry = GeometrySnapshot {
+            cols: 1,
+            rows: 1,
+            pixel_width: 10,
+            pixel_height: 10,
+            cell_width_px: 10.0,
+            cell_height_px: 10.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let frame = vec![CellData::EMPTY];
+        let expected = vec![stable_frame_hash(&frame, geometry)];
+        let actual = vec![
+            FrameGoldenActual {
+                geometry,
+                cells: &frame,
+            },
+            FrameGoldenActual {
+                geometry,
+                cells: &frame,
+            },
+        ];
+        let mismatch =
+            *verify_golden_frame_hashes("run-extra", &expected, &actual).expect_err("mismatch");
+        assert_eq!(mismatch.frame_idx, 1);
+        assert_eq!(mismatch.expected_hash, "missing");
+        assert_eq!(mismatch.expected_frame_count, 1);
+        assert_eq!(mismatch.actual_frame_count, 2);
+    }
+
+    // --- stable_frame_hash ---
+
+    #[test]
+    fn stable_frame_hash_empty_cells() {
+        let geometry = GeometrySnapshot {
+            cols: 0,
+            rows: 0,
+            pixel_width: 0,
+            pixel_height: 0,
+            cell_width_px: 0.0,
+            cell_height_px: 0.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let h = stable_frame_hash(&[], geometry);
+        assert!(h.starts_with("fnv1a64:"));
+        // Deterministic
+        assert_eq!(h, stable_frame_hash(&[], geometry));
+    }
+
+    #[test]
+    fn stable_frame_hash_with_interaction_empty_cells() {
+        let geometry = GeometrySnapshot {
+            cols: 0,
+            rows: 0,
+            pixel_width: 0,
+            pixel_height: 0,
+            cell_width_px: 0.0,
+            cell_height_px: 0.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let interaction = InteractionSnapshot::default();
+        let h = stable_frame_hash_with_interaction(&[], geometry, interaction);
+        assert!(h.starts_with("fnv1a64:"));
+        // Differs from non-interaction hash
+        let h_no_int = stable_frame_hash(&[], geometry);
+        assert_ne!(h, h_no_int);
+    }
+
+    // --- resize_storm_frame_jsonl ---
+
+    #[test]
+    fn resize_storm_frame_jsonl_none_interaction_omits_overlay() {
+        let geometry = GeometrySnapshot {
+            cols: 2,
+            rows: 1,
+            pixel_width: 20,
+            pixel_height: 10,
+            cell_width_px: 10.0,
+            cell_height_px: 10.0,
+            dpr: 1.0,
+            zoom: 1.0,
+        };
+        let cells = vec![CellData::EMPTY; 2];
+        let line = resize_storm_frame_jsonl("run", 0, "T0", 0, geometry, &cells);
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        // No interaction fields
+        assert!(parsed.get("interaction_hash").is_none());
+        assert!(parsed.get("hovered_link_id").is_none());
+        assert!(parsed.get("cursor_offset").is_none());
+        assert!(parsed.get("selection_active").is_none());
+    }
+
+    // --- scrollback_virtualization ---
+
+    #[test]
+    fn scrollback_virtualization_zero_overscan() {
+        let window = ScrollbackWindow {
+            total_lines: 100,
+            max_scroll_offset: 76,
+            scroll_offset_from_bottom: 0,
+            viewport_start: 50,
+            viewport_end: 70,
+            render_start: 50,
+            render_end: 70,
+        };
+        let line = scrollback_virtualization_frame_jsonl("run", "T0", 0, window, Duration::ZERO);
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["overscan_before"], 0);
+        assert_eq!(parsed["overscan_after"], 0);
+        assert_eq!(parsed["render_cost_us"], 0);
+    }
+
+    // --- percentile helper ---
+
+    #[test]
+    fn histogram_single_sample() {
+        let mut c = FrameTimeCollector::new("one", 80, 24);
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(777),
+            cpu_submit: None,
+            gpu_time: None,
+            dirty_cells: 0,
+            patch_count: 0,
+            bytes_uploaded: 0,
+        });
+        let r = c.report();
+        assert_eq!(r.frame_time.count, 1);
+        assert_eq!(r.frame_time.min_us, 777);
+        assert_eq!(r.frame_time.max_us, 777);
+        assert_eq!(r.frame_time.p50_us, 777);
+        assert_eq!(r.frame_time.p95_us, 777);
+        assert_eq!(r.frame_time.p99_us, 777);
+        assert_eq!(r.frame_time.mean_us, 777);
+    }
+
+    #[test]
+    fn histogram_two_samples() {
+        let mut c = FrameTimeCollector::new("two", 80, 24);
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(100),
+            cpu_submit: None,
+            gpu_time: None,
+            dirty_cells: 0,
+            patch_count: 0,
+            bytes_uploaded: 0,
+        });
+        c.record_frame(FrameRecord {
+            elapsed: Duration::from_micros(200),
+            cpu_submit: None,
+            gpu_time: None,
+            dirty_cells: 0,
+            patch_count: 0,
+            bytes_uploaded: 0,
+        });
+        let r = c.report();
+        assert_eq!(r.frame_time.count, 2);
+        assert_eq!(r.frame_time.min_us, 100);
+        assert_eq!(r.frame_time.max_us, 200);
+        assert_eq!(r.frame_time.mean_us, 150);
+    }
 }
