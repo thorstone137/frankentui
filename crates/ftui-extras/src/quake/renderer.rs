@@ -337,9 +337,20 @@ impl QuakeRenderer {
 
         // Scanline rasterization with barycentric interpolation
         let fb_width = fb.width;
+        let fb_pixels = &mut fb.pixels;
+        let fb_depth = &mut fb.depth;
+        let fb_len = fb_pixels.len();
+        debug_assert_eq!(fb_len, fb_depth.len());
+
+        // SAFETY: max_y < self.height, max_x < self.width, and
+        // self.height * self.width == fb_len (enforced by resize check at entry).
+        // Therefore (max_y * fb_width + max_x) < fb_len for all inner-loop indices.
+        debug_assert!((max_y as usize) * (fb_width as usize) + (max_x as usize) < fb_len);
+
+        let mut local_pixels_written = 0u32;
         for py in min_y..=max_y {
             let fy = py as f32 + 0.5;
-            let row_offset = py * fb_width;
+            let row_offset = (py * fb_width) as usize;
 
             // Hoist per-row fy-dependent terms (constant for all px in this row)
             let row_w0_fy = (fy - s1[1]) * e12_dx;
@@ -381,8 +392,8 @@ impl QuakeRenderer {
 
                 // Early-z: reject occluded pixels before any color math.
                 // With front-to-back sort this rejects most overdraw cheaply.
-                let idx = (row_offset + px) as usize;
-                if z >= fb.depth[idx] {
+                let idx = row_offset + px as usize;
+                if z >= fb_depth[idx] {
                     continue;
                 }
 
@@ -394,11 +405,12 @@ impl QuakeRenderer {
                 let fg = shade_channel(base_color[1], FOG_COLOR[1], total_light, fog_t);
                 let fbl = shade_channel(base_color[2], FOG_COLOR[2], total_light, fog_t);
 
-                fb.pixels[idx] = PackedRgba::rgb(fr, fg, fbl);
-                fb.depth[idx] = z;
-                self.stats.pixels_written += 1;
+                fb_pixels[idx] = PackedRgba::rgb(fr, fg, fbl);
+                fb_depth[idx] = z;
+                local_pixels_written += 1;
             }
         }
+        self.stats.pixels_written += local_pixels_written;
     }
 
     /// Draw the sky and floor background using cached per-row colors.

@@ -59,8 +59,12 @@ impl DoomFramebuffer {
         let bottom = y_bottom.min(self.height);
         let stride = self.width as usize;
         let mut idx = top as usize * stride + x as usize;
+        let pixels = &mut self.pixels;
+        // SAFETY: x < self.width (guarded above), top/bottom <= self.height (clamped).
+        // Therefore idx = top*stride + x .. (bottom-1)*stride + x are all < width*height = pixels.len().
+        debug_assert!(bottom == 0 || ((bottom as usize - 1) * stride + x as usize) < pixels.len());
         for _ in top..bottom {
-            self.pixels[idx] = color;
+            pixels[idx] = color;
             idx += stride;
         }
     }
@@ -95,12 +99,16 @@ impl DoomFramebuffer {
         let base_b_f = base_b as f32;
         let stride = self.width as usize;
         let mut idx = top as usize * stride + x as usize;
+        let pixels = &mut self.pixels;
+        // SAFETY: x < self.width (guarded above), top/bottom <= self.height (clamped).
+        // Therefore idx = top*stride + x .. (bottom-1)*stride + x are all < width*height = pixels.len().
+        debug_assert!(bottom == 0 || ((bottom as usize - 1) * stride + x as usize) < pixels.len());
         for y in top..bottom {
             let light = light_top + light_delta * ((y - top) as f32 * inv_height);
             let r = (base_r_f * light).min(255.0) as u8;
             let g = (base_g_f * light).min(255.0) as u8;
             let b = (base_b_f * light).min(255.0) as u8;
-            self.pixels[idx] = PackedRgba::rgb(r, g, b);
+            pixels[idx] = PackedRgba::rgb(r, g, b);
             idx += stride;
         }
     }

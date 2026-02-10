@@ -1471,8 +1471,10 @@ pub struct MermaidMegaState {
 
 impl Default for MermaidMegaState {
     fn default() -> Self {
+        // Avoid eager parametric generation at startup. The generated sample is only
+        // needed when it is selected (or when generator controls are used), so we
+        // lazily populate `generated_source` on demand via `ensure_generated_source()`.
         let generator = GeneratorParams::default();
-        let (generated_source, generation_report) = generate_parametric_flowchart(generator);
         Self {
             mode: ShowcaseMode::Normal,
             panels: PanelVisibility::default(),
@@ -1489,8 +1491,8 @@ impl Default for MermaidMegaState {
             viewport_size_override: None,
             selected_sample: 0,
             generator,
-            generated_source,
-            last_generation_report: Some(generation_report),
+            generated_source: String::new(),
+            last_generation_report: None,
             selected_node: None,
             search_query: None,
             search_matches: Vec::new(),
@@ -1570,6 +1572,12 @@ impl MermaidMegaState {
     fn selected_is_generated(&self) -> bool {
         self.selected_sample_entry()
             .is_some_and(|sample| sample.source == GENERATED_SAMPLE_SOURCE)
+    }
+
+    fn ensure_generated_source(&mut self) {
+        if self.generated_source.is_empty() {
+            self.regenerate_generated_source();
+        }
     }
 
     fn regenerate_generated_source(&mut self) {
@@ -1772,6 +1780,9 @@ impl MermaidMegaState {
                     self.selected_sample = self.selected_sample.wrapping_add(1);
                 }
                 self.selected_node = None;
+                if self.selected_is_generated() {
+                    self.ensure_generated_source();
+                }
                 self.bump_analysis();
             }
             MegaAction::PrevSample => {
@@ -1788,6 +1799,9 @@ impl MermaidMegaState {
                     self.selected_sample = self.selected_sample.wrapping_sub(1);
                 }
                 self.selected_node = None;
+                if self.selected_is_generated() {
+                    self.ensure_generated_source();
+                }
                 self.bump_analysis();
             }
             MegaAction::IncreaseGenNodes => {
@@ -2063,6 +2077,9 @@ impl MermaidMegaState {
                 if let Some(sel) = self.search_matches.first().copied() {
                     self.selected_sample = sel;
                     self.selected_node = None;
+                    if self.selected_is_generated() {
+                        self.ensure_generated_source();
+                    }
                     self.bump_analysis();
                 } else {
                     self.bump_render();
@@ -2079,6 +2096,9 @@ impl MermaidMegaState {
                 if let Some(sel) = self.search_matches.first().copied() {
                     self.selected_sample = sel;
                     self.selected_node = None;
+                    if self.selected_is_generated() {
+                        self.ensure_generated_source();
+                    }
                     self.bump_analysis();
                 } else {
                     self.bump_render();
@@ -2092,6 +2112,9 @@ impl MermaidMegaState {
                 if let Some(sel) = self.search_matches.get(self.search_match_idx).copied() {
                     self.selected_sample = sel;
                     self.selected_node = None;
+                    if self.selected_is_generated() {
+                        self.ensure_generated_source();
+                    }
                     self.bump_analysis();
                 } else {
                     self.bump_render();
@@ -2127,6 +2150,9 @@ impl MermaidMegaState {
                 self.search_match_idx = (self.search_match_idx + 1) % self.search_matches.len();
                 self.selected_sample = self.search_matches[self.search_match_idx];
                 self.selected_node = None;
+                if self.selected_is_generated() {
+                    self.ensure_generated_source();
+                }
                 self.bump_analysis();
             }
             MegaAction::PrevSearchMatch => {
@@ -2140,6 +2166,9 @@ impl MermaidMegaState {
                     % self.search_matches.len();
                 self.selected_sample = self.search_matches[self.search_match_idx];
                 self.selected_node = None;
+                if self.selected_is_generated() {
+                    self.ensure_generated_source();
+                }
                 self.bump_analysis();
             }
             MegaAction::ToggleDiagnostics => {
@@ -2284,6 +2313,9 @@ impl MermaidMegaShowcaseScreen {
 
         self.state.selected_sample = idx;
         self.state.selected_node = None;
+        if self.state.selected_is_generated() {
+            self.state.ensure_generated_source();
+        }
         self.state.rebuild_search_matches();
         self.state.bump_analysis();
         true
@@ -5609,6 +5641,7 @@ mod tests {
             .position(|sample| sample.source == GENERATED_SAMPLE_SOURCE)
             .expect("generated sample missing from MEGA_SAMPLES");
         state.selected_sample = idx;
+        state.ensure_generated_source();
         let source = state.selected_source().unwrap_or("");
         assert!(source.contains("graph TD"));
         assert!(source.contains("N1"));
@@ -5927,12 +5960,9 @@ mod tests {
         assert_eq!(state.generator.density, 25);
         assert_eq!(state.generator.label_len, 6);
         assert_eq!(state.generator.seed, 1);
-        assert!(!state.generated_source.is_empty());
-        assert!(state.last_generation_report.is_some());
-        let report = state.last_generation_report.unwrap();
-        assert_eq!(report.params.nodes, GeneratorParams::default().nodes);
-        assert!(report.actual_node_count > 0);
-        assert!(report.actual_edge_count > 0);
+        // Generated sample source is computed lazily (only when selected).
+        assert!(state.generated_source.is_empty());
+        assert!(state.last_generation_report.is_none());
         assert!(state.selected_node.is_none());
         assert!(state.search_query.is_none());
         assert_eq!(state.analysis_epoch, 0);
@@ -5949,6 +5979,29 @@ mod tests {
         assert!(!panels.detail);
         assert!(!panels.status_log);
         assert!(!panels.help_overlay);
+    }
+
+    #[test]
+    fn generated_source_is_lazy_but_populates_on_select() {
+        let generated_idx = MEGA_SAMPLES
+            .iter()
+            .position(|sample| sample.source == GENERATED_SAMPLE_SOURCE)
+            .expect("MEGA_SAMPLES must include generated sample sentinel");
+
+        let mut state = MermaidMegaState::default();
+        assert!(state.generated_source.is_empty());
+        assert!(state.last_generation_report.is_none());
+
+        // Pick the immediately previous sample (modulo MEGA_SAMPLES.len()), then advance.
+        state.selected_sample = generated_idx
+            .wrapping_add(MEGA_SAMPLES.len())
+            .wrapping_sub(1);
+        state.apply(MegaAction::NextSample);
+
+        assert!(state.selected_is_generated());
+        assert!(!state.generated_source.is_empty());
+        assert!(state.last_generation_report.is_some());
+        assert!(state.selected_source().is_some());
     }
 
     // ── Every action logs to status log ──────────────────────────────
