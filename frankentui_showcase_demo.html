@@ -54,6 +54,8 @@ const CELL_WIDTH   = 8;
 const CELL_HEIGHT  = 16;
 const LOG_JSONL    = true;   // Emit JSONL evidence to console
 const LOG_PERF     = false;  // Per-frame timing in console
+// Bump when deploying to bypass Cloudflare/browser caches for JS/WASM artifacts.
+const ASSET_VERSION = "2026-02-10.2";
 
 // ── DOM refs ───────────────────────────────────────────────────────────
 const canvas   = document.getElementById("terminal-canvas");
@@ -85,14 +87,16 @@ const fontsReady = (async () => {
 let termMod, runnerMod;
 try {
   status.textContent = "Loading WASM modules…";
+  const termJsUrl = `./pkg/FrankenTerm.js?v=${ASSET_VERSION}`;
+  const runnerJsUrl = `./pkg/ftui_showcase_wasm.js?v=${ASSET_VERSION}`;
   [termMod, runnerMod] = await Promise.all([
-    import("./pkg/FrankenTerm.js"),
-    import("./pkg/ftui_showcase_wasm.js"),
+    import(termJsUrl),
+    import(runnerJsUrl),
   ]);
   // Initialize both WASM modules (fetches .wasm files).
   await Promise.all([
-    termMod.default(),
-    runnerMod.default(),
+    termMod.default(new URL(`./pkg/FrankenTerm_bg.wasm?v=${ASSET_VERSION}`, import.meta.url)),
+    runnerMod.default(new URL(`./pkg/ftui_showcase_wasm_bg.wasm?v=${ASSET_VERSION}`, import.meta.url)),
   ]);
 } catch (e) {
   showError(
@@ -137,6 +141,15 @@ const rows = geo.rows;
 
 const runner = new ShowcaseRunner(cols, rows);
 runner.init();
+
+// `ShowcaseRunner.init()` renders frame 1 and produces a full repaint patch batch.
+// If we don't apply it immediately, the first `step()` often returns `rendered=false`
+// and the initial frame never becomes visible (or later diffs apply against an empty buffer).
+const initPatches = runner.takeFlatPatches();
+if (initPatches.cells.length > 0) {
+  term.applyPatchBatchFlat(initPatches.spans, initPatches.cells);
+}
+term.render();
 status.textContent = `${cols}×${rows} — running`;
 
 // ── JSONL logger ───────────────────────────────────────────────────────
