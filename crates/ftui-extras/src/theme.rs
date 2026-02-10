@@ -1670,4 +1670,538 @@ mod tests {
             assert_eq!(pal.accent_slots.len(), 12);
         }
     }
+
+    // ── Edge-case: ThemeId ───────────────────────────────────────────
+
+    #[test]
+    fn theme_id_all_has_five_elements() {
+        assert_eq!(ThemeId::ALL.len(), 5);
+    }
+
+    #[test]
+    fn theme_id_standard_has_four_elements_no_high_contrast() {
+        assert_eq!(ThemeId::STANDARD.len(), 4);
+        for &theme in &ThemeId::STANDARD {
+            assert_ne!(theme, ThemeId::HighContrast);
+        }
+    }
+
+    #[test]
+    fn theme_id_from_index_large_wraps() {
+        assert_eq!(
+            ThemeId::from_index(usize::MAX),
+            ThemeId::ALL[usize::MAX % 5]
+        );
+        assert_eq!(ThemeId::from_index(10), ThemeId::CyberpunkAurora);
+        assert_eq!(ThemeId::from_index(11), ThemeId::Darcula);
+    }
+
+    #[test]
+    fn theme_id_next_non_accessibility_cycles_all_standard() {
+        let mut t = ThemeId::CyberpunkAurora;
+        let mut visited = vec![t];
+        for _ in 0..ThemeId::STANDARD.len() {
+            t = t.next_non_accessibility();
+            visited.push(t);
+        }
+        assert_eq!(*visited.last().unwrap(), ThemeId::CyberpunkAurora);
+        let unique: std::collections::HashSet<_> = visited[..4].iter().collect();
+        assert_eq!(unique.len(), 4);
+    }
+
+    #[test]
+    fn theme_id_clone_copy() {
+        let a = ThemeId::Darcula;
+        let b = a;
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn theme_id_debug() {
+        let dbg = format!("{:?}", ThemeId::LumenLight);
+        assert!(dbg.contains("LumenLight"));
+    }
+
+    #[test]
+    fn theme_id_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hash = |t: ThemeId| {
+            let mut h = DefaultHasher::new();
+            t.hash(&mut h);
+            h.finish()
+        };
+
+        assert_eq!(hash(ThemeId::Darcula), hash(ThemeId::Darcula));
+        assert_ne!(hash(ThemeId::Darcula), hash(ThemeId::LumenLight));
+    }
+
+    #[test]
+    fn theme_id_index_values() {
+        assert_eq!(ThemeId::CyberpunkAurora.index(), 0);
+        assert_eq!(ThemeId::Darcula.index(), 1);
+        assert_eq!(ThemeId::LumenLight.index(), 2);
+        assert_eq!(ThemeId::NordicFrost.index(), 3);
+        assert_eq!(ThemeId::HighContrast.index(), 4);
+    }
+
+    // ── Edge-case: ColorToken ────────────────────────────────────────
+
+    #[test]
+    fn color_token_clone_copy() {
+        let a = ColorToken::AccentPrimary;
+        let b = a;
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn color_token_debug() {
+        let dbg = format!("{:?}", ColorToken::FgPrimary);
+        assert!(dbg.contains("FgPrimary"));
+    }
+
+    #[test]
+    fn color_token_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hash = |t: ColorToken| {
+            let mut h = DefaultHasher::new();
+            t.hash(&mut h);
+            h.finish()
+        };
+
+        assert_eq!(hash(ColorToken::BgBase), hash(ColorToken::BgBase));
+        assert_ne!(hash(ColorToken::BgBase), hash(ColorToken::FgPrimary));
+    }
+
+    #[test]
+    fn color_token_accent_slot_different_indices_differ() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let pal = current_palette();
+        let s0 = ColorToken::AccentSlot(0).resolve_in(pal);
+        let s1 = ColorToken::AccentSlot(1).resolve_in(pal);
+        assert_ne!(s0, s1);
+    }
+
+    // ── Edge-case: AlphaColor ────────────────────────────────────────
+
+    #[test]
+    fn alpha_color_clone_copy() {
+        let a = AlphaColor::new(accent::PRIMARY, 200);
+        let b = a;
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn alpha_color_debug() {
+        let ac = AlphaColor::new(bg::BASE, 128);
+        let dbg = format!("{:?}", ac);
+        assert!(dbg.contains("AlphaColor"));
+    }
+
+    #[test]
+    fn alpha_color_zero_alpha() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let color = AlphaColor::new(accent::PRIMARY, 0).resolve();
+        assert_eq!(color.a(), 0);
+    }
+
+    #[test]
+    fn alpha_color_max_alpha() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let color = AlphaColor::new(accent::PRIMARY, 255).resolve();
+        assert_eq!(color.a(), 255);
+        let base = accent::PRIMARY.resolve();
+        assert_eq!(color.r(), base.r());
+        assert_eq!(color.g(), base.g());
+        assert_eq!(color.b(), base.b());
+    }
+
+    #[test]
+    fn alpha_color_into_packed_rgba() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let ac = AlphaColor::new(fg::PRIMARY, 100);
+        let direct: PackedRgba = ac.into();
+        let resolved = ac.resolve();
+        assert_eq!(direct, resolved);
+    }
+
+    // ── Edge-case: accent_gradient ───────────────────────────────────
+
+    #[test]
+    fn accent_gradient_at_zero_equals_first_slot() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let at_zero = accent_gradient(0.0);
+        let first_slot = current_palette().accent_slots[0];
+        assert_eq!(at_zero, first_slot);
+    }
+
+    #[test]
+    fn accent_gradient_at_one_wraps_to_first_slot() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        // t=1.0 → rem_euclid(1.0) = 0.0 → first slot (wraps)
+        let at_one = accent_gradient(1.0);
+        let first_slot = current_palette().accent_slots[0];
+        assert_eq!(at_one, first_slot);
+    }
+
+    #[test]
+    fn accent_gradient_negative_wraps() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let neg = accent_gradient(-0.5);
+        let pos = accent_gradient(0.5);
+        assert_eq!(neg, pos);
+    }
+
+    #[test]
+    fn accent_gradient_large_values_wrap() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let at_1000 = accent_gradient(1000.0);
+        let at_0 = accent_gradient(0.0);
+        assert_eq!(at_1000, at_0);
+    }
+
+    #[test]
+    fn accent_gradient_midpoint_interpolates() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let at_mid = accent_gradient(0.5);
+        assert_eq!(at_mid.a(), 255);
+    }
+
+    // ── Edge-case: blend_colors ──────────────────────────────────────
+
+    #[test]
+    fn blend_colors_opacity_zero_returns_base() {
+        let base = PackedRgba::rgb(100, 150, 200);
+        let overlay = PackedRgba::rgb(255, 0, 0);
+        let result = blend_colors(overlay, base, 0.0);
+        assert_eq!(result.r(), base.r());
+        assert_eq!(result.g(), base.g());
+        assert_eq!(result.b(), base.b());
+    }
+
+    #[test]
+    fn blend_colors_opacity_one_returns_overlay() {
+        let base = PackedRgba::rgb(100, 150, 200);
+        let overlay = PackedRgba::rgb(255, 0, 0);
+        let result = blend_colors(overlay, base, 1.0);
+        assert_eq!(result.r(), overlay.r());
+        assert_eq!(result.g(), overlay.g());
+        assert_eq!(result.b(), overlay.b());
+    }
+
+    // ── Edge-case: with_opacity ──────────────────────────────────────
+
+    #[test]
+    fn with_opacity_one_is_opaque() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let color = with_opacity(accent::PRIMARY, 1.0);
+        assert_eq!(color.a(), 255);
+    }
+
+    // ── Edge-case: contrast utilities ────────────────────────────────
+
+    #[test]
+    fn contrast_ratio_same_color_is_one() {
+        let color = PackedRgba::rgb(128, 128, 128);
+        let ratio = contrast::contrast_ratio(color, color);
+        assert!(
+            (ratio - 1.0).abs() < 0.01,
+            "same-color ratio should be 1.0, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn contrast_ratio_is_symmetric() {
+        let a = PackedRgba::rgb(50, 100, 150);
+        let b = PackedRgba::rgb(200, 220, 240);
+        let r1 = contrast::contrast_ratio(a, b);
+        let r2 = contrast::contrast_ratio(b, a);
+        assert!(
+            (r1 - r2).abs() < 0.001,
+            "contrast ratio should be symmetric: {r1} vs {r2}"
+        );
+    }
+
+    #[test]
+    fn contrast_ratio_always_at_least_one() {
+        let colors = [
+            PackedRgba::BLACK,
+            PackedRgba::WHITE,
+            PackedRgba::rgb(128, 0, 0),
+            PackedRgba::rgb(0, 128, 0),
+            PackedRgba::rgb(0, 0, 128),
+        ];
+        for &a in &colors {
+            for &b in &colors {
+                let ratio = contrast::contrast_ratio(a, b);
+                assert!(ratio >= 1.0, "contrast ratio should be >= 1.0, got {ratio}");
+            }
+        }
+    }
+
+    #[test]
+    fn meets_wcag_aa_same_color_fails() {
+        let color = PackedRgba::rgb(128, 128, 128);
+        assert!(!contrast::meets_wcag_aa(color, color));
+    }
+
+    #[test]
+    fn meets_wcag_aa_black_on_white_passes() {
+        assert!(contrast::meets_wcag_aa(
+            PackedRgba::BLACK,
+            PackedRgba::WHITE
+        ));
+    }
+
+    #[test]
+    fn srgb_to_linear_at_threshold() {
+        let below = contrast::srgb_to_linear(0.03928);
+        let above = contrast::srgb_to_linear(0.03929);
+        assert!((below - above).abs() < 0.001);
+    }
+
+    #[test]
+    fn luminance_pure_red_green_blue() {
+        let r = contrast::relative_luminance(PackedRgba::rgb(255, 0, 0));
+        let g = contrast::relative_luminance(PackedRgba::rgb(0, 255, 0));
+        let b = contrast::relative_luminance(PackedRgba::rgb(0, 0, 255));
+        assert!(g > r, "green should be brighter than red");
+        assert!(g > b, "green should be brighter than blue");
+        assert!(r > b, "red should be brighter than blue");
+    }
+
+    // ── Edge-case: current_theme_name ────────────────────────────────
+
+    #[test]
+    fn current_theme_name_matches_current_theme() {
+        let _guard = ScopedThemeLock::new(ThemeId::NordicFrost);
+        assert_eq!(current_theme_name(), "Nordic Frost");
+    }
+
+    // ── Edge-case: palette retrieval ─────────────────────────────────
+
+    #[test]
+    fn palette_returns_different_palettes_per_theme() {
+        let a = palette(ThemeId::CyberpunkAurora);
+        let b = palette(ThemeId::Darcula);
+        assert_ne!(a.bg_base, b.bg_base);
+    }
+
+    #[test]
+    fn current_palette_matches_explicit_palette() {
+        let _guard = ScopedThemeLock::new(ThemeId::LumenLight);
+        let cp = current_palette();
+        let ep = palette(ThemeId::LumenLight);
+        assert_eq!(cp.bg_base, ep.bg_base);
+        assert_eq!(cp.fg_primary, ep.fg_primary);
+    }
+
+    // ── Edge-case: semantic_styles_cached ─────────────────────────────
+
+    #[test]
+    fn semantic_styles_cached_matches_direct() {
+        for theme in ThemeId::ALL {
+            let _guard = ScopedThemeLock::new(theme);
+            let cached = *semantic_styles_cached();
+            let direct = semantic_styles();
+            assert_eq!(cached, direct, "cached != direct for {:?}", theme);
+        }
+    }
+
+    // ── Edge-case: badge specs ───────────────────────────────────────
+
+    #[test]
+    fn status_badge_labels_exact() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        assert_eq!(status_badge(StatusBadge::Open).label, "OPEN");
+        assert_eq!(status_badge(StatusBadge::InProgress).label, "PROG");
+        assert_eq!(status_badge(StatusBadge::Blocked).label, "BLKD");
+        assert_eq!(status_badge(StatusBadge::Closed).label, "DONE");
+    }
+
+    #[test]
+    fn priority_badge_labels_exact() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        assert_eq!(priority_badge(PriorityBadge::P0).label, "P0");
+        assert_eq!(priority_badge(PriorityBadge::P1).label, "P1");
+        assert_eq!(priority_badge(PriorityBadge::P2).label, "P2");
+        assert_eq!(priority_badge(PriorityBadge::P3).label, "P3");
+        assert_eq!(priority_badge(PriorityBadge::P4).label, "P4");
+    }
+
+    // ── Edge-case: trait coverage ────────────────────────────────────
+
+    #[test]
+    fn badge_spec_clone_debug() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let badge = status_badge(StatusBadge::Open);
+        let cloned = badge;
+        assert_eq!(badge, cloned);
+        let dbg = format!("{:?}", badge);
+        assert!(dbg.contains("BadgeSpec"));
+    }
+
+    #[test]
+    fn semantic_swatch_clone_debug() {
+        let styles = semantic_styles_for(ThemeId::CyberpunkAurora);
+        let swatch = styles.status.open;
+        let cloned = swatch;
+        assert_eq!(swatch, cloned);
+        let dbg = format!("{:?}", swatch);
+        assert!(dbg.contains("SemanticSwatch"));
+    }
+
+    #[test]
+    fn semantic_styles_debug() {
+        let styles = semantic_styles_for(ThemeId::Darcula);
+        let dbg = format!("{:?}", styles);
+        assert!(dbg.contains("SemanticStyles"));
+    }
+
+    #[test]
+    fn status_badge_enum_clone_copy_debug() {
+        let a = StatusBadge::Open;
+        let b = a;
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        let dbg = format!("{:?}", a);
+        assert!(dbg.contains("Open"));
+    }
+
+    #[test]
+    fn priority_badge_enum_clone_copy_debug() {
+        let a = PriorityBadge::P0;
+        let b = a;
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        let dbg = format!("{:?}", a);
+        assert!(dbg.contains("P0"));
+    }
+
+    #[test]
+    fn status_badge_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hash = |s: StatusBadge| {
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            h.finish()
+        };
+
+        assert_eq!(hash(StatusBadge::Open), hash(StatusBadge::Open));
+        assert_ne!(hash(StatusBadge::Open), hash(StatusBadge::Closed));
+    }
+
+    #[test]
+    fn theme_palette_debug() {
+        let pal = palette(ThemeId::CyberpunkAurora);
+        let dbg = format!("{:?}", pal);
+        assert!(dbg.contains("ThemePalette"));
+    }
+
+    // ── Edge-case: priority bg/text ──────────────────────────────────
+
+    #[test]
+    fn priority_bg_has_low_opacity_all_themes() {
+        for theme in ThemeId::ALL {
+            let _guard = ScopedThemeLock::new(theme);
+            assert!(
+                priority::p0_bg().a() < 128,
+                "P0 bg alpha too high for {:?}",
+                theme
+            );
+            assert!(
+                priority::p1_bg().a() < 128,
+                "P1 bg alpha too high for {:?}",
+                theme
+            );
+            assert!(
+                priority::p2_bg().a() < 128,
+                "P2 bg alpha too high for {:?}",
+                theme
+            );
+            assert!(
+                priority::p3_bg().a() < 128,
+                "P3 bg alpha too high for {:?}",
+                theme
+            );
+            assert!(
+                priority::p4_bg().a() < 128,
+                "P4 bg alpha too high for {:?}",
+                theme
+            );
+        }
+    }
+
+    #[test]
+    fn priority_text_meets_contrast_all_themes() {
+        for theme in ThemeId::ALL {
+            let _guard = ScopedThemeLock::new(theme);
+            let base = bg::BASE.resolve();
+            let bg_p0 = priority::p0_bg().over(base);
+            let text_p0 = priority::p0_text();
+            assert!(
+                contrast::meets_wcag_aa(text_p0, bg_p0),
+                "P0 text contrast too low for {:?}",
+                theme
+            );
+        }
+    }
+
+    // ── Edge-case: alpha module constants ─────────────────────────────
+
+    #[test]
+    fn alpha_module_constants_have_expected_alphas() {
+        assert_eq!(alpha::SURFACE.alpha, 220);
+        assert_eq!(alpha::OVERLAY.alpha, 210);
+        assert_eq!(alpha::HIGHLIGHT.alpha, 200);
+        assert_eq!(alpha::ACCENT_PRIMARY.alpha, 210);
+        assert_eq!(alpha::ACCENT_SECONDARY.alpha, 200);
+    }
+
+    #[test]
+    fn alpha_module_resolves_to_expected_alpha() {
+        let _guard = ScopedThemeLock::new(ThemeId::CyberpunkAurora);
+        let surface = alpha::SURFACE.resolve();
+        assert_eq!(surface.a(), 220);
+        let overlay = alpha::OVERLAY.resolve();
+        assert_eq!(overlay.a(), 210);
+    }
+
+    // ── Edge-case: high contrast theme ───────────────────────────────
+
+    #[test]
+    fn high_contrast_theme_has_pure_black_bg() {
+        let pal = palette(ThemeId::HighContrast);
+        assert_eq!(pal.bg_deep, PackedRgba::rgb(0, 0, 0));
+        assert_eq!(pal.bg_base, PackedRgba::rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn high_contrast_theme_has_pure_white_fg() {
+        let pal = palette(ThemeId::HighContrast);
+        assert_eq!(pal.fg_primary, PackedRgba::rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn high_contrast_max_contrast_ratio() {
+        let pal = palette(ThemeId::HighContrast);
+        let ratio = contrast::contrast_ratio(pal.fg_primary, pal.bg_base);
+        assert!(
+            (ratio - 21.0).abs() < 0.1,
+            "HighContrast fg/bg should be ~21:1, got {ratio}"
+        );
+    }
 }
