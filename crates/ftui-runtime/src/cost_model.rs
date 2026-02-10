@@ -1362,4 +1362,427 @@ mod tests {
         let dbg = format!("{pt:?}");
         assert!(dbg.contains("SensitivityPoint"));
     }
+
+    // ═══ CacheCostParams::evaluate ════════════════════════════════════
+
+    #[test]
+    fn cache_evaluate_components_sum_to_total() {
+        let params = CacheCostParams::default();
+        let pt = params.evaluate(50_000.0);
+        assert!(
+            (pt.total_cost_us - (pt.cost_miss_us + pt.cost_mem_us)).abs() < 1e-10,
+            "total should equal miss + mem components"
+        );
+    }
+
+    #[test]
+    fn cache_evaluate_matches_individual_calls() {
+        let params = CacheCostParams::default();
+        let budget = 30_000.0;
+        let pt = params.evaluate(budget);
+        assert_eq!(pt.budget_bytes, budget);
+        assert!(
+            (pt.miss_rate - params.miss_rate(budget)).abs() < 1e-10,
+            "evaluate miss_rate should match miss_rate()"
+        );
+        assert!(
+            (pt.total_cost_us - params.total_cost(budget)).abs() < 1e-10,
+            "evaluate total_cost should match total_cost()"
+        );
+    }
+
+    #[test]
+    fn cache_evaluate_at_optimal() {
+        let params = CacheCostParams::default();
+        let result = params.optimize();
+        let pt = params.evaluate(result.optimal_budget_bytes);
+        assert!(
+            (pt.miss_rate - result.optimal_miss_rate).abs() < 1e-10,
+            "evaluate at optimal should match optimize result"
+        );
+    }
+
+    // ═══ Cache extreme params ═════════════════════════════════════════
+
+    #[test]
+    fn cache_miss_rate_negative_budget_clamps_to_one() {
+        let params = CacheCostParams::default();
+        let mr = params.miss_rate(-100.0);
+        assert!(
+            (mr - 1.0).abs() < 1e-10,
+            "negative budget should give miss rate 1.0, got {mr}"
+        );
+    }
+
+    #[test]
+    fn cache_miss_rate_huge_budget_approaches_zero() {
+        let params = CacheCostParams::default();
+        let mr = params.miss_rate(1e12);
+        assert!(
+            mr.abs() < 1e-10,
+            "huge budget should give near-zero miss rate, got {mr}"
+        );
+    }
+
+    #[test]
+    fn cache_optimal_budget_c_mem_zero_returns_max() {
+        let params = CacheCostParams {
+            c_mem_per_byte: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            params.optimal_budget(),
+            params.budget_max_bytes,
+            "zero memory cost should give max budget"
+        );
+    }
+
+    #[test]
+    fn cache_optimal_budget_alpha_zero_returns_max() {
+        let params = CacheCostParams {
+            zipf_alpha: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(params.optimal_budget(), params.budget_max_bytes);
+    }
+
+    #[test]
+    fn cache_optimal_budget_item_bytes_zero_returns_max() {
+        let params = CacheCostParams {
+            item_bytes: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(params.optimal_budget(), params.budget_max_bytes);
+    }
+
+    #[test]
+    fn cache_optimize_comparison_points_count() {
+        let result = CacheCostParams::default().optimize();
+        assert_eq!(
+            result.comparison_points.len(),
+            6,
+            "should have 6 comparison points"
+        );
+    }
+
+    #[test]
+    fn cache_optimize_items_cached_positive() {
+        let result = CacheCostParams::default().optimize();
+        assert!(result.items_cached > 0.0);
+    }
+
+    #[test]
+    fn cache_optimize_cost_components_non_negative() {
+        let result = CacheCostParams::default().optimize();
+        assert!(result.cost_miss_us >= 0.0);
+        assert!(result.cost_mem_us >= 0.0);
+        assert!(
+            (result.optimal_cost_us - (result.cost_miss_us + result.cost_mem_us)).abs() < 1e-6,
+            "total cost should be sum of components"
+        );
+    }
+
+    // ═══ StageStats::second_moment ════════════════════════════════════
+
+    #[test]
+    fn stage_stats_second_moment_deterministic() {
+        let s = StageStats {
+            name: "test",
+            mean_us: 100.0,
+            var_us2: 0.0,
+        };
+        // E[S²] = Var[S] + E[S]² = 0 + 10000 = 10000
+        assert!(
+            (s.second_moment() - 10_000.0).abs() < 1e-10,
+            "E[S²] = mean² when variance is zero"
+        );
+    }
+
+    #[test]
+    fn stage_stats_second_moment_with_variance() {
+        let s = StageStats {
+            name: "test",
+            mean_us: 50.0,
+            var_us2: 400.0,
+        };
+        // E[S²] = 400 + 2500 = 2900
+        assert!(
+            (s.second_moment() - 2900.0).abs() < 1e-10,
+            "E[S²] = Var + mean²"
+        );
+    }
+
+    // ═══ Pipeline edge cases ══════════════════════════════════════════
+
+    #[test]
+    fn pipeline_multi_stage_variance_contributes() {
+        let params = PipelineCostParams {
+            stages: vec![
+                StageStats {
+                    name: "fast",
+                    mean_us: 100.0,
+                    var_us2: 0.0,
+                },
+                StageStats {
+                    name: "variable",
+                    mean_us: 200.0,
+                    var_us2: 10000.0,
+                },
+            ],
+            arrival_rate: 0.0001,
+            frame_budget_us: 16667.0,
+        };
+        let result = params.analyze();
+        assert!(result.stable);
+        // Mean should be sum of stage means
+        assert!(
+            (result.total_mean_us - 300.0).abs() < 1e-6,
+            "total mean should be sum of stages"
+        );
+    }
+
+    #[test]
+    fn pipeline_stage_breakdown_names_match() {
+        let result = PipelineCostParams::default().analyze();
+        let names: Vec<&str> = result.stage_breakdown.iter().map(|s| s.name).collect();
+        assert!(names.contains(&"input"));
+        assert!(names.contains(&"update"));
+        assert!(names.contains(&"view"));
+    }
+
+    #[test]
+    fn pipeline_unstable_headroom_zero_or_negative() {
+        let params = PipelineCostParams {
+            stages: vec![StageStats {
+                name: "slow",
+                mean_us: 50_000.0,
+                var_us2: 0.0,
+            }],
+            arrival_rate: 1.0 / 16667.0,
+            frame_budget_us: 16667.0,
+        };
+        let result = params.analyze();
+        assert!(!result.stable);
+        assert!(result.headroom_us <= 0.0);
+    }
+
+    #[test]
+    fn pipeline_jsonl_contains_expected_fields() {
+        let result = PipelineCostParams::default().analyze();
+        let jsonl = result.to_jsonl();
+        let v: serde_json::Value = serde_json::from_str(&jsonl).expect("valid JSON");
+        assert_eq!(v["event"], "pipeline_cost_analysis");
+        assert!(v["utilization"].is_number());
+        assert!(v["stable"].is_boolean());
+        assert!(v["mean_sojourn_us"].is_number());
+    }
+
+    // ═══ Batch evaluate ═══════════════════════════════════════════════
+
+    #[test]
+    fn batch_evaluate_components_sum_to_total() {
+        let params = BatchCostParams::default();
+        let pt = params.evaluate(10);
+        assert!(
+            (pt.total_cost_us - (pt.overhead_us + pt.processing_us + pt.latency_us)).abs() < 1e-10,
+            "total should equal sum of components"
+        );
+    }
+
+    #[test]
+    fn batch_evaluate_single_patch() {
+        let params = BatchCostParams {
+            total_patches: 1,
+            ..Default::default()
+        };
+        let pt = params.evaluate(1);
+        assert_eq!(pt.batch_size, 1);
+        assert_eq!(pt.num_batches, 1);
+        assert!(pt.latency_us.abs() < 1e-10, "single patch → no latency");
+    }
+
+    #[test]
+    fn batch_evaluate_zero_patches() {
+        let params = BatchCostParams {
+            total_patches: 0,
+            ..Default::default()
+        };
+        let pt = params.evaluate(1);
+        assert_eq!(pt.num_batches, 0);
+        assert!(pt.total_cost_us.abs() < 1e-10);
+    }
+
+    // ═══ Batch total_cost edge cases ══════════════════════════════════
+
+    #[test]
+    fn batch_total_cost_zero_batch_size() {
+        let params = BatchCostParams::default();
+        let cost = params.total_cost(0);
+        assert!(cost.abs() < 1e-10, "batch_size=0 should give zero cost");
+    }
+
+    #[test]
+    fn batch_total_cost_larger_than_n() {
+        let params = BatchCostParams {
+            total_patches: 100,
+            ..Default::default()
+        };
+        // batch_size > n should clamp to n
+        let cost_at_n = params.total_cost(100);
+        let cost_above = params.total_cost(200);
+        assert!(
+            (cost_at_n - cost_above).abs() < 1e-10,
+            "batch_size > n should equal batch_size = n"
+        );
+    }
+
+    #[test]
+    fn batch_total_cost_one_is_immediate() {
+        let params = BatchCostParams::default();
+        let cost = params.total_cost(1);
+        // n batches of 1, no latency
+        let expected = params.total_patches as f64 * params.c_overhead_us
+            + params.total_patches as f64 * params.c_per_patch_us;
+        assert!(
+            (cost - expected).abs() < 1e-10,
+            "batch_size=1 cost: expected {expected}, got {cost}"
+        );
+    }
+
+    // ═══ Batch single-patch model ═════════════════════════════════════
+
+    #[test]
+    fn batch_single_patch_optimal_is_one() {
+        let params = BatchCostParams {
+            total_patches: 1,
+            ..Default::default()
+        };
+        assert_eq!(params.optimal_batch_size(), 1);
+    }
+
+    #[test]
+    fn batch_optimize_comparison_points_non_empty() {
+        let result = BatchCostParams::default().optimize();
+        assert!(!result.comparison_points.is_empty());
+    }
+
+    #[test]
+    fn batch_optimize_single_batch_cost_consistent() {
+        let params = BatchCostParams::default();
+        let result = params.optimize();
+        assert!(
+            (result.single_batch_cost_us - params.total_cost(params.total_patches)).abs() < 1e-10,
+            "single_batch_cost should match total_cost(n)"
+        );
+    }
+
+    #[test]
+    fn batch_optimize_immediate_cost_consistent() {
+        let params = BatchCostParams::default();
+        let result = params.optimize();
+        assert!(
+            (result.immediate_cost_us - params.total_cost(1)).abs() < 1e-10,
+            "immediate_cost should match total_cost(1)"
+        );
+    }
+
+    // ═══ JSONL validation ═════════════════════════════════════════════
+
+    #[test]
+    fn cache_jsonl_contains_event() {
+        let result = CacheCostParams::default().optimize();
+        let jsonl = result.to_jsonl();
+        let v: serde_json::Value = serde_json::from_str(&jsonl).expect("valid JSON");
+        assert_eq!(v["event"], "cache_cost_optimal");
+        assert!(v["optimal_budget_bytes"].is_number());
+    }
+
+    #[test]
+    fn batch_jsonl_contains_event() {
+        let result = BatchCostParams::default().optimize();
+        let jsonl = result.to_jsonl();
+        let v: serde_json::Value = serde_json::from_str(&jsonl).expect("valid JSON");
+        assert_eq!(v["event"], "batch_cost_optimal");
+        assert!(v["optimal_batch_size"].is_number());
+    }
+
+    // ═══ Debug formatting ═════════════════════════════════════════════
+
+    #[test]
+    fn cache_cost_point_debug() {
+        let pt = CacheCostParams::default().evaluate(10_000.0);
+        let dbg = format!("{pt:?}");
+        assert!(dbg.contains("CacheCostPoint"));
+    }
+
+    #[test]
+    fn batch_cost_point_debug() {
+        let pt = BatchCostParams::default().evaluate(10);
+        let dbg = format!("{pt:?}");
+        assert!(dbg.contains("BatchCostPoint"));
+    }
+
+    #[test]
+    fn stage_breakdown_debug() {
+        let result = PipelineCostParams::default().analyze();
+        let dbg = format!("{:?}", result.stage_breakdown[0]);
+        assert!(dbg.contains("StageBreakdown"));
+    }
+
+    #[test]
+    fn cache_cost_params_debug() {
+        let params = CacheCostParams::default();
+        let dbg = format!("{params:?}");
+        assert!(dbg.contains("CacheCostParams"));
+    }
+
+    #[test]
+    fn batch_cost_params_debug() {
+        let params = BatchCostParams::default();
+        let dbg = format!("{params:?}");
+        assert!(dbg.contains("BatchCostParams"));
+    }
+
+    // ═══ Sensitivity edge cases ═══════════════════════════════════════
+
+    #[test]
+    fn cache_sensitivity_zipf_min_steps_is_two() {
+        let params = CacheCostParams::default();
+        // steps=1 is clamped to 2 internally
+        let points = cache_sensitivity_zipf(&params, 1.5, 1.5, 1);
+        assert_eq!(points.len(), 2);
+    }
+
+    #[test]
+    fn batch_sensitivity_patches_min_steps_is_two() {
+        let params = BatchCostParams::default();
+        let points = batch_sensitivity_patches(&params, 100, 100, 1);
+        assert_eq!(points.len(), 2);
+    }
+
+    #[test]
+    fn sensitivity_points_have_finite_values() {
+        let params = CacheCostParams::default();
+        for pt in cache_sensitivity_zipf(&params, 1.0, 3.0, 5) {
+            assert!(pt.param_value.is_finite());
+            assert!(pt.optimal_value.is_finite());
+            assert!(pt.optimal_cost.is_finite());
+        }
+    }
+
+    // ═══ Clone trait ══════════════════════════════════════════════════
+
+    #[test]
+    fn cache_params_clone() {
+        let params = CacheCostParams::default();
+        let cloned = params.clone();
+        assert!((params.zipf_alpha - cloned.zipf_alpha).abs() < 1e-10);
+    }
+
+    #[test]
+    fn batch_params_clone() {
+        let params = BatchCostParams::default();
+        let cloned = params.clone();
+        assert_eq!(params.total_patches, cloned.total_patches);
+    }
 }
