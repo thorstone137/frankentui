@@ -14,6 +14,8 @@ use std::hint::black_box;
 #[cfg(feature = "visual-fx")]
 use ftui_core::geometry::Rect;
 #[cfg(feature = "visual-fx")]
+use ftui_extras::visual_fx::effects::UnderwaterWarpFx;
+#[cfg(feature = "visual-fx")]
 use ftui_extras::visual_fx::{
     Backdrop, BackdropFx, BlendMode, FxContext, FxLayer, FxQuality, MetaballsFx, MetaballsParams,
     PlasmaFx, StackedFx, ThemeInputs,
@@ -165,6 +167,55 @@ fn bench_plasma_compute(c: &mut Criterion) {
                     frame: 0,
                     time_seconds: 0.5,
                     quality: FxQuality::Minimal,
+                    theme: &theme,
+                };
+
+                b.iter(|| {
+                    fx.render(ctx, black_box(&mut out));
+                    black_box(&out);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "visual-fx")]
+fn bench_underwater_warp_compute(c: &mut Criterion) {
+    let mut group = c.benchmark_group("visual_fx/underwater_warp");
+    let theme = ThemeInputs::default_dark();
+
+    struct SolidFx;
+    impl BackdropFx for SolidFx {
+        fn name(&self) -> &'static str {
+            "Solid"
+        }
+
+        fn render(&mut self, ctx: FxContext<'_>, out: &mut [PackedRgba]) {
+            if ctx.is_empty() {
+                return;
+            }
+            out.fill(PackedRgba::rgb(10, 20, 30));
+        }
+    }
+
+    for &(width, height, name) in SIZES {
+        let len = width as usize * height as usize;
+        group.throughput(Throughput::Elements(len as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("full_quality", name),
+            &(width, height),
+            |b, &(w, h)| {
+                let mut fx = UnderwaterWarpFx::new(Box::new(SolidFx));
+                let mut out = vec![PackedRgba::TRANSPARENT; len];
+                let ctx = FxContext {
+                    width: w,
+                    height: h,
+                    frame: 0,
+                    time_seconds: 0.5,
+                    quality: FxQuality::Full,
                     theme: &theme,
                 };
 
@@ -727,6 +778,7 @@ criterion_group!(
     benches,
     bench_metaballs_compute,
     bench_plasma_compute,
+    bench_underwater_warp_compute,
     bench_backdrop_single_layer,
     bench_stacked_fx_layers,
     bench_layering_overhead,

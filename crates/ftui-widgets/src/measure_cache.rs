@@ -993,10 +993,8 @@ mod tests {
     #[test]
     fn edge_widget_id_copy_clone_hash_debug() {
         let id = WidgetId(42);
-        let copied: WidgetId = id; // Copy
+        let copied: WidgetId = id; // Copy (Copy implies Clone)
         assert_eq!(copied, id);
-        let cloned = id.clone();
-        assert_eq!(cloned, id);
         let _ = format!("{id:?}");
 
         // Hash: same IDs should hash equally

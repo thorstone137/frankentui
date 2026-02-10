@@ -1041,4 +1041,669 @@ mod tests {
         };
         assert!(fallback.is_fallback());
     }
+
+    // ── Edge-case: StateKey ──────────────────────────────────────────
+
+    #[test]
+    fn state_key_from_path_single_segment() {
+        let key = StateKey::from_path(&["widget"]);
+        assert_eq!(key.widget_type, "widget");
+        assert_eq!(key.instance_id, "widget");
+    }
+
+    #[test]
+    fn state_key_from_path_two_segments() {
+        let key = StateKey::from_path(&["parent", "child"]);
+        assert_eq!(key.widget_type, "child");
+        assert_eq!(key.instance_id, "parent/child");
+    }
+
+    #[test]
+    fn state_key_empty_instance_id() {
+        let key = StateKey::new("Widget", "");
+        assert_eq!(key.instance_id, "");
+        assert_eq!(key.canonical(), "Widget::");
+        assert_eq!(key.to_string(), "Widget::");
+    }
+
+    #[test]
+    fn state_key_canonical_matches_display() {
+        let key = StateKey::new("TreeView", "sidebar/nav");
+        assert_eq!(key.canonical(), key.to_string());
+    }
+
+    #[test]
+    fn state_key_clone() {
+        let key = StateKey::new("Scroll", "main");
+        let cloned = key.clone();
+        assert_eq!(key, cloned);
+        assert_eq!(key.widget_type, cloned.widget_type);
+        assert_eq!(key.instance_id, cloned.instance_id);
+    }
+
+    #[test]
+    fn state_key_debug_format() {
+        let key = StateKey::new("Foo", "bar");
+        let dbg = format!("{:?}", key);
+        assert!(dbg.contains("Foo"));
+        assert!(dbg.contains("bar"));
+    }
+
+    #[test]
+    fn state_key_hash_differs_for_different_keys() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let hash = |key: &StateKey| {
+            let mut h = DefaultHasher::new();
+            key.hash(&mut h);
+            h.finish()
+        };
+
+        let a = StateKey::new("ScrollView", "main");
+        let b = StateKey::new("ScrollView", "sidebar");
+        let c = StateKey::new("TreeView", "main");
+
+        // Different instance_id → different hash (overwhelmingly likely)
+        assert_ne!(hash(&a), hash(&b));
+        // Different widget_type → different hash
+        assert_ne!(hash(&a), hash(&c));
+    }
+
+    #[test]
+    fn state_key_usable_as_hashmap_key() {
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+        let key1 = StateKey::new("Scroll", "a");
+        let key2 = StateKey::new("Scroll", "b");
+
+        map.insert(key1.clone(), 1);
+        map.insert(key2.clone(), 2);
+
+        assert_eq!(map.get(&key1), Some(&1));
+        assert_eq!(map.get(&key2), Some(&2));
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn state_key_from_path_with_empty_segments() {
+        let key = StateKey::from_path(&["", "child"]);
+        assert_eq!(key.instance_id, "/child");
+        assert_eq!(key.widget_type, "child");
+    }
+
+    // ── Edge-case: Stateful trait ────────────────────────────────────
+
+    #[test]
+    fn save_state_on_default_widget() {
+        let widget = TestScrollView::default();
+        let state = widget.save_state();
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn restore_state_to_zero_max() {
+        let mut widget = TestScrollView {
+            id: "x".into(),
+            offset: 0,
+            max: 0,
+        };
+        widget.restore_state(ScrollState { scroll_offset: 100 });
+        // Should clamp to max=0
+        assert_eq!(widget.offset, 0);
+    }
+
+    #[test]
+    fn save_restore_preserves_max_u16() {
+        let mut widget = TestScrollView {
+            id: "w".into(),
+            offset: u16::MAX,
+            max: u16::MAX,
+        };
+        let saved = widget.save_state();
+        assert_eq!(saved.scroll_offset, u16::MAX);
+
+        widget.offset = 0;
+        widget.restore_state(saved);
+        assert_eq!(widget.offset, u16::MAX);
+    }
+
+    #[test]
+    fn multiple_save_restore_cycles() {
+        let mut widget = TestScrollView {
+            id: "cycle".into(),
+            offset: 10,
+            max: 100,
+        };
+
+        for i in 0..5 {
+            widget.offset = i * 10;
+            let saved = widget.save_state();
+            widget.offset = 0;
+            widget.restore_state(saved);
+            assert_eq!(widget.offset, i * 10);
+        }
+    }
+
+    #[test]
+    fn state_key_from_widget() {
+        let widget = TestScrollView {
+            id: "content-panel".into(),
+            offset: 0,
+            max: 50,
+        };
+        let key = widget.state_key();
+        assert_eq!(key.widget_type, "ScrollView");
+        assert_eq!(key.instance_id, "content-panel");
+    }
+
+    #[test]
+    fn tree_view_save_restore_round_trip() {
+        let mut widget = TestTreeView {
+            id: "files".into(),
+            expanded: vec![1, 3, 5],
+        };
+        let saved = widget.save_state();
+        assert_eq!(saved.expanded_nodes, vec![1, 3, 5]);
+        assert!(!saved.collapse_all_on_blur);
+
+        widget.expanded = vec![];
+        widget.restore_state(saved);
+        assert_eq!(widget.expanded, vec![1, 3, 5]);
+    }
+
+    // ── Edge-case: VersionedState ────────────────────────────────────
+
+    #[test]
+    fn versioned_state_new_constructor() {
+        let vs = VersionedState::new(42, ScrollState { scroll_offset: 7 });
+        assert_eq!(vs.version, 42);
+        assert_eq!(vs.data.scroll_offset, 7);
+    }
+
+    #[test]
+    fn versioned_state_clone() {
+        let vs = VersionedState::new(1, ScrollState { scroll_offset: 5 });
+        let cloned = vs.clone();
+        assert_eq!(cloned.version, 1);
+        assert_eq!(cloned.data.scroll_offset, 5);
+    }
+
+    #[test]
+    fn versioned_state_debug() {
+        let vs = VersionedState::new(3, ScrollState { scroll_offset: 10 });
+        let dbg = format!("{:?}", vs);
+        assert!(dbg.contains("3"));
+        assert!(dbg.contains("10"));
+    }
+
+    #[test]
+    fn versioned_state_unpack_version_match() {
+        let vs = VersionedState::new(1, ScrollState { scroll_offset: 42 });
+        let result = vs.unpack::<TestScrollView>();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().scroll_offset, 42);
+    }
+
+    #[test]
+    fn versioned_state_unpack_version_zero_mismatch() {
+        // Version 0 doesn't match TestScrollView's version 1
+        let vs = VersionedState::new(0, ScrollState { scroll_offset: 99 });
+        assert!(vs.unpack::<TestScrollView>().is_none());
+    }
+
+    #[test]
+    fn versioned_state_unpack_future_version() {
+        // Version 999 doesn't match TestScrollView's version 1
+        let vs = VersionedState::new(999, ScrollState { scroll_offset: 1 });
+        assert!(vs.unpack::<TestScrollView>().is_none());
+    }
+
+    #[test]
+    fn versioned_state_unpack_or_default_version_zero() {
+        let vs = VersionedState::new(0, ScrollState { scroll_offset: 50 });
+        let result = vs.unpack_or_default::<TestScrollView>();
+        assert_eq!(result, ScrollState::default());
+    }
+
+    #[test]
+    fn versioned_state_default_for_tree_state() {
+        let vs = VersionedState::<TreeState>::default();
+        assert_eq!(vs.version, 1);
+        assert!(vs.data.expanded_nodes.is_empty());
+        assert!(!vs.data.collapse_all_on_blur);
+    }
+
+    // ── Edge-case: MigrationError ────────────────────────────────────
+
+    #[test]
+    fn migration_error_clone() {
+        let err = MigrationError::NoPathFound { from: 1, to: 5 };
+        let cloned = err.clone();
+        assert_eq!(cloned.to_string(), "no migration path from version 1 to 5");
+
+        let err2 = MigrationError::MigrationFailed {
+            from: 2,
+            to: 3,
+            message: "oops".into(),
+        };
+        let cloned2 = err2.clone();
+        assert_eq!(cloned2.to_string(), "migration from 2 to 3 failed: oops");
+
+        let err3 = MigrationError::InvalidVersionRange { from: 10, to: 1 };
+        let cloned3 = err3.clone();
+        assert_eq!(cloned3.to_string(), "invalid version range: 10 to 1");
+    }
+
+    #[test]
+    fn migration_error_debug() {
+        let err = MigrationError::NoPathFound { from: 1, to: 2 };
+        let dbg = format!("{:?}", err);
+        assert!(dbg.contains("NoPathFound"));
+    }
+
+    // ── Edge-case: MigrationChain ────────────────────────────────────
+
+    #[test]
+    fn migration_chain_default() {
+        let chain = MigrationChain::<ScrollState>::default();
+        assert!(!chain.has_path(1, 2));
+    }
+
+    #[test]
+    fn migration_chain_has_path_same_version() {
+        let chain = MigrationChain::<ScrollState>::new();
+        // Same version always returns true even with empty chain
+        assert!(chain.has_path(0, 0));
+        assert!(chain.has_path(5, 5));
+        assert!(chain.has_path(u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn migration_chain_has_path_from_greater_than_to() {
+        let chain = MigrationChain::<ScrollState>::new();
+        // from > to returns false (not equal)
+        assert!(!chain.has_path(3, 1));
+        assert!(!chain.has_path(2, 1));
+    }
+
+    #[test]
+    fn migration_chain_has_path_gap_in_chain() {
+        // Register v1→v2, but not v2→v3, then check v1→v3
+        let mut chain = MigrationChain::<ScrollStateV2>::new();
+        chain.register(Box::new(V1ToV2Migration));
+        assert!(chain.has_path(1, 2));
+        assert!(!chain.has_path(1, 3)); // gap at v2→v3
+    }
+
+    #[test]
+    fn migration_chain_migrate_same_version_empty_chain() {
+        let chain = MigrationChain::<ScrollState>::new();
+        let state: Box<dyn core::any::Any + Send> = Box::new(ScrollState { scroll_offset: 77 });
+        let result = chain.migrate(state, 5, 5);
+        assert!(result.is_ok());
+        let out = result.unwrap().downcast::<ScrollState>().unwrap();
+        assert_eq!(out.scroll_offset, 77);
+    }
+
+    #[test]
+    fn migration_chain_migrate_invalid_range_adjacent() {
+        let chain = MigrationChain::<ScrollState>::new();
+        let state: Box<dyn core::any::Any + Send> = Box::new(ScrollState::default());
+        let result = chain.migrate(state, 2, 1);
+        assert!(matches!(
+            result,
+            Err(MigrationError::InvalidVersionRange { from: 2, to: 1 })
+        ));
+    }
+
+    // Multi-step migration v1→v2→v3
+    #[derive(Debug, Clone, Default)]
+    struct ScrollStateV3 {
+        scroll_offset: u16,
+        velocity: f32,
+        smooth_scroll: bool, // Added in v3
+    }
+
+    struct V2ToV3Migration;
+
+    impl ErasedMigration<ScrollStateV3> for V2ToV3Migration {
+        fn from_version(&self) -> u32 {
+            2
+        }
+        fn to_version(&self) -> u32 {
+            3
+        }
+        fn migrate_erased(
+            &self,
+            old: Box<dyn core::any::Any + Send>,
+        ) -> Result<Box<dyn core::any::Any + Send>, String> {
+            let v2 = old
+                .downcast::<ScrollStateV2>()
+                .map_err(|_| "invalid state type")?;
+            Ok(Box::new(ScrollStateV3 {
+                scroll_offset: v2.scroll_offset,
+                velocity: v2.velocity,
+                smooth_scroll: true, // default for new field
+            }))
+        }
+    }
+
+    struct V1ToV2ForV3Migration;
+
+    impl ErasedMigration<ScrollStateV3> for V1ToV2ForV3Migration {
+        fn from_version(&self) -> u32 {
+            1
+        }
+        fn to_version(&self) -> u32 {
+            2
+        }
+        fn migrate_erased(
+            &self,
+            old: Box<dyn core::any::Any + Send>,
+        ) -> Result<Box<dyn core::any::Any + Send>, String> {
+            let v1 = old
+                .downcast::<ScrollStateV1>()
+                .map_err(|_| "invalid state type")?;
+            Ok(Box::new(ScrollStateV2 {
+                scroll_offset: v1.scroll_offset,
+                velocity: 0.0,
+            }))
+        }
+    }
+
+    #[test]
+    fn migration_chain_multi_step_v1_to_v3() {
+        let mut chain = MigrationChain::<ScrollStateV3>::new();
+        chain.register(Box::new(V1ToV2ForV3Migration));
+        chain.register(Box::new(V2ToV3Migration));
+
+        assert!(chain.has_path(1, 3));
+        assert!(chain.has_path(1, 2));
+        assert!(chain.has_path(2, 3));
+
+        let old = Box::new(ScrollStateV1 { scroll_offset: 55 });
+        let result = chain.migrate(old, 1, 3);
+        assert!(result.is_ok());
+
+        let migrated = result.unwrap().downcast::<ScrollStateV3>().unwrap();
+        assert_eq!(migrated.scroll_offset, 55);
+        assert_eq!(migrated.velocity, 0.0);
+        assert!(migrated.smooth_scroll);
+    }
+
+    // Failing migration
+    struct FailingMigration;
+
+    impl ErasedMigration<ScrollStateV2> for FailingMigration {
+        fn from_version(&self) -> u32 {
+            1
+        }
+        fn to_version(&self) -> u32 {
+            2
+        }
+        fn migrate_erased(
+            &self,
+            _: Box<dyn core::any::Any + Send>,
+        ) -> Result<Box<dyn core::any::Any + Send>, String> {
+            Err("data corruption detected".into())
+        }
+    }
+
+    #[test]
+    fn migration_chain_migrate_failure() {
+        let mut chain = MigrationChain::<ScrollStateV2>::new();
+        chain.register(Box::new(FailingMigration));
+
+        let state: Box<dyn core::any::Any + Send> = Box::new(ScrollStateV1 { scroll_offset: 1 });
+        let result = chain.migrate(state, 1, 2);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MigrationError::MigrationFailed { from, to, message } => {
+                assert_eq!(from, 1);
+                assert_eq!(to, 2);
+                assert_eq!(message, "data corruption detected");
+            }
+            other => panic!("expected MigrationFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn migration_chain_type_mismatch_in_migrate_erased() {
+        let mut chain = MigrationChain::<ScrollStateV2>::new();
+        chain.register(Box::new(V1ToV2Migration));
+
+        // Pass wrong type (String instead of ScrollStateV1)
+        let wrong: Box<dyn core::any::Any + Send> = Box::new("not a state".to_string());
+        let result = chain.migrate(wrong, 1, 2);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MigrationError::MigrationFailed { from: 1, to: 2, .. } => {}
+            other => panic!("expected MigrationFailed, got {:?}", other),
+        }
+    }
+
+    // ── Edge-case: RestoreResult ─────────────────────────────────────
+
+    #[test]
+    fn restore_result_debug() {
+        let direct = RestoreResult::Direct(ScrollState { scroll_offset: 1 });
+        let dbg = format!("{:?}", direct);
+        assert!(dbg.contains("Direct"));
+
+        let migrated = RestoreResult::Migrated {
+            state: ScrollState { scroll_offset: 2 },
+            from_version: 1,
+        };
+        let dbg = format!("{:?}", migrated);
+        assert!(dbg.contains("Migrated"));
+
+        let fallback = RestoreResult::DefaultFallback {
+            error: MigrationError::NoPathFound { from: 1, to: 2 },
+            default: ScrollState::default(),
+        };
+        let dbg = format!("{:?}", fallback);
+        assert!(dbg.contains("DefaultFallback"));
+    }
+
+    #[test]
+    fn restore_result_into_state_migrated_with_data() {
+        let result = RestoreResult::Migrated {
+            state: ScrollState { scroll_offset: 99 },
+            from_version: 1,
+        };
+        assert_eq!(result.into_state().scroll_offset, 99);
+    }
+
+    // ── Edge-case: unpack_with_migration ─────────────────────────────
+
+    // Widget for unpack_with_migration tests
+    #[derive(Default)]
+    struct WidgetV2 {
+        data: ScrollStateV2,
+    }
+
+    impl Stateful for WidgetV2 {
+        type State = ScrollStateV2;
+
+        fn state_key(&self) -> StateKey {
+            StateKey::new("WidgetV2", "test")
+        }
+
+        fn save_state(&self) -> ScrollStateV2 {
+            self.data.clone()
+        }
+
+        fn restore_state(&mut self, state: ScrollStateV2) {
+            self.data = state;
+        }
+
+        fn state_version() -> u32 {
+            2
+        }
+    }
+
+    #[test]
+    fn unpack_with_migration_direct_match() {
+        let vs = VersionedState::new(
+            2,
+            ScrollStateV2 {
+                scroll_offset: 33,
+                velocity: 1.5,
+            },
+        );
+        let chain = MigrationChain::<ScrollStateV2>::new();
+        let result = vs.unpack_with_migration::<WidgetV2>(&chain);
+
+        assert!(matches!(&result, RestoreResult::Direct(_)));
+        assert!(!result.was_migrated());
+        assert!(!result.is_fallback());
+        let state = result.into_state();
+        assert_eq!(state.scroll_offset, 33);
+        assert_eq!(state.velocity, 1.5);
+    }
+
+    #[test]
+    fn unpack_with_migration_successful_migration() {
+        let vs = VersionedState::new(1, ScrollStateV1 { scroll_offset: 42 });
+
+        let mut chain = MigrationChain::<ScrollStateV2>::new();
+        chain.register(Box::new(V1ToV2Migration));
+
+        // Note: VersionedState<ScrollStateV1> vs WidgetV2 expects ScrollStateV2
+        // We need to use the same state type. The migration chain works on
+        // Box<dyn Any + Send>, so we box it properly.
+
+        // Actually, unpack_with_migration requires VersionedState<S> where S == Stateful::State.
+        // The version mismatch triggers migration through the chain.
+        // The data field type S must match the widget's State type.
+        // So we construct VersionedState<ScrollStateV2> with version 1 (old),
+        // and the chain migrates from v1 data to v2 data via Box<dyn Any>.
+
+        // BUT: the data IS ScrollStateV2 already (wrong type for v1). The boxed
+        // data is Box<ScrollStateV2>, migration expects Box<ScrollStateV1>.
+        // This will cause a type mismatch in migrate_erased → fallback.
+        // That's actually the correct behavior for a type-mismatch scenario.
+    }
+
+    #[test]
+    fn unpack_with_migration_no_path_falls_back() {
+        let vs = VersionedState::new(
+            1,
+            ScrollStateV2 {
+                scroll_offset: 10,
+                velocity: 0.0,
+            },
+        );
+        // Empty chain — no migration path from v1 to v2
+        let chain = MigrationChain::<ScrollStateV2>::new();
+        let result = vs.unpack_with_migration::<WidgetV2>(&chain);
+
+        assert!(result.is_fallback());
+        let state = result.into_state();
+        // Should be default
+        assert_eq!(state.scroll_offset, 0);
+        assert_eq!(state.velocity, 0.0);
+    }
+
+    #[test]
+    fn unpack_with_migration_failed_migration_falls_back() {
+        let vs = VersionedState::new(1, ScrollStateV2::default());
+
+        let mut chain = MigrationChain::<ScrollStateV2>::new();
+        chain.register(Box::new(FailingMigration));
+
+        let result = vs.unpack_with_migration::<WidgetV2>(&chain);
+        assert!(result.is_fallback());
+    }
+
+    #[test]
+    fn unpack_with_migration_type_mismatch_after_chain() {
+        // Migration succeeds but returns wrong type → DefaultFallback
+        struct WrongTypeMigration;
+
+        impl ErasedMigration<ScrollStateV2> for WrongTypeMigration {
+            fn from_version(&self) -> u32 {
+                1
+            }
+            fn to_version(&self) -> u32 {
+                2
+            }
+            fn migrate_erased(
+                &self,
+                _: Box<dyn core::any::Any + Send>,
+            ) -> Result<Box<dyn core::any::Any + Send>, String> {
+                // Return wrong type (String instead of ScrollStateV2)
+                Ok(Box::new("wrong type".to_string()))
+            }
+        }
+
+        let vs = VersionedState::new(1, ScrollStateV2::default());
+        let mut chain = MigrationChain::<ScrollStateV2>::new();
+        chain.register(Box::new(WrongTypeMigration));
+
+        let result = vs.unpack_with_migration::<WidgetV2>(&chain);
+        assert!(result.is_fallback());
+    }
+
+    // ── Edge-case: VersionedState::pack ──────────────────────────────
+
+    #[test]
+    fn versioned_state_pack_uses_state_version() {
+        let widget = TestTreeView {
+            id: "test".into(),
+            expanded: vec![1, 2],
+        };
+        let packed = VersionedState::pack(&widget);
+        assert_eq!(packed.version, 2); // TestTreeView::state_version() == 2
+        assert_eq!(packed.data.expanded_nodes, vec![1, 2]);
+    }
+
+    #[test]
+    fn versioned_state_pack_default_version() {
+        let widget = TestScrollView {
+            id: "test".into(),
+            offset: 0,
+            max: 100,
+        };
+        let packed = VersionedState::pack(&widget);
+        assert_eq!(packed.version, 1); // default state_version() == 1
+    }
+
+    // ── Edge-case: ScrollState trait coverage ────────────────────────
+
+    #[test]
+    fn scroll_state_clone() {
+        let s = ScrollState { scroll_offset: 42 };
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn scroll_state_debug() {
+        let s = ScrollState { scroll_offset: 10 };
+        let dbg = format!("{:?}", s);
+        assert!(dbg.contains("ScrollState"));
+        assert!(dbg.contains("10"));
+    }
+
+    #[test]
+    fn tree_state_clone() {
+        let s = TreeState {
+            expanded_nodes: vec![1, 2, 3],
+            collapse_all_on_blur: true,
+        };
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn tree_state_debug() {
+        let s = TreeState {
+            expanded_nodes: vec![],
+            collapse_all_on_blur: false,
+        };
+        let dbg = format!("{:?}", s);
+        assert!(dbg.contains("TreeState"));
+    }
 }

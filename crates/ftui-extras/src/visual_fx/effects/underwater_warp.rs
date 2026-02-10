@@ -61,6 +61,8 @@ pub struct UnderwaterWarpFx {
     inner: Box<dyn BackdropFx>,
     /// Scratch buffer for inner effect rendering.
     inner_buf: Vec<PackedRgba>,
+    /// Per-column y displacement scratch (grow-only; no per-frame alloc).
+    col_dy: Vec<f64>,
     /// Warp amplitude (in pixels). Default: 2.0.
     amplitude: f64,
     /// Warp frequency. Default: 0.3.
@@ -78,6 +80,7 @@ impl UnderwaterWarpFx {
             turbsin: build_turbsin(),
             inner,
             inner_buf: Vec::new(),
+            col_dy: Vec::new(),
             amplitude: 2.0,
             frequency: 0.3,
             last_width: 0,
@@ -91,6 +94,7 @@ impl UnderwaterWarpFx {
             turbsin: build_turbsin(),
             inner,
             inner_buf: Vec::new(),
+            col_dy: Vec::new(),
             amplitude,
             frequency,
             last_width: 0,
@@ -183,13 +187,15 @@ impl BackdropFx for UnderwaterWarpFx {
         let h_max = (h - 1) as f64;
 
         // Precompute per-column y-displacements (phase_y depends only on x).
-        // This avoids repeated turbsin_lookup in the inner loop.
-        let col_dy: Vec<f64> = (0..w)
-            .map(|x| {
-                let phase_y = (x as f64) * freq10 + time_y;
-                amp * self.turbsin_lookup(phase_y)
-            })
-            .collect();
+        // Reuse grow-only scratch to avoid per-frame allocation.
+        if self.col_dy.len() != w {
+            self.col_dy.resize(w, 0.0);
+        }
+        for x in 0..w {
+            let phase_y = (x as f64) * freq10 + time_y;
+            self.col_dy[x] = amp * self.turbsin_lookup(phase_y);
+        }
+        let col_dy = &self.col_dy;
 
         // Apply warp displacement
         for y in 0..h {
