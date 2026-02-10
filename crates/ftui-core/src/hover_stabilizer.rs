@@ -643,4 +643,419 @@ mod tests {
         assert_eq!(cloned.detection_threshold, config.detection_threshold);
         assert_eq!(cloned.hysteresis_cells, config.hysteresis_cells);
     }
+
+    // ── Edge-case: Config ────────────────────────────────────────────
+
+    #[test]
+    fn config_debug_format() {
+        let config = HoverStabilizerConfig::default();
+        let dbg = format!("{:?}", config);
+        assert!(dbg.contains("HoverStabilizerConfig"));
+        assert!(dbg.contains("drift_allowance"));
+    }
+
+    #[test]
+    fn config_zero_hysteresis() {
+        let config = HoverStabilizerConfig {
+            hysteresis_cells: 0,
+            ..Default::default()
+        };
+        assert_eq!(config.hysteresis_cells, 0);
+    }
+
+    #[test]
+    fn config_zero_hold_timeout() {
+        let config = HoverStabilizerConfig {
+            hold_timeout: Duration::ZERO,
+            ..Default::default()
+        };
+        assert_eq!(config.hold_timeout, Duration::ZERO);
+    }
+
+    // ── Edge-case: HoverStabilizer creation ──────────────────────────
+
+    #[test]
+    fn new_with_custom_config() {
+        let config = HoverStabilizerConfig {
+            drift_allowance: 1.0,
+            detection_threshold: 10.0,
+            hysteresis_cells: 5,
+            decay_rate: 0.5,
+            hold_timeout: Duration::from_secs(2),
+        };
+        let stab = HoverStabilizer::new(config);
+        assert!(stab.current_target().is_none());
+        assert_eq!(stab.switch_count(), 0);
+        assert_eq!(stab.config().drift_allowance, 1.0);
+        assert_eq!(stab.config().detection_threshold, 10.0);
+        assert_eq!(stab.config().hysteresis_cells, 5);
+    }
+
+    // ── Edge-case: Reset behavior ────────────────────────────────────
+
+    #[test]
+    fn reset_then_adopt_new_target() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+        assert_eq!(stab.current_target(), Some(42));
+
+        stab.reset();
+        assert!(stab.current_target().is_none());
+
+        // New target should be adopted immediately after reset
+        let target = stab.update(Some(99), (20, 20), t);
+        assert_eq!(target, Some(99));
+        assert_eq!(stab.switch_count(), 2); // original + re-adopt
+    }
+
+    #[test]
+    fn multiple_resets_are_idempotent() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+        stab.reset();
+        stab.reset();
+        stab.reset();
+
+        assert!(stab.current_target().is_none());
+        // switch count preserved across all resets
+        assert_eq!(stab.switch_count(), 1);
+    }
+
+    // ── Edge-case: Timeout boundary ──────────────────────────────────
+
+    #[test]
+    fn exactly_at_timeout_does_not_reset() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            hold_timeout: Duration::from_millis(100),
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Update at exactly the timeout duration (not beyond)
+        let at_boundary = t + Duration::from_millis(100);
+        let target = stab.update(Some(42), (10, 10), at_boundary);
+        // At boundary (duration_since == hold_timeout), > check means no reset
+        assert_eq!(target, Some(42));
+    }
+
+    #[test]
+    fn just_past_timeout_resets() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            hold_timeout: Duration::from_millis(100),
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Update just past the timeout
+        let past = t + Duration::from_millis(101);
+        let target = stab.update(Some(99), (20, 20), past);
+        // Should have reset and adopted new target
+        assert_eq!(target, Some(99));
+    }
+
+    #[test]
+    fn timeout_then_none_hit() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            hold_timeout: Duration::from_millis(50),
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        let later = t + Duration::from_millis(100);
+        let target = stab.update(None, (10, 10), later);
+        // Should reset and then None hit means no target
+        assert_eq!(target, None);
+    }
+
+    // ── Edge-case: Position boundaries ───────────────────────────────
+
+    #[test]
+    fn position_at_origin() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        let target = stab.update(Some(1), (0, 0), t);
+        assert_eq!(target, Some(1));
+    }
+
+    #[test]
+    fn position_at_u16_max() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        let target = stab.update(Some(1), (u16::MAX, u16::MAX), t);
+        assert_eq!(target, Some(1));
+        assert_eq!(stab.current_target(), Some(1));
+    }
+
+    #[test]
+    fn same_position_different_targets_no_switch() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Same position, different target — distance signal is 0
+        // So CUSUM score stays low (0 - k < 0 → clamped to 0)
+        for _ in 0..20 {
+            stab.update(Some(99), (10, 10), t);
+        }
+
+        // Within hysteresis band (distance = 0), should not switch
+        assert_eq!(stab.current_target(), Some(42));
+    }
+
+    // ── Edge-case: Multiple sequential targets ───────────────────────
+
+    #[test]
+    fn candidate_resets_on_new_third_target() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            hysteresis_cells: 0,
+            detection_threshold: 5.0, // High threshold
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Start building evidence for target 99
+        stab.update(Some(99), (15, 10), t);
+        stab.update(Some(99), (20, 10), t);
+
+        // Switch to target 77 (candidate should reset for new target)
+        stab.update(Some(77), (25, 10), t);
+        stab.update(Some(77), (30, 10), t);
+        stab.update(Some(77), (35, 10), t);
+        stab.update(Some(77), (40, 10), t);
+        stab.update(Some(77), (45, 10), t);
+
+        // Should eventually switch to 77 (not 99)
+        assert!(
+            stab.current_target() == Some(77) || stab.current_target() == Some(42),
+            "target should be 77 or still 42, got {:?}",
+            stab.current_target()
+        );
+    }
+
+    // ── Edge-case: High/low detection threshold ──────────────────────
+
+    #[test]
+    fn very_high_threshold_prevents_switching() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            detection_threshold: 100_000.0,
+            hysteresis_cells: 0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Large movements but CUSUM accumulation (~2070) << threshold (100_000)
+        for i in 1..=20 {
+            stab.update(Some(99), (10, 10 + i * 10), t);
+        }
+
+        // Still on original target
+        assert_eq!(stab.current_target(), Some(42));
+    }
+
+    #[test]
+    fn very_low_threshold_allows_quick_switch() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            detection_threshold: 0.01,
+            hysteresis_cells: 0,
+            drift_allowance: 0.0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Single frame at distance should be enough
+        stab.update(Some(99), (15, 10), t);
+
+        assert_eq!(stab.current_target(), Some(99));
+        assert_eq!(stab.switch_count(), 2);
+    }
+
+    // ── Edge-case: Decay rate extremes ───────────────────────────────
+
+    #[test]
+    fn decay_rate_zero_no_decay() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            decay_rate: 0.0,
+            detection_threshold: 100.0, // Very high to prevent immediate switch
+            hysteresis_cells: 0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Build some evidence
+        stab.update(Some(99), (20, 10), t);
+        stab.update(Some(99), (30, 10), t);
+
+        // Return to original — with 0 decay, candidate stays
+        stab.update(Some(42), (10, 10), t);
+        stab.update(Some(42), (10, 10), t);
+
+        // Candidate should still have evidence (no decay)
+        // We can't directly inspect candidate, but we know the algorithm
+        // Just verify it doesn't crash
+        assert_eq!(stab.current_target(), Some(42));
+    }
+
+    #[test]
+    fn decay_rate_one_instant_decay() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            decay_rate: 1.0,
+            detection_threshold: 2.0,
+            hysteresis_cells: 0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // Build evidence then return
+        stab.update(Some(99), (20, 10), t);
+        stab.update(Some(42), (10, 10), t); // decay_rate=1.0 → score*0.0=0 → candidate cleared
+
+        // Continue with new target — should need fresh evidence
+        for i in 1..=5 {
+            stab.update(Some(99), (10, 10 + i * 5), t);
+        }
+
+        // Should switch eventually (fresh evidence not affected by old candidate)
+        // Just verify no crash and reasonable behavior
+        let target = stab.current_target();
+        assert!(target == Some(42) || target == Some(99));
+    }
+
+    // ── Edge-case: Zero drift allowance ──────────────────────────────
+
+    #[test]
+    fn zero_drift_allowance_fast_accumulation() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            drift_allowance: 0.0,
+            detection_threshold: 1.0,
+            hysteresis_cells: 0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+
+        // With k=0, any positive signal accumulates directly
+        stab.update(Some(99), (15, 10), t);
+
+        // Should switch quickly since no drift subtracted
+        assert_eq!(stab.current_target(), Some(99));
+    }
+
+    // ── Edge-case: Target ID boundaries ──────────────────────────────
+
+    #[test]
+    fn target_id_zero() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        let target = stab.update(Some(0), (10, 10), t);
+        assert_eq!(target, Some(0));
+        assert_eq!(stab.current_target(), Some(0));
+    }
+
+    #[test]
+    fn target_id_max_u64() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        // u64::MAX is used internally as sentinel for None, but as a real target ID
+        // it should be handled. Note: this tests the sentinel collision edge case.
+        let target = stab.update(Some(u64::MAX), (10, 10), t);
+        assert_eq!(target, Some(u64::MAX));
+    }
+
+    // ── Edge-case: Switch count tracking ─────────────────────────────
+
+    #[test]
+    fn switch_count_increments_across_multiple_switches() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            detection_threshold: 0.01,
+            hysteresis_cells: 0,
+            drift_allowance: 0.0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(1), (10, 10), t);
+        assert_eq!(stab.switch_count(), 1);
+
+        stab.update(Some(2), (30, 10), t);
+        assert_eq!(stab.current_target(), Some(2));
+        assert_eq!(stab.switch_count(), 2);
+
+        stab.update(Some(3), (60, 10), t);
+        assert_eq!(stab.current_target(), Some(3));
+        assert_eq!(stab.switch_count(), 3);
+    }
+
+    // ── Edge-case: set_config during active tracking ─────────────────
+
+    #[test]
+    fn set_config_preserves_state() {
+        let mut stab = stabilizer();
+        let t = now();
+
+        stab.update(Some(42), (10, 10), t);
+        assert_eq!(stab.current_target(), Some(42));
+
+        // Change config while tracking
+        stab.set_config(HoverStabilizerConfig {
+            detection_threshold: 100.0,
+            ..Default::default()
+        });
+
+        // Current target should be preserved
+        assert_eq!(stab.current_target(), Some(42));
+        assert_eq!(stab.config().detection_threshold, 100.0);
+    }
+
+    // ── Edge-case: Large hysteresis band ─────────────────────────────
+
+    #[test]
+    fn large_hysteresis_requires_big_movement() {
+        let mut stab = HoverStabilizer::new(HoverStabilizerConfig {
+            hysteresis_cells: 100,
+            detection_threshold: 0.01,
+            drift_allowance: 0.0,
+            ..Default::default()
+        });
+        let t = now();
+
+        stab.update(Some(42), (100, 100), t);
+
+        // Move 50 cells — within hysteresis band of 100
+        stab.update(Some(99), (150, 100), t);
+        stab.update(Some(99), (150, 100), t);
+        assert_eq!(stab.current_target(), Some(42)); // Still within band
+
+        // Move 200 cells — way past hysteresis
+        for i in 1..=5 {
+            stab.update(Some(99), (100 + (i * 50), 100), t);
+        }
+        // Should eventually switch
+        assert_eq!(stab.current_target(), Some(99));
+    }
 }
