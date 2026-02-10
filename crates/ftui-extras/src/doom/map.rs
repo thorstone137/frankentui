@@ -676,4 +676,296 @@ mod tests {
         };
         assert!(map.player_start().is_none());
     }
+
+    // --- Additional edge case tests (bd-152kz) ---
+
+    #[test]
+    fn player_start_empty_things() {
+        let map = DoomMap {
+            name: "TEST".into(),
+            vertices: vec![],
+            linedefs: vec![],
+            sidedefs: vec![],
+            sectors: vec![],
+            segs: vec![],
+            subsectors: vec![],
+            nodes: vec![],
+            things: vec![],
+        };
+        assert!(map.player_start().is_none());
+    }
+
+    #[test]
+    fn player_start_picks_first() {
+        let map = DoomMap {
+            name: "TEST".into(),
+            vertices: vec![],
+            linedefs: vec![],
+            sidedefs: vec![],
+            sectors: vec![],
+            segs: vec![],
+            subsectors: vec![],
+            nodes: vec![],
+            things: vec![
+                Thing {
+                    x: 10.0,
+                    y: 20.0,
+                    angle: 0.0,
+                    thing_type: THING_PLAYER1,
+                    flags: 0,
+                },
+                Thing {
+                    x: 99.0,
+                    y: 99.0,
+                    angle: 3.0,
+                    thing_type: THING_PLAYER1,
+                    flags: 0,
+                },
+            ],
+        };
+        let (x, y, _) = map.player_start().unwrap();
+        assert!(
+            (x - 10.0).abs() < f32::EPSILON,
+            "should pick first player start"
+        );
+        assert!((y - 20.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn linedef_back_sector_none() {
+        let sidedefs: Vec<SideDef> = vec![];
+        let ld = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            front_sidedef: None,
+            back_sidedef: None,
+        };
+        assert_eq!(ld.back_sector(&sidedefs), None);
+    }
+
+    #[test]
+    fn linedef_both_sidedefs() {
+        let sidedefs = vec![
+            SideDef {
+                x_offset: 0.0,
+                y_offset: 0.0,
+                upper_texture: String::new(),
+                lower_texture: String::new(),
+                middle_texture: String::new(),
+                sector: 2,
+            },
+            SideDef {
+                x_offset: 0.0,
+                y_offset: 0.0,
+                upper_texture: String::new(),
+                lower_texture: String::new(),
+                middle_texture: String::new(),
+                sector: 5,
+            },
+        ];
+        let ld = LineDef {
+            v1: 0,
+            v2: 1,
+            flags: ML_TWOSIDED,
+            special: 0,
+            tag: 0,
+            front_sidedef: Some(0),
+            back_sidedef: Some(1),
+        };
+        assert_eq!(ld.front_sector(&sidedefs), Some(2));
+        assert_eq!(ld.back_sector(&sidedefs), Some(5));
+    }
+
+    #[test]
+    fn parse_child_max_subsector() {
+        // NF_SUBSECTOR | 0x7FFF = 0xFFFF
+        let NodeChild::SubSector(s) = parse_child(0xFFFF) else {
+            unreachable!("Expected SubSector variant");
+        };
+        assert_eq!(s, 0x7FFF);
+    }
+
+    #[test]
+    fn parse_child_max_node() {
+        // Just below NF_SUBSECTOR threshold
+        let NodeChild::Node(n) = parse_child(0x7FFF) else {
+            unreachable!("Expected Node variant");
+        };
+        assert_eq!(n, 0x7FFF);
+    }
+
+    #[test]
+    fn sector_is_sky_case_sensitive() {
+        let s = Sector {
+            floor_height: 0.0,
+            ceiling_height: 128.0,
+            floor_texture: String::new(),
+            ceiling_texture: "f_sky1".into(),
+            light_level: 200,
+            special: 0,
+            tag: 0,
+        };
+        assert!(!s.is_sky_ceiling(), "should be case-sensitive");
+    }
+
+    #[test]
+    fn node_child_debug() {
+        let node = NodeChild::Node(42);
+        let ss = NodeChild::SubSector(7);
+        let nd = format!("{node:?}");
+        let sd = format!("{ss:?}");
+        assert!(nd.contains("Node"));
+        assert!(nd.contains("42"));
+        assert!(sd.contains("SubSector"));
+        assert!(sd.contains("7"));
+    }
+
+    #[test]
+    fn node_fields() {
+        let n = Node {
+            x: 10.0,
+            y: 20.0,
+            dx: 1.0,
+            dy: 0.0,
+            bbox_right: [30.0, 10.0, 10.0, 30.0],
+            bbox_left: [30.0, 10.0, -10.0, 10.0],
+            right_child: NodeChild::SubSector(0),
+            left_child: NodeChild::Node(1),
+        };
+        assert!((n.x - 10.0).abs() < f32::EPSILON);
+        assert!((n.dy - 0.0).abs() < f32::EPSILON);
+        assert!(matches!(n.right_child, NodeChild::SubSector(0)));
+        assert!(matches!(n.left_child, NodeChild::Node(1)));
+    }
+
+    #[test]
+    fn sidedef_fields() {
+        let s = SideDef {
+            x_offset: 16.0,
+            y_offset: -8.0,
+            upper_texture: "UPPER".into(),
+            lower_texture: "LOWER".into(),
+            middle_texture: "MID".into(),
+            sector: 3,
+        };
+        assert!((s.x_offset - 16.0).abs() < f32::EPSILON);
+        assert!((s.y_offset + 8.0).abs() < f32::EPSILON);
+        assert_eq!(s.upper_texture, "UPPER");
+        assert_eq!(s.lower_texture, "LOWER");
+        assert_eq!(s.middle_texture, "MID");
+        assert_eq!(s.sector, 3);
+    }
+
+    #[test]
+    fn doom_map_clone() {
+        let map = DoomMap {
+            name: "E1M1".into(),
+            vertices: vec![Vertex { x: 1.0, y: 2.0 }],
+            linedefs: vec![],
+            sidedefs: vec![],
+            sectors: vec![],
+            segs: vec![],
+            subsectors: vec![],
+            nodes: vec![],
+            things: vec![],
+        };
+        let cloned = map.clone();
+        assert_eq!(cloned.name, "E1M1");
+        assert_eq!(cloned.vertices.len(), 1);
+    }
+
+    #[test]
+    fn doom_map_debug() {
+        let map = DoomMap {
+            name: "MAP01".into(),
+            vertices: vec![],
+            linedefs: vec![],
+            sidedefs: vec![],
+            sectors: vec![],
+            segs: vec![],
+            subsectors: vec![],
+            nodes: vec![],
+            things: vec![],
+        };
+        let dbg = format!("{map:?}");
+        assert!(dbg.contains("DoomMap"));
+        assert!(dbg.contains("MAP01"));
+    }
+
+    #[test]
+    fn doom_map_name_uppercase() {
+        // The load function uppercases the name - verify the field stores it
+        let map = DoomMap {
+            name: "e1m1".to_uppercase(),
+            vertices: vec![],
+            linedefs: vec![],
+            sidedefs: vec![],
+            sectors: vec![],
+            segs: vec![],
+            subsectors: vec![],
+            nodes: vec![],
+            things: vec![],
+        };
+        assert_eq!(map.name, "E1M1");
+    }
+
+    #[test]
+    fn vertex_copy_semantics() {
+        let v1 = Vertex { x: 1.0, y: 2.0 };
+        let v2 = v1; // Copy
+        assert!((v1.x - v2.x).abs() < f32::EPSILON);
+        assert!((v1.y - v2.y).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn seg_copy_semantics() {
+        let s1 = Seg {
+            v1: 0,
+            v2: 1,
+            angle: 0.5,
+            linedef: 3,
+            direction: 1,
+            offset: 2.0,
+        };
+        let s2 = s1; // Copy
+        assert_eq!(s1.v1, s2.v1);
+        assert_eq!(s1.linedef, s2.linedef);
+    }
+
+    #[test]
+    fn thing_copy_semantics() {
+        let t1 = Thing {
+            x: 1.0,
+            y: 2.0,
+            angle: 3.0,
+            thing_type: 42,
+            flags: 7,
+        };
+        let t2 = t1; // Copy
+        assert_eq!(t1.thing_type, t2.thing_type);
+        assert_eq!(t1.flags, t2.flags);
+    }
+
+    #[test]
+    fn sector_clone_and_fields() {
+        let s = Sector {
+            floor_height: -16.0,
+            ceiling_height: 256.0,
+            floor_texture: "FLOOR4_8".into(),
+            ceiling_texture: "CEIL3_5".into(),
+            light_level: 160,
+            special: 9,
+            tag: 42,
+        };
+        let cloned = s.clone();
+        assert!((cloned.floor_height + 16.0).abs() < f32::EPSILON);
+        assert!((cloned.ceiling_height - 256.0).abs() < f32::EPSILON);
+        assert_eq!(cloned.floor_texture, "FLOOR4_8");
+        assert_eq!(cloned.light_level, 160);
+        assert_eq!(cloned.special, 9);
+        assert_eq!(cloned.tag, 42);
+    }
 }
