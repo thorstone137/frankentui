@@ -1866,8 +1866,16 @@ mod tests {
     fn hsv_secondary_colors() {
         // Yellow = 60 degrees
         let yellow = PlasmaPalette::hsv_to_rgb(60.0, 1.0, 1.0);
-        assert!(yellow.r() > 200, "Yellow should have high R: {}", yellow.r());
-        assert!(yellow.g() > 200, "Yellow should have high G: {}", yellow.g());
+        assert!(
+            yellow.r() > 200,
+            "Yellow should have high R: {}",
+            yellow.r()
+        );
+        assert!(
+            yellow.g() > 200,
+            "Yellow should have high G: {}",
+            yellow.g()
+        );
         assert!(yellow.b() < 30, "Yellow should have low B: {}", yellow.b());
 
         // Cyan = 180 degrees
@@ -1978,7 +1986,10 @@ mod tests {
         fx.render(ctx2, &mut out2);
 
         // Outputs should differ (different time) but both should be valid
-        assert_ne!(out1, out2, "Different times should produce different output");
+        assert_ne!(
+            out1, out2,
+            "Different times should produce different output"
+        );
 
         // Re-render at original time to verify scratch wasn't corrupted
         let mut out3 = vec![PackedRgba::TRANSPARENT; ctx.len()];
@@ -2202,21 +2213,9 @@ mod tests {
         let a = PackedRgba::rgb(0, 0, 0);
         let b = PackedRgba::rgb(200, 100, 50);
         let mid = PlasmaPalette::lerp_color(a, b, 0.5);
-        assert!(
-            (mid.r() as i32 - 100).abs() <= 1,
-            "R midpoint: {}",
-            mid.r()
-        );
-        assert!(
-            (mid.g() as i32 - 50).abs() <= 1,
-            "G midpoint: {}",
-            mid.g()
-        );
-        assert!(
-            (mid.b() as i32 - 25).abs() <= 1,
-            "B midpoint: {}",
-            mid.b()
-        );
+        assert!((mid.r() as i32 - 100).abs() <= 1, "R midpoint: {}", mid.r());
+        assert!((mid.g() as i32 - 50).abs() <= 1, "G midpoint: {}", mid.g());
+        assert!((mid.b() as i32 - 25).abs() <= 1, "B midpoint: {}", mid.b());
     }
 
     #[test]
@@ -2433,8 +2432,7 @@ mod tests {
                 let idx = dy as usize * ctx.width as usize + dx as usize;
                 let nx = dx as f64 / w;
                 let ny = dy as f64 / h;
-                let expected =
-                    PlasmaPalette::ocean(plasma_wave_low(nx, ny, time).clamp(0.0, 1.0));
+                let expected = PlasmaPalette::ocean(plasma_wave_low(nx, ny, time).clamp(0.0, 1.0));
 
                 assert_eq!(
                     out[idx], expected,

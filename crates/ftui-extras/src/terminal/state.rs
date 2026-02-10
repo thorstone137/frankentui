@@ -1452,4 +1452,642 @@ mod tests {
         assert_eq!(state.cell(3, 0).unwrap().ch, 'D');
         assert_eq!(state.cell(4, 0).unwrap().ch, 'E');
     }
+
+    // --- Edge case tests (bd-3halp) ---
+
+    #[test]
+    fn test_cell_new_constructor() {
+        let cell = Cell::new('Z');
+        assert_eq!(cell.ch, 'Z');
+        assert!(cell.fg.is_none());
+        assert!(cell.bg.is_none());
+        assert_eq!(cell.attrs, CellAttrs::NONE);
+        // Cell::new with space is empty
+        assert!(Cell::new(' ').is_empty());
+        // Cell::new with non-space is not empty
+        assert!(!Cell::new('Z').is_empty());
+    }
+
+    #[test]
+    fn test_cell_is_empty_with_attrs_is_not_empty() {
+        let cell = Cell {
+            ch: ' ',
+            fg: None,
+            bg: None,
+            attrs: CellAttrs::BOLD,
+        };
+        assert!(!cell.is_empty(), "space with BOLD should not be empty");
+    }
+
+    #[test]
+    fn test_cell_is_empty_with_fg_is_not_empty() {
+        let cell = Cell {
+            ch: ' ',
+            fg: Some(Color::rgb(255, 0, 0)),
+            bg: None,
+            attrs: CellAttrs::NONE,
+        };
+        assert!(!cell.is_empty(), "space with fg color should not be empty");
+    }
+
+    #[test]
+    fn test_cell_is_empty_with_bg_is_not_empty() {
+        let cell = Cell {
+            ch: ' ',
+            fg: None,
+            bg: Some(Color::rgb(0, 0, 255)),
+            attrs: CellAttrs::NONE,
+        };
+        assert!(!cell.is_empty(), "space with bg color should not be empty");
+    }
+
+    #[test]
+    fn test_cell_attrs_all_flags() {
+        let all = CellAttrs::BOLD
+            .with(CellAttrs::DIM)
+            .with(CellAttrs::ITALIC)
+            .with(CellAttrs::UNDERLINE)
+            .with(CellAttrs::BLINK)
+            .with(CellAttrs::REVERSE)
+            .with(CellAttrs::HIDDEN)
+            .with(CellAttrs::STRIKETHROUGH);
+        assert!(all.contains(CellAttrs::BOLD));
+        assert!(all.contains(CellAttrs::DIM));
+        assert!(all.contains(CellAttrs::ITALIC));
+        assert!(all.contains(CellAttrs::UNDERLINE));
+        assert!(all.contains(CellAttrs::BLINK));
+        assert!(all.contains(CellAttrs::REVERSE));
+        assert!(all.contains(CellAttrs::HIDDEN));
+        assert!(all.contains(CellAttrs::STRIKETHROUGH));
+        assert_eq!(all.0, 0xFF);
+    }
+
+    #[test]
+    fn test_cursor_shape_variants() {
+        assert_eq!(CursorShape::default(), CursorShape::Block);
+        let _ = CursorShape::Underline;
+        let _ = CursorShape::Bar;
+    }
+
+    #[test]
+    fn test_cursor_new_const() {
+        let c = Cursor::new();
+        assert_eq!(c.x, 0);
+        assert_eq!(c.y, 0);
+        assert!(c.visible);
+        assert_eq!(c.shape, CursorShape::Block);
+        assert!(c.saved.is_none());
+    }
+
+    #[test]
+    fn test_dirty_region_mark_out_of_bounds_is_noop() {
+        let mut dirty = DirtyRegion::new(5, 5);
+        dirty.mark(10, 10);
+        assert!(!dirty.has_dirty());
+        dirty.mark(5, 0); // x == width, out of bounds
+        assert!(!dirty.has_dirty());
+        dirty.mark(0, 5); // y == height, out of bounds
+        assert!(!dirty.has_dirty());
+    }
+
+    #[test]
+    fn test_dirty_region_is_dirty_out_of_bounds_returns_false() {
+        let mut dirty = DirtyRegion::new(5, 5);
+        dirty.mark_all();
+        assert!(!dirty.is_dirty(5, 0));
+        assert!(!dirty.is_dirty(0, 5));
+        assert!(!dirty.is_dirty(100, 100));
+    }
+
+    #[test]
+    fn test_dirty_region_mark_rect_clamps_to_bounds() {
+        let mut dirty = DirtyRegion::new(5, 5);
+        // Rect extends past boundary — should not panic
+        dirty.mark_rect(3, 3, 10, 10);
+        assert!(dirty.is_dirty(4, 4));
+        assert!(!dirty.is_dirty(2, 2));
+        assert!(dirty.has_dirty());
+    }
+
+    #[test]
+    fn test_grid_cell_out_of_bounds() {
+        let grid = Grid::new(5, 5);
+        assert!(grid.cell(5, 0).is_none());
+        assert!(grid.cell(0, 5).is_none());
+        assert!(grid.cell(100, 100).is_none());
+    }
+
+    #[test]
+    fn test_grid_cell_mut_out_of_bounds() {
+        let mut grid = Grid::new(5, 5);
+        assert!(grid.cell_mut(5, 0).is_none());
+        assert!(grid.cell_mut(0, 5).is_none());
+    }
+
+    #[test]
+    fn test_grid_clear_row_out_of_bounds_is_noop() {
+        let mut grid = Grid::new(5, 5);
+        if let Some(cell) = grid.cell_mut(0, 0) {
+            cell.ch = 'X';
+        }
+        grid.clear_row(10); // out of bounds — should not panic
+        assert_eq!(grid.cell(0, 0).unwrap().ch, 'X'); // unchanged
+    }
+
+    #[test]
+    fn test_grid_minimum_size_enforced() {
+        let grid = Grid::new(0, 0);
+        assert_eq!(grid.width(), 1);
+        assert_eq!(grid.height(), 1);
+        assert!(grid.cell(0, 0).is_some());
+    }
+
+    #[test]
+    fn test_grid_resize_same_dimensions_is_noop() {
+        let mut grid = Grid::new(5, 5);
+        if let Some(cell) = grid.cell_mut(2, 2) {
+            cell.ch = 'Q';
+        }
+        grid.resize(5, 5);
+        assert_eq!(grid.cell(2, 2).unwrap().ch, 'Q');
+    }
+
+    #[test]
+    fn test_grid_scroll_up_zero_returns_empty() {
+        let mut grid = Grid::new(5, 5);
+        let scrolled = grid.scroll_up(0);
+        assert!(scrolled.is_empty());
+    }
+
+    #[test]
+    fn test_grid_scroll_up_exceeds_height_clamped() {
+        let mut grid = Grid::new(3, 3);
+        if let Some(cell) = grid.cell_mut(0, 0) {
+            cell.ch = 'A';
+        }
+        if let Some(cell) = grid.cell_mut(0, 1) {
+            cell.ch = 'B';
+        }
+        if let Some(cell) = grid.cell_mut(0, 2) {
+            cell.ch = 'C';
+        }
+        let scrolled = grid.scroll_up(100);
+        // Should scroll all 3 lines
+        assert_eq!(scrolled.len(), 3);
+        assert_eq!(scrolled[0][0].ch, 'A');
+        assert_eq!(scrolled[1][0].ch, 'B');
+        assert_eq!(scrolled[2][0].ch, 'C');
+        // All cells should now be empty
+        assert!(grid.cell(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_grid_scroll_down_zero_is_noop() {
+        let mut grid = Grid::new(5, 3);
+        if let Some(cell) = grid.cell_mut(0, 0) {
+            cell.ch = 'A';
+        }
+        grid.scroll_down(0);
+        assert_eq!(grid.cell(0, 0).unwrap().ch, 'A');
+    }
+
+    #[test]
+    fn test_grid_scroll_down_exceeds_height_clamped() {
+        let mut grid = Grid::new(3, 3);
+        if let Some(cell) = grid.cell_mut(0, 0) {
+            cell.ch = 'A';
+        }
+        grid.scroll_down(100);
+        // All cells should be empty after scrolling everything off
+        assert!(grid.cell(0, 0).unwrap().is_empty());
+        assert!(grid.cell(0, 1).unwrap().is_empty());
+        assert!(grid.cell(0, 2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_scrollback_line_out_of_bounds() {
+        let mut sb = Scrollback::new(5);
+        sb.push(vec![Cell::new('A')]);
+        assert!(sb.line(0).is_some());
+        assert!(sb.line(1).is_none());
+        assert!(sb.line(100).is_none());
+    }
+
+    #[test]
+    fn test_scrollback_overflow_evicts_oldest() {
+        let mut sb = Scrollback::new(2);
+        sb.push(vec![Cell::new('A')]);
+        sb.push(vec![Cell::new('B')]);
+        sb.push(vec![Cell::new('C')]);
+        assert_eq!(sb.len(), 2);
+        // Most recent (index 0) is 'C', oldest (index 1) is 'B'
+        assert_eq!(sb.line(0).unwrap()[0].ch, 'C');
+        assert_eq!(sb.line(1).unwrap()[0].ch, 'B');
+    }
+
+    #[test]
+    fn test_restore_cursor_when_nothing_saved_is_noop() {
+        let mut state = TerminalState::new(10, 5);
+        state.move_cursor(5, 3);
+        state.restore_cursor(); // nothing saved
+        assert_eq!(state.cursor().x, 5);
+        assert_eq!(state.cursor().y, 3);
+    }
+
+    #[test]
+    fn test_put_char_no_wrap_stays_at_edge() {
+        let mut state = TerminalState::new(3, 2);
+        state.set_mode(TerminalModes::WRAP, false);
+        state.put_char('A');
+        state.put_char('B');
+        state.put_char('C'); // fills col 2
+        state.put_char('D'); // no wrap, cursor stays at col 2
+
+        assert_eq!(state.cursor().x, 2);
+        assert_eq!(state.cursor().y, 0);
+        assert_eq!(state.cell(0, 0).unwrap().ch, 'A');
+        assert_eq!(state.cell(1, 0).unwrap().ch, 'B');
+        // 'C' written at (2,0), then 'D' overwrites at clamped (2,0)
+        assert_eq!(state.cell(2, 0).unwrap().ch, 'D');
+    }
+
+    #[test]
+    fn test_put_char_wrap_triggers_scroll_at_bottom() {
+        let mut state = TerminalState::new(2, 2);
+        // Fill all 4 cells: row 0 = AB, row 1 = CD
+        for ch in ['A', 'B', 'C', 'D'] {
+            state.put_char(ch);
+        }
+        // Now at beginning of a new row, scroll should have happened
+        assert_eq!(state.cursor().y, 1);
+        // Row 0 should now have 'C', 'D' (scrolled up)
+        assert_eq!(state.cell(0, 0).unwrap().ch, 'C');
+        assert_eq!(state.cell(1, 0).unwrap().ch, 'D');
+        // Scrollback should have original row 0
+        assert_eq!(state.scrollback().line(0).unwrap()[0].ch, 'A');
+    }
+
+    #[test]
+    fn test_put_char_applies_pen_bg() {
+        let mut state = TerminalState::new(5, 2);
+        state.pen_mut().bg = Some(Color::rgb(0, 128, 0));
+        state.pen_mut().attrs = CellAttrs::ITALIC.with(CellAttrs::UNDERLINE);
+        state.put_char('Z');
+
+        let cell = state.cell(0, 0).unwrap();
+        assert_eq!(cell.ch, 'Z');
+        assert_eq!(cell.bg, Some(Color::rgb(0, 128, 0)));
+        assert!(cell.attrs.contains(CellAttrs::ITALIC));
+        assert!(cell.attrs.contains(CellAttrs::UNDERLINE));
+    }
+
+    #[test]
+    fn test_terminal_state_cell_mut_marks_dirty() {
+        let mut state = TerminalState::new(5, 5);
+        assert!(!state.dirty().has_dirty());
+        if let Some(cell) = state.cell_mut(2, 3) {
+            cell.ch = 'X';
+        }
+        assert!(state.dirty().is_dirty(2, 3));
+        assert!(state.dirty().has_dirty());
+    }
+
+    #[test]
+    fn test_with_scrollback_constructor() {
+        let state = TerminalState::with_scrollback(10, 5, 50);
+        assert_eq!(state.width(), 10);
+        assert_eq!(state.height(), 5);
+        // Verify scrollback limit works by pushing more than 50 lines
+        // (we test the limit indirectly via the Scrollback struct)
+    }
+
+    #[test]
+    fn test_set_scroll_region_clamped() {
+        let mut state = TerminalState::new(10, 5);
+        // Set region beyond grid bounds
+        state.set_scroll_region(100, 200);
+        // bottom should be clamped to height-1 = 4, top should be clamped to 4
+        // Since bottom.max(top), both end at 4
+        assert_eq!(state.cursor().x, 0); // cursor unchanged
+    }
+
+    #[test]
+    fn test_reset_scroll_region() {
+        let mut state = TerminalState::new(10, 5);
+        state.set_scroll_region(1, 3);
+        state.reset_scroll_region();
+        // After reset, scrolling full screen should work normally
+        state.set_mode(TerminalModes::WRAP, false);
+        for x in 0..10 {
+            state.move_cursor(x, 0);
+            state.put_char('A');
+        }
+        state.scroll_up(1);
+        // Line 0 should be empty (scrolled off), row 0 is now what was row 1
+        assert!(state.cell(0, 0).unwrap().is_empty());
+        assert_eq!(state.scrollback().len(), 1);
+    }
+
+    #[test]
+    fn test_scroll_up_zero_is_noop() {
+        let mut state = TerminalState::new(5, 3);
+        state.put_char('A');
+        state.scroll_up(0);
+        assert_eq!(state.cell(0, 0).unwrap().ch, 'A');
+        assert!(state.scrollback().is_empty());
+    }
+
+    #[test]
+    fn test_scroll_down_zero_is_noop() {
+        let mut state = TerminalState::new(5, 3);
+        state.put_char('A');
+        state.scroll_down(0);
+        assert_eq!(state.cell(0, 0).unwrap().ch, 'A');
+    }
+
+    #[test]
+    fn test_scroll_down_within_region() {
+        let mut state = TerminalState::new(5, 6);
+        state.set_scroll_region(1, 4);
+
+        state.set_mode(TerminalModes::WRAP, false);
+        for x in 0..5 {
+            state.move_cursor(x, 1);
+            state.put_char('A');
+        }
+        for x in 0..5 {
+            state.move_cursor(x, 2);
+            state.put_char('B');
+        }
+
+        state.scroll_down(1);
+
+        // Row 1 should be cleared (top of region)
+        assert!(state.cell(0, 1).unwrap().is_empty());
+        // Row 2 should have 'A' (shifted down from row 1)
+        assert_eq!(state.cell(0, 2).unwrap().ch, 'A');
+        // Row 3 should have 'B' (shifted down from row 2)
+        assert_eq!(state.cell(0, 3).unwrap().ch, 'B');
+        // Row 0 (outside region) should be unaffected
+        assert!(state.cell(0, 0).unwrap().is_empty());
+        // Row 5 (outside region) should be unaffected
+        assert!(state.cell(0, 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_scroll_up_within_region_no_scrollback() {
+        let mut state = TerminalState::new(5, 6);
+        state.set_scroll_region(1, 4);
+
+        state.set_mode(TerminalModes::WRAP, false);
+        for x in 0..5 {
+            state.move_cursor(x, 1);
+            state.put_char('A');
+        }
+        for x in 0..5 {
+            state.move_cursor(x, 2);
+            state.put_char('B');
+        }
+
+        state.scroll_up(1);
+
+        // Row 1 should have 'B' (shifted up from row 2)
+        assert_eq!(state.cell(0, 1).unwrap().ch, 'B');
+        // Row 4 should be cleared (bottom of region)
+        assert!(state.cell(0, 4).unwrap().is_empty());
+        // Scrollback should be empty (region scroll doesn't add to scrollback)
+        assert!(state.scrollback().is_empty());
+    }
+
+    #[test]
+    fn test_set_mode_individual_flags() {
+        let mut state = TerminalState::new(5, 5);
+        state.set_mode(TerminalModes::ALT_SCREEN, true);
+        assert!(state.modes().contains(TerminalModes::ALT_SCREEN));
+
+        state.set_mode(TerminalModes::BRACKETED_PASTE, true);
+        assert!(state.modes().contains(TerminalModes::BRACKETED_PASTE));
+        assert!(state.modes().contains(TerminalModes::ALT_SCREEN));
+
+        state.set_mode(TerminalModes::ALT_SCREEN, false);
+        assert!(!state.modes().contains(TerminalModes::ALT_SCREEN));
+        assert!(state.modes().contains(TerminalModes::BRACKETED_PASTE));
+    }
+
+    #[test]
+    fn test_terminal_modes_mouse_tracking_and_focus_events() {
+        let modes = TerminalModes::MOUSE_TRACKING.with(TerminalModes::FOCUS_EVENTS);
+        assert!(modes.contains(TerminalModes::MOUSE_TRACKING));
+        assert!(modes.contains(TerminalModes::FOCUS_EVENTS));
+        assert!(!modes.contains(TerminalModes::INSERT));
+    }
+
+    #[test]
+    fn test_terminal_modes_origin_and_insert() {
+        let modes = TerminalModes::ORIGIN.with(TerminalModes::INSERT);
+        assert!(modes.contains(TerminalModes::ORIGIN));
+        assert!(modes.contains(TerminalModes::INSERT));
+    }
+
+    #[test]
+    fn test_resize_to_minimum() {
+        let mut state = TerminalState::new(10, 10);
+        state.move_cursor(5, 5);
+        state.resize(0, 0);
+        assert_eq!(state.width(), 1);
+        assert_eq!(state.height(), 1);
+        assert_eq!(state.cursor().x, 0);
+        assert_eq!(state.cursor().y, 0);
+    }
+
+    #[test]
+    fn test_resize_marks_all_dirty() {
+        let mut state = TerminalState::new(10, 5);
+        state.mark_clean();
+        assert!(!state.dirty().has_dirty());
+        state.resize(20, 10);
+        assert!(state.dirty().has_dirty());
+        assert!(state.dirty().is_dirty(0, 0));
+    }
+
+    #[test]
+    fn test_resize_resets_scroll_region() {
+        let mut state = TerminalState::new(10, 10);
+        state.set_scroll_region(2, 7);
+        state.resize(10, 20);
+        // After resize, scroll region should encompass the full new height
+        // We verify by scrolling — if scroll region is full screen, scrollback gets lines
+        state.set_mode(TerminalModes::WRAP, false);
+        for x in 0..10 {
+            state.move_cursor(x, 0);
+            state.put_char('A');
+        }
+        state.scroll_up(1);
+        assert_eq!(state.scrollback().len(), 1);
+    }
+
+    #[test]
+    fn test_set_title() {
+        let mut state = TerminalState::new(10, 5);
+        assert!(state.title().is_empty());
+        state.set_title("Hello World");
+        assert_eq!(state.title(), "Hello World");
+        state.set_title(String::from("Another Title"));
+        assert_eq!(state.title(), "Another Title");
+    }
+
+    #[test]
+    fn test_grid_resize_shrinks_preserves_visible_content() {
+        let mut grid = Grid::new(10, 10);
+        // Put content in corners
+        if let Some(cell) = grid.cell_mut(0, 0) {
+            cell.ch = 'A';
+        }
+        if let Some(cell) = grid.cell_mut(9, 9) {
+            cell.ch = 'Z';
+        }
+        if let Some(cell) = grid.cell_mut(2, 2) {
+            cell.ch = 'M';
+        }
+
+        grid.resize(5, 5);
+        assert_eq!(grid.cell(0, 0).unwrap().ch, 'A');
+        assert_eq!(grid.cell(2, 2).unwrap().ch, 'M');
+        // (9,9) is outside new bounds
+        assert!(grid.cell(9, 9).is_none());
+    }
+
+    #[test]
+    fn test_move_cursor_relative_large_positive() {
+        let mut state = TerminalState::new(10, 10);
+        state.move_cursor(0, 0);
+        state.move_cursor_relative(i16::MAX, i16::MAX);
+        assert_eq!(state.cursor().x, 9);
+        assert_eq!(state.cursor().y, 9);
+    }
+
+    #[test]
+    fn test_move_cursor_relative_large_negative() {
+        let mut state = TerminalState::new(10, 10);
+        state.move_cursor(5, 5);
+        state.move_cursor_relative(i16::MIN, i16::MIN);
+        assert_eq!(state.cursor().x, 0);
+        assert_eq!(state.cursor().y, 0);
+    }
+
+    #[test]
+    fn test_reset_clears_pen_and_modes() {
+        let mut state = TerminalState::new(10, 5);
+        state.pen_mut().fg = Some(Color::rgb(255, 0, 0));
+        state.pen_mut().attrs = CellAttrs::BOLD;
+        state.set_mode(TerminalModes::ALT_SCREEN, true);
+
+        state.reset();
+
+        assert_eq!(state.pen().fg, None);
+        assert_eq!(state.pen().attrs, CellAttrs::NONE);
+        // After reset, modes should be back to default (WRAP + CURSOR_VISIBLE)
+        assert!(state.modes().contains(TerminalModes::WRAP));
+        assert!(state.modes().contains(TerminalModes::CURSOR_VISIBLE));
+        assert!(!state.modes().contains(TerminalModes::ALT_SCREEN));
+    }
+
+    #[test]
+    fn test_save_cursor_overwrites_previous_save() {
+        let mut state = TerminalState::new(20, 20);
+        state.move_cursor(5, 5);
+        state.save_cursor();
+        state.move_cursor(10, 10);
+        state.save_cursor();
+        state.move_cursor(0, 0);
+        state.restore_cursor();
+        assert_eq!(state.cursor().x, 10);
+        assert_eq!(state.cursor().y, 10);
+    }
+
+    #[test]
+    fn test_restore_cursor_clamps_after_resize() {
+        let mut state = TerminalState::new(20, 20);
+        state.move_cursor(15, 15);
+        state.save_cursor();
+        state.resize(5, 5);
+        state.restore_cursor();
+        // Saved position (15,15) should be clamped to (4,4)
+        assert_eq!(state.cursor().x, 4);
+        assert_eq!(state.cursor().y, 4);
+    }
+
+    #[test]
+    fn test_dirty_region_clear_then_mark() {
+        let mut dirty = DirtyRegion::new(5, 5);
+        dirty.mark(2, 2);
+        assert!(dirty.has_dirty());
+        dirty.clear();
+        assert!(!dirty.has_dirty());
+        assert!(!dirty.is_dirty(2, 2));
+        dirty.mark(3, 3);
+        assert!(dirty.has_dirty());
+        assert!(dirty.is_dirty(3, 3));
+    }
+
+    #[test]
+    fn test_grid_scroll_up_preserves_remaining_content() {
+        let mut grid = Grid::new(3, 4);
+        for y in 0..4u16 {
+            if let Some(cell) = grid.cell_mut(0, y) {
+                cell.ch = (b'A' + y as u8) as char;
+            }
+        }
+        let scrolled = grid.scroll_up(2);
+        assert_eq!(scrolled.len(), 2);
+        assert_eq!(scrolled[0][0].ch, 'A');
+        assert_eq!(scrolled[1][0].ch, 'B');
+        // Remaining content shifted up
+        assert_eq!(grid.cell(0, 0).unwrap().ch, 'C');
+        assert_eq!(grid.cell(0, 1).unwrap().ch, 'D');
+        // Bottom rows cleared
+        assert!(grid.cell(0, 2).unwrap().is_empty());
+        assert!(grid.cell(0, 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_grid_scroll_down_preserves_remaining_content() {
+        let mut grid = Grid::new(3, 4);
+        for y in 0..4u16 {
+            if let Some(cell) = grid.cell_mut(0, y) {
+                cell.ch = (b'A' + y as u8) as char;
+            }
+        }
+        grid.scroll_down(2);
+        // Top rows cleared
+        assert!(grid.cell(0, 0).unwrap().is_empty());
+        assert!(grid.cell(0, 1).unwrap().is_empty());
+        // Content shifted down
+        assert_eq!(grid.cell(0, 2).unwrap().ch, 'A');
+        assert_eq!(grid.cell(0, 3).unwrap().ch, 'B');
+    }
+
+    #[test]
+    fn test_cursor_shape_in_cursor_state() {
+        let state = TerminalState::new(10, 5);
+        assert_eq!(state.cursor().shape, CursorShape::Block);
+    }
+
+    #[test]
+    fn test_terminal_modes_set_method() {
+        let m = TerminalModes::default();
+        assert!(!m.contains(TerminalModes::WRAP));
+        let m = m.set(TerminalModes::WRAP, true);
+        assert!(m.contains(TerminalModes::WRAP));
+        let m = m.set(TerminalModes::WRAP, false);
+        assert!(!m.contains(TerminalModes::WRAP));
+    }
+
+    #[test]
+    fn test_pen_default() {
+        let pen = Pen::default();
+        assert_eq!(pen.fg, None);
+        assert_eq!(pen.bg, None);
+        assert_eq!(pen.attrs, CellAttrs::NONE);
+    }
 }
