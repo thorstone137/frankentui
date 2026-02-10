@@ -68,7 +68,9 @@ pub fn diff_to_patches(buffer: &Buffer, diff: &BufferDiff) -> Vec<CellPatch> {
 
     // BufferDiff changes are produced by a row-major scan and are therefore
     // already sorted by (y, x) which is also linear-offset order.
-    let cols = u32::from(buffer.width());
+    let width = buffer.width();
+    let height = buffer.height();
+    let cols = u32::from(width);
 
     // Heuristic: most sparse diffs produce one patch per ~8 dirty cells.
     let est_patches = diff.len().div_ceil(8).max(1);
@@ -79,6 +81,10 @@ pub fn diff_to_patches(buffer: &Buffer, diff: &BufferDiff) -> Vec<CellPatch> {
     let mut has_span = false;
 
     for &(x, y) in diff.changes() {
+        // Safety: diffs can become stale across resize; fall back to a full patch.
+        if x >= width || y >= height {
+            return vec![full_buffer_patch(buffer)];
+        }
         let offset = u32::from(y) * cols + u32::from(x);
 
         if !has_span {
@@ -451,6 +457,21 @@ mod tests {
         // Offsets 4 and 5 are contiguous — should coalesce.
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].offset, 4);
+        assert_eq!(patches[0].cells.len(), 2);
+    }
+
+    #[test]
+    fn diff_to_patches_stale_diff_falls_back_to_full_patch() {
+        let old = Buffer::new(4, 2);
+        let mut next = Buffer::new(4, 2);
+        next.set_raw(3, 1, Cell::from_char('X'));
+        let stale_diff = BufferDiff::compute(&old, &next);
+
+        let resized = Buffer::new(2, 1);
+        let patches = diff_to_patches(&resized, &stale_diff);
+
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].offset, 0);
         assert_eq!(patches[0].cells.len(), 2);
     }
 
