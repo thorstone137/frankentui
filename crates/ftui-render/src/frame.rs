@@ -1223,4 +1223,596 @@ mod tests {
         let id = cell.content.grapheme_id().unwrap();
         assert_eq!(frame.pool.get(id), Some(flag));
     }
+
+    // --- HitId trait coverage ---
+
+    #[test]
+    fn hit_id_debug_clone_copy_hash() {
+        let id = HitId::new(99);
+        let dbg = format!("{:?}", id);
+        assert!(dbg.contains("99"), "Debug: {dbg}");
+        let copied: HitId = id; // Copy
+        assert_eq!(id, copied);
+        // Hash: insert into set
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(id);
+        set.insert(HitId::new(99));
+        assert_eq!(set.len(), 1);
+        set.insert(HitId::new(100));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn hit_id_eq_and_ne() {
+        assert_eq!(HitId::new(0), HitId::new(0));
+        assert_ne!(HitId::new(0), HitId::new(1));
+        assert_ne!(HitId::new(u32::MAX), HitId::default());
+    }
+
+    // --- HitRegion trait coverage ---
+
+    #[test]
+    fn hit_region_debug_clone_copy_hash() {
+        let r = HitRegion::Custom(42);
+        let dbg = format!("{:?}", r);
+        assert!(dbg.contains("Custom"), "Debug: {dbg}");
+        let copied: HitRegion = r; // Copy
+        assert_eq!(r, copied);
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(r);
+        set.insert(HitRegion::Custom(42));
+        assert_eq!(set.len(), 1);
+    }
+
+    // --- HitCell trait coverage ---
+
+    #[test]
+    fn hit_cell_debug_clone_copy_eq() {
+        let cell = HitCell::new(HitId::new(5), HitRegion::Link, 123);
+        let dbg = format!("{:?}", cell);
+        assert!(dbg.contains("Link"), "Debug: {dbg}");
+        let copied: HitCell = cell; // Copy
+        assert_eq!(cell, copied);
+        // ne
+        assert_ne!(cell, HitCell::default());
+    }
+
+    // --- HitGrid edge cases ---
+
+    #[test]
+    fn hit_grid_clone() {
+        let mut grid = HitGrid::new(5, 5);
+        grid.register(Rect::new(0, 0, 2, 2), HitId::new(1), HitRegion::Content, 7);
+        let clone = grid.clone();
+        assert_eq!(clone.width(), 5);
+        assert_eq!(
+            clone.hit_test(0, 0),
+            Some((HitId::new(1), HitRegion::Content, 7))
+        );
+    }
+
+    #[test]
+    fn hit_grid_get_mut() {
+        let mut grid = HitGrid::new(5, 5);
+        // Mutate a cell directly
+        if let Some(cell) = grid.get_mut(2, 3) {
+            *cell = HitCell::new(HitId::new(77), HitRegion::Handle, 55);
+        }
+        assert_eq!(
+            grid.hit_test(2, 3),
+            Some((HitId::new(77), HitRegion::Handle, 55))
+        );
+        // Out of bounds returns None
+        assert!(grid.get_mut(5, 5).is_none());
+    }
+
+    #[test]
+    fn hit_grid_zero_width_nonzero_height() {
+        let grid = HitGrid::new(0, 10);
+        assert_eq!(grid.width(), 0);
+        assert_eq!(grid.height(), 10);
+        assert!(grid.get(0, 0).is_none());
+        assert!(grid.hit_test(0, 5).is_none());
+    }
+
+    #[test]
+    fn hit_grid_nonzero_width_zero_height() {
+        let grid = HitGrid::new(10, 0);
+        assert_eq!(grid.width(), 10);
+        assert_eq!(grid.height(), 0);
+        assert!(grid.get(0, 0).is_none());
+    }
+
+    #[test]
+    fn hit_grid_register_zero_width_rect() {
+        let mut grid = HitGrid::new(10, 10);
+        grid.register(Rect::new(2, 2, 0, 5), HitId::new(1), HitRegion::Content, 0);
+        // Nothing should be registered
+        assert!(grid.hit_test(2, 2).is_none());
+    }
+
+    #[test]
+    fn hit_grid_register_zero_height_rect() {
+        let mut grid = HitGrid::new(10, 10);
+        grid.register(Rect::new(2, 2, 5, 0), HitId::new(1), HitRegion::Content, 0);
+        assert!(grid.hit_test(2, 2).is_none());
+    }
+
+    #[test]
+    fn hit_grid_register_past_bounds() {
+        let mut grid = HitGrid::new(10, 10);
+        // Rect starts past the grid boundary
+        grid.register(
+            Rect::new(10, 10, 5, 5),
+            HitId::new(1),
+            HitRegion::Content,
+            0,
+        );
+        assert!(grid.hit_test(9, 9).is_none());
+    }
+
+    #[test]
+    fn hit_grid_full_coverage() {
+        let mut grid = HitGrid::new(3, 3);
+        grid.register(Rect::new(0, 0, 3, 3), HitId::new(1), HitRegion::Content, 0);
+        // Every cell should be filled
+        for y in 0..3 {
+            for x in 0..3 {
+                assert_eq!(
+                    grid.hit_test(x, y),
+                    Some((HitId::new(1), HitRegion::Content, 0))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hit_grid_single_cell() {
+        let mut grid = HitGrid::new(1, 1);
+        grid.register(Rect::new(0, 0, 1, 1), HitId::new(1), HitRegion::Button, 42);
+        assert_eq!(
+            grid.hit_test(0, 0),
+            Some((HitId::new(1), HitRegion::Button, 42))
+        );
+        assert!(grid.hit_test(1, 0).is_none());
+        assert!(grid.hit_test(0, 1).is_none());
+    }
+
+    #[test]
+    fn hit_grid_hits_in_outside_rect() {
+        let mut grid = HitGrid::new(5, 5);
+        grid.register(Rect::new(0, 0, 2, 2), HitId::new(1), HitRegion::Content, 0);
+        // Query area completely outside registered region
+        let hits = grid.hits_in(Rect::new(3, 3, 2, 2));
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn hit_grid_hits_in_zero_rect() {
+        let mut grid = HitGrid::new(5, 5);
+        grid.register(Rect::new(0, 0, 5, 5), HitId::new(1), HitRegion::Content, 0);
+        let hits = grid.hits_in(Rect::new(2, 2, 0, 0));
+        assert!(hits.is_empty());
+    }
+
+    // --- CostEstimateSource ---
+
+    #[test]
+    fn cost_estimate_source_traits() {
+        let a = CostEstimateSource::Measured;
+        let b = CostEstimateSource::AreaFallback;
+        let c = CostEstimateSource::FixedDefault;
+        let dbg = format!("{:?}", a);
+        assert!(dbg.contains("Measured"), "Debug: {dbg}");
+
+        // Default
+        assert_eq!(
+            CostEstimateSource::default(),
+            CostEstimateSource::FixedDefault
+        );
+
+        // Clone/Copy
+        let copied: CostEstimateSource = a;
+        assert_eq!(a, copied);
+
+        // All variants distinct
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
+
+    // --- WidgetSignal ---
+
+    #[test]
+    fn widget_signal_default() {
+        let sig = WidgetSignal::default();
+        assert_eq!(sig.widget_id, 0);
+        assert!(!sig.essential);
+        assert!((sig.priority - 0.5).abs() < f32::EPSILON);
+        assert_eq!(sig.staleness_ms, 0);
+        assert!((sig.focus_boost - 0.0).abs() < f32::EPSILON);
+        assert!((sig.interaction_boost - 0.0).abs() < f32::EPSILON);
+        assert_eq!(sig.area_cells, 1);
+        assert!((sig.cost_estimate_us - 5.0).abs() < f32::EPSILON);
+        assert!((sig.recent_cost_us - 5.0).abs() < f32::EPSILON);
+        assert_eq!(sig.estimate_source, CostEstimateSource::FixedDefault);
+    }
+
+    #[test]
+    fn widget_signal_new() {
+        let sig = WidgetSignal::new(42);
+        assert_eq!(sig.widget_id, 42);
+        // Other fields should be default
+        assert!(!sig.essential);
+        assert!((sig.priority - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn widget_signal_debug_clone() {
+        let sig = WidgetSignal::new(7);
+        let dbg = format!("{:?}", sig);
+        assert!(dbg.contains("widget_id"), "Debug: {dbg}");
+        let cloned = sig.clone();
+        assert_eq!(cloned.widget_id, 7);
+    }
+
+    // --- WidgetBudget ---
+
+    #[test]
+    fn widget_budget_default_is_allow_all() {
+        let budget = WidgetBudget::default();
+        assert!(budget.allows(0, false));
+        assert!(budget.allows(u64::MAX, false));
+        assert!(budget.allows(42, true));
+    }
+
+    #[test]
+    fn widget_budget_allow_only() {
+        let budget = WidgetBudget::allow_only(vec![10, 20, 30]);
+        assert!(budget.allows(10, false));
+        assert!(budget.allows(20, false));
+        assert!(budget.allows(30, false));
+        assert!(!budget.allows(15, false));
+        assert!(!budget.allows(0, false));
+    }
+
+    #[test]
+    fn widget_budget_essential_always_allowed() {
+        let budget = WidgetBudget::allow_only(vec![10]);
+        // Essential widgets bypass the allow list
+        assert!(budget.allows(999, true));
+        assert!(budget.allows(0, true));
+    }
+
+    #[test]
+    fn widget_budget_allow_only_dedup() {
+        let budget = WidgetBudget::allow_only(vec![5, 5, 5, 10, 10]);
+        assert!(budget.allows(5, false));
+        assert!(budget.allows(10, false));
+        assert!(!budget.allows(7, false));
+    }
+
+    #[test]
+    fn widget_budget_allow_only_empty() {
+        let budget = WidgetBudget::allow_only(vec![]);
+        // No widgets allowed (except essential)
+        assert!(!budget.allows(0, false));
+        assert!(!budget.allows(1, false));
+        assert!(budget.allows(1, true)); // essential always passes
+    }
+
+    #[test]
+    fn widget_budget_debug_clone() {
+        let budget = WidgetBudget::allow_only(vec![1, 2, 3]);
+        let dbg = format!("{:?}", budget);
+        assert!(dbg.contains("allow_list"), "Debug: {dbg}");
+        let cloned = budget.clone();
+        assert!(cloned.allows(2, false));
+    }
+
+    // --- Frame construction variants ---
+
+    #[test]
+    #[should_panic(expected = "buffer width must be > 0")]
+    fn frame_zero_dimensions_panics() {
+        let mut pool = GraphemePool::new();
+        let _frame = Frame::new(0, 0, &mut pool);
+    }
+
+    #[test]
+    fn frame_from_buffer() {
+        let mut pool = GraphemePool::new();
+        let mut buf = Buffer::new(20, 10);
+        buf.set_raw(5, 5, Cell::from_char('Z'));
+        let frame = Frame::from_buffer(buf, &mut pool);
+        assert_eq!(frame.width(), 20);
+        assert_eq!(frame.height(), 10);
+        assert_eq!(frame.buffer.get(5, 5).unwrap().content.as_char(), Some('Z'));
+        assert!(frame.hit_grid.is_none());
+        assert!(frame.cursor_visible);
+    }
+
+    #[test]
+    fn frame_with_links() {
+        let mut pool = GraphemePool::new();
+        let mut links = LinkRegistry::new();
+        let frame = Frame::with_links(10, 5, &mut pool, &mut links);
+        assert!(frame.links.is_some());
+        assert_eq!(frame.width(), 10);
+        assert_eq!(frame.height(), 5);
+    }
+
+    #[test]
+    fn frame_set_links() {
+        let mut pool = GraphemePool::new();
+        let mut links = LinkRegistry::new();
+        let mut frame = Frame::new(10, 5, &mut pool);
+        assert!(frame.links.is_none());
+        frame.set_links(&mut links);
+        assert!(frame.links.is_some());
+    }
+
+    #[test]
+    fn frame_register_link_no_registry() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 5, &mut pool);
+        // No link registry => returns 0
+        let id = frame.register_link("https://example.com");
+        assert_eq!(id, 0);
+    }
+
+    #[test]
+    fn frame_register_link_with_registry() {
+        let mut pool = GraphemePool::new();
+        let mut links = LinkRegistry::new();
+        let mut frame = Frame::with_links(10, 5, &mut pool, &mut links);
+        let id = frame.register_link("https://example.com");
+        assert!(id > 0);
+        // Same URL should return same ID
+        let id2 = frame.register_link("https://example.com");
+        assert_eq!(id, id2);
+        // Different URL should return different ID
+        let id3 = frame.register_link("https://other.com");
+        assert_ne!(id, id3);
+    }
+
+    // --- Frame widget budget integration ---
+
+    #[test]
+    fn frame_set_widget_budget() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+
+        // Default allows all
+        assert!(frame.should_render_widget(42, false));
+
+        // Set restricted budget
+        frame.set_widget_budget(WidgetBudget::allow_only(vec![1, 2]));
+        assert!(frame.should_render_widget(1, false));
+        assert!(!frame.should_render_widget(42, false));
+        assert!(frame.should_render_widget(42, true)); // essential
+    }
+
+    // --- Frame widget signals ---
+
+    #[test]
+    fn frame_widget_signals_lifecycle() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+        assert!(frame.widget_signals().is_empty());
+
+        frame.register_widget_signal(WidgetSignal::new(1));
+        frame.register_widget_signal(WidgetSignal::new(2));
+        assert_eq!(frame.widget_signals().len(), 2);
+        assert_eq!(frame.widget_signals()[0].widget_id, 1);
+        assert_eq!(frame.widget_signals()[1].widget_id, 2);
+
+        let taken = frame.take_widget_signals();
+        assert_eq!(taken.len(), 2);
+        assert!(frame.widget_signals().is_empty());
+    }
+
+    #[test]
+    fn frame_clear_resets_signals_and_cursor() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+        frame.set_cursor(Some((5, 5)));
+        frame.register_widget_signal(WidgetSignal::new(1));
+        assert!(frame.cursor_position.is_some());
+        assert!(!frame.widget_signals().is_empty());
+
+        frame.clear();
+        assert!(frame.cursor_position.is_none());
+        assert!(frame.widget_signals().is_empty());
+    }
+
+    // --- Frame degradation ---
+
+    #[test]
+    fn frame_set_degradation_propagates_to_buffer() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+        assert_eq!(frame.degradation, DegradationLevel::Full);
+        assert_eq!(frame.buffer.degradation, DegradationLevel::Full);
+
+        frame.set_degradation(DegradationLevel::SimpleBorders);
+        assert_eq!(frame.degradation, DegradationLevel::SimpleBorders);
+        assert_eq!(frame.buffer.degradation, DegradationLevel::SimpleBorders);
+
+        frame.set_degradation(DegradationLevel::EssentialOnly);
+        assert_eq!(frame.degradation, DegradationLevel::EssentialOnly);
+        assert_eq!(frame.buffer.degradation, DegradationLevel::EssentialOnly);
+    }
+
+    // --- Frame hit grid with zero-size screen ---
+
+    #[test]
+    #[should_panic(expected = "buffer width must be > 0")]
+    fn frame_with_hit_grid_zero_size_panics() {
+        let mut pool = GraphemePool::new();
+        let _frame = Frame::with_hit_grid(0, 0, &mut pool);
+    }
+
+    // --- Frame register_hit returns true/false correctly ---
+
+    #[test]
+    fn frame_register_hit_with_all_regions() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::with_hit_grid(20, 20, &mut pool);
+        let regions = [
+            HitRegion::Content,
+            HitRegion::Border,
+            HitRegion::Scrollbar,
+            HitRegion::Handle,
+            HitRegion::Button,
+            HitRegion::Link,
+            HitRegion::Custom(0),
+            HitRegion::Custom(255),
+        ];
+        for (i, &region) in regions.iter().enumerate() {
+            let y = i as u16;
+            frame.register_hit(Rect::new(0, y, 1, 1), HitId::new(i as u32), region, 0);
+        }
+        for (i, &region) in regions.iter().enumerate() {
+            let y = i as u16;
+            assert_eq!(
+                frame.hit_test(0, y),
+                Some((HitId::new(i as u32), region, 0))
+            );
+        }
+    }
+
+    // --- Frame Draw trait ---
+
+    #[test]
+    fn frame_draw_horizontal_line() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 5, &mut pool);
+        let cell = Cell::from_char('-');
+        frame.draw_horizontal_line(2, 1, 5, cell);
+        for x in 2..7 {
+            assert_eq!(frame.buffer.get(x, 1).unwrap().content.as_char(), Some('-'));
+        }
+        // Neighbors untouched
+        assert!(frame.buffer.get(1, 1).unwrap().is_empty());
+        assert!(frame.buffer.get(7, 1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn frame_draw_vertical_line() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+        let cell = Cell::from_char('|');
+        frame.draw_vertical_line(3, 2, 4, cell);
+        for y in 2..6 {
+            assert_eq!(frame.buffer.get(3, y).unwrap().content.as_char(), Some('|'));
+        }
+        assert!(frame.buffer.get(3, 1).unwrap().is_empty());
+        assert!(frame.buffer.get(3, 6).unwrap().is_empty());
+    }
+
+    #[test]
+    fn frame_draw_rect_filled() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+        let cell = Cell::from_char('#');
+        frame.draw_rect_filled(Rect::new(1, 1, 3, 3), cell);
+        for y in 1..4 {
+            for x in 1..4 {
+                assert_eq!(frame.buffer.get(x, y).unwrap().content.as_char(), Some('#'));
+            }
+        }
+        // Outside
+        assert!(frame.buffer.get(0, 0).unwrap().is_empty());
+        assert!(frame.buffer.get(4, 4).unwrap().is_empty());
+    }
+
+    #[test]
+    fn frame_paint_area() {
+        use crate::cell::PackedRgba;
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(5, 5, &mut pool);
+        let red = PackedRgba::rgb(255, 0, 0);
+        frame.paint_area(Rect::new(0, 0, 2, 2), Some(red), None);
+        let cell = frame.buffer.get(0, 0).unwrap();
+        assert_eq!(cell.fg, red);
+    }
+
+    // --- Frame print_text_clipped ---
+
+    #[test]
+    fn frame_print_text_clipped_at_boundary() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(5, 1, &mut pool);
+        // "Hello World" should be clipped at width 5
+        let end = frame.print_text(0, 0, "Hello World", Cell::from_char(' '));
+        assert_eq!(end, 5);
+        for x in 0..5 {
+            assert!(!frame.buffer.get(x, 0).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn frame_print_text_empty_string() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 1, &mut pool);
+        let end = frame.print_text(0, 0, "", Cell::from_char(' '));
+        assert_eq!(end, 0);
+    }
+
+    #[test]
+    fn frame_print_text_at_right_edge() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(5, 1, &mut pool);
+        // Start at x=4, only 1 cell fits
+        let end = frame.print_text(4, 0, "AB", Cell::from_char(' '));
+        assert_eq!(end, 5);
+        assert_eq!(frame.buffer.get(4, 0).unwrap().content.as_char(), Some('A'));
+    }
+
+    // --- Frame Debug ---
+
+    #[test]
+    fn frame_debug() {
+        let mut pool = GraphemePool::new();
+        let frame = Frame::new(5, 3, &mut pool);
+        let dbg = format!("{:?}", frame);
+        assert!(dbg.contains("Frame"), "Debug: {dbg}");
+    }
+
+    // --- HitGrid Debug ---
+
+    #[test]
+    fn hit_grid_debug() {
+        let grid = HitGrid::new(3, 3);
+        let dbg = format!("{:?}", grid);
+        assert!(dbg.contains("HitGrid"), "Debug: {dbg}");
+    }
+
+    // --- Frame cursor beyond bounds ---
+
+    #[test]
+    fn frame_cursor_beyond_bounds() {
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(10, 10, &mut pool);
+        // Setting cursor beyond frame is allowed (no clipping)
+        frame.set_cursor(Some((100, 200)));
+        assert_eq!(frame.cursor_position, Some((100, 200)));
+    }
+
+    // --- HitGrid large data values ---
+
+    #[test]
+    fn hit_grid_register_overwrite() {
+        let mut grid = HitGrid::new(5, 5);
+        grid.register(Rect::new(0, 0, 3, 3), HitId::new(1), HitRegion::Content, 10);
+        grid.register(Rect::new(0, 0, 3, 3), HitId::new(2), HitRegion::Button, 20);
+        // Second registration overwrites first
+        assert_eq!(
+            grid.hit_test(1, 1),
+            Some((HitId::new(2), HitRegion::Button, 20))
+        );
+    }
 }

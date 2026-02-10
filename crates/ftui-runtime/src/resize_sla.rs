@@ -914,7 +914,10 @@ mod tests {
             forced: false,
         };
         let result = monitor.on_decision(&entry);
-        assert!(result.is_none(), "Should return None when applied_size is None");
+        assert!(
+            result.is_none(),
+            "Should return None when applied_size is None"
+        );
         // Event should not be counted
         assert_eq!(*monitor.event_count.borrow(), 0);
     }
@@ -1000,7 +1003,10 @@ mod tests {
             monitor.process_latency(10.0 + i as f64, (80, 24), false);
         }
 
-        assert!(monitor.logs().is_empty(), "Logs should be empty when disabled");
+        assert!(
+            monitor.logs().is_empty(),
+            "Logs should be empty when disabled"
+        );
         assert!(monitor.logs_to_jsonl().is_empty());
     }
 
@@ -1078,10 +1084,10 @@ mod tests {
         let mut got_alert = false;
         for _ in 0..10 {
             let result = monitor.process_latency(1000.0, (80, 24), false);
-            if let Some(decision) = result {
-                if decision.is_alert {
-                    got_alert = true;
-                }
+            if let Some(decision) = result
+                && decision.is_alert
+            {
+                got_alert = true;
             }
         }
 

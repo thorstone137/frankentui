@@ -2833,7 +2833,7 @@ mod tests {
                 let copy = stats;
                 assert_eq!(copy.width, stats.width);
             }
-            _ => assert!(false, "expected UseTiles"),
+            _ => unreachable!("expected UseTiles"),
         }
     }
 
@@ -2872,7 +2872,7 @@ mod tests {
                 assert_eq!(plan.stats.tile_w, 8);
                 assert_eq!(plan.stats.tile_h, 8);
             }
-            _ => assert!(false, "expected UseTiles"),
+            _ => unreachable!("expected UseTiles"),
         }
     }
 
@@ -2909,7 +2909,7 @@ mod tests {
                 assert_eq!(plan.stats.tile_w, 64);
                 assert_eq!(plan.stats.tile_h, 64);
             }
-            _ => assert!(false, "expected UseTiles"),
+            _ => unreachable!("expected UseTiles"),
         }
     }
 
@@ -3389,7 +3389,7 @@ mod tests {
                 let cloned: TileDiffStats = stats; // Copy
                 assert_eq!(cloned.height, stats.height);
             }
-            _ => assert!(false, "expected Fallback for 1x1"),
+            _ => unreachable!("expected Fallback for 1x1"),
         }
     }
 }
