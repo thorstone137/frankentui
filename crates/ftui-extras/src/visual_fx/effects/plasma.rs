@@ -744,6 +744,9 @@ impl PlasmaFx {
         for dy in 0..hh {
             scratch.v2_frame[dy] = scratch.y_v2_sin[dy] * cos_t2 + scratch.y_v2_cos[dy] * sin_t2;
         }
+        let v1_frame = &scratch.v1_frame;
+        let x_diag_sin = &scratch.x_diag_sin;
+        let x_diag_cos = &scratch.x_diag_cos;
 
         // Quality-hoisted loops: zero sin/cos per pixel.
         match quality {
@@ -753,23 +756,33 @@ impl PlasmaFx {
                     let y_sin = scratch.y_diag_sin[dy];
                     let y_cos = scratch.y_diag_cos[dy];
                     let row_offset = dy * ww;
+                    let radial_center_sin_row =
+                        &scratch.radial_center_sin[row_offset..row_offset + ww];
+                    let radial_center_cos_row =
+                        &scratch.radial_center_cos[row_offset..row_offset + ww];
+                    let radial_offset_sin_row =
+                        &scratch.radial_offset_sin[row_offset..row_offset + ww];
+                    let radial_offset_cos_row =
+                        &scratch.radial_offset_cos[row_offset..row_offset + ww];
+                    let interference_sin_row =
+                        &scratch.interference_sin[row_offset..row_offset + ww];
+                    let interference_cos_row =
+                        &scratch.interference_cos[row_offset..row_offset + ww];
+                    let out_row = &mut out[row_offset..row_offset + ww];
                     for dx in 0..ww {
-                        let v1 = scratch.v1_frame[dx];
-                        let sin_xy =
-                            scratch.x_diag_sin[dx] * y_cos + scratch.x_diag_cos[dx] * y_sin;
-                        let cos_xy =
-                            scratch.x_diag_cos[dx] * y_cos - scratch.x_diag_sin[dx] * y_sin;
+                        let v1 = v1_frame[dx];
+                        let sin_xy = x_diag_sin[dx] * y_cos + x_diag_cos[dx] * y_sin;
+                        let cos_xy = x_diag_cos[dx] * y_cos - x_diag_sin[dx] * y_sin;
                         let v3 = sin_xy * cos_t3 + cos_xy * sin_t3;
-                        let idx = row_offset + dx;
-                        let v4 = scratch.radial_center_sin[idx] * cos_t4
-                            - scratch.radial_center_cos[idx] * sin_t4;
-                        let v5 = scratch.radial_offset_cos[idx] * cos_time
-                            - scratch.radial_offset_sin[idx] * sin_time;
-                        let v6 = scratch.interference_sin[idx] * cos_t6
-                            + scratch.interference_cos[idx] * sin_t6;
+                        let v4 =
+                            radial_center_sin_row[dx] * cos_t4 - radial_center_cos_row[dx] * sin_t4;
+                        let v5 = radial_offset_cos_row[dx] * cos_time
+                            - radial_offset_sin_row[dx] * sin_time;
+                        let v6 =
+                            interference_sin_row[dx] * cos_t6 + interference_cos_row[dx] * sin_t6;
                         let value = (v1 + v2 + v3 + v4 + v5 + v6) / 6.0;
                         let wave = ((value * breath) + 1.0) / 2.0;
-                        out[idx] = sample(wave.clamp(0.0, 1.0));
+                        out_row[dx] = sample(wave.clamp(0.0, 1.0));
                     }
                 }
             }
@@ -779,19 +792,21 @@ impl PlasmaFx {
                     let y_sin = scratch.y_diag_sin[dy];
                     let y_cos = scratch.y_diag_cos[dy];
                     let row_offset = dy * ww;
+                    let interference_sin_row =
+                        &scratch.interference_sin[row_offset..row_offset + ww];
+                    let interference_cos_row =
+                        &scratch.interference_cos[row_offset..row_offset + ww];
+                    let out_row = &mut out[row_offset..row_offset + ww];
                     for dx in 0..ww {
-                        let v1 = scratch.v1_frame[dx];
-                        let sin_xy =
-                            scratch.x_diag_sin[dx] * y_cos + scratch.x_diag_cos[dx] * y_sin;
-                        let cos_xy =
-                            scratch.x_diag_cos[dx] * y_cos - scratch.x_diag_sin[dx] * y_sin;
+                        let v1 = v1_frame[dx];
+                        let sin_xy = x_diag_sin[dx] * y_cos + x_diag_cos[dx] * y_sin;
+                        let cos_xy = x_diag_cos[dx] * y_cos - x_diag_sin[dx] * y_sin;
                         let v3 = sin_xy * cos_t3 + cos_xy * sin_t3;
-                        let idx = row_offset + dx;
-                        let v6 = scratch.interference_sin[idx] * cos_t6
-                            + scratch.interference_cos[idx] * sin_t6;
+                        let v6 =
+                            interference_sin_row[dx] * cos_t6 + interference_cos_row[dx] * sin_t6;
                         let value = (v1 + v2 + v3 + v6) / 4.0;
                         let wave = ((value * breath) + 1.0) / 2.0;
-                        out[idx] = sample(wave.clamp(0.0, 1.0));
+                        out_row[dx] = sample(wave.clamp(0.0, 1.0));
                     }
                 }
             }
@@ -801,16 +816,15 @@ impl PlasmaFx {
                     let y_sin = scratch.y_diag_sin[dy];
                     let y_cos = scratch.y_diag_cos[dy];
                     let row_offset = dy * ww;
+                    let out_row = &mut out[row_offset..row_offset + ww];
                     for dx in 0..ww {
-                        let v1 = scratch.v1_frame[dx];
-                        let sin_xy =
-                            scratch.x_diag_sin[dx] * y_cos + scratch.x_diag_cos[dx] * y_sin;
-                        let cos_xy =
-                            scratch.x_diag_cos[dx] * y_cos - scratch.x_diag_sin[dx] * y_sin;
+                        let v1 = v1_frame[dx];
+                        let sin_xy = x_diag_sin[dx] * y_cos + x_diag_cos[dx] * y_sin;
+                        let cos_xy = x_diag_cos[dx] * y_cos - x_diag_sin[dx] * y_sin;
                         let v3 = sin_xy * cos_t3 + cos_xy * sin_t3;
                         let value = (v1 + v2 + v3) / 3.0;
                         let wave = (value + 1.0) / 2.0;
-                        out[row_offset + dx] = sample(wave.clamp(0.0, 1.0));
+                        out_row[dx] = sample(wave.clamp(0.0, 1.0));
                     }
                 }
             }

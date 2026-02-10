@@ -283,6 +283,39 @@ Determinism checks:
 | doom base/current/trial | `2d6ce9188c7940b16ef846395d5618d6bb0cea490eccef11a876a8232ca74636` |
 | quake base/current/trial | `f2ac352209d03c920e2ce47443f6b08bfb91229785df82cd1096f151d57605e1` |
 
+#### Detached-worktree A/B (BrightDeer plasma row-slice pass, 2026-02-09)
+
+This pass isolates the local `PlasmaFx::render_with_palette` row-slice write-path
+change from other concurrent edits by benchmarking detached worktrees at the same
+commit:
+
+- Baseline worktree: `/tmp/ftui_vfx_base_bd3e1t53` @ `dabc3777`
+- Optimized worktree: `/tmp/ftui_vfx_opt_bd3e1t53` @ `dabc3777` + local diff in
+  `crates/ftui-extras/src/visual_fx/effects/plasma.rs`
+- Harness args:
+  `--vfx-harness --vfx-tick-ms=16 --vfx-frames=180 --vfx-seed=12345 --vfx-perf --exit-after-ms=4000`
+- Artifacts:
+  `/tmp/vfx_bd3e1t53_{base,opt}_{plasma_120x40,plasma_200x60,metaballs_120x40}.jsonl`
+
+`total_ms_p95` / `render_ms_p95` / `present_ms_p95` (base -> opt):
+
+| Case | Base total | Opt total | Delta | Base render | Opt render | Delta | Base present | Opt present | Delta |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| plasma 120x40 | 2.761 | 2.559 | -7.32% | 1.834 | 1.651 | -9.98% | 1.261 | 1.088 | -13.72% |
+| plasma 200x60 | 6.079 | 5.868 | -3.47% | 3.671 | 3.684 | +0.35% | 2.896 | 2.442 | -15.68% |
+| metaballs 120x40 (control) | 3.434 | 3.621 | +5.45% | 2.565 | 2.545 | -0.78% | 1.205 | 1.198 | -0.58% |
+
+Determinism parity (SHA256 of extracted `frame_idx:hash` stream):
+
+| Case | Hash equality |
+|---|---|
+| plasma 120x40 | identical |
+| plasma 200x60 | identical |
+| metaballs 120x40 | identical |
+
+Interpretation: this lever improves plasma p95 in the target size and preserves
+determinism; global pass target (>=30% p95 on two heavy effects) is still unmet.
+
 #### Isomorphism notes
 
 - `braille_cell` fast path is algorithmically equivalent to the slow path:

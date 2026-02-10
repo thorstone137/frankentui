@@ -912,4 +912,446 @@ mod tests {
         assert_eq!(text1.to_plain_text(), "First");
         assert_eq!(text2.to_plain_text(), "Second");
     }
+
+    // =========================================================================
+    // Remaining style tags (dim, reverse, strikethrough, blink, hidden)
+    // =========================================================================
+
+    #[test]
+    fn parse_dim() {
+        let text = parse_markup("[dim]Faded[/dim]").unwrap();
+        assert_eq!(text.to_plain_text(), "Faded");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert!(style.has_attr(StyleFlags::DIM));
+    }
+
+    #[test]
+    fn parse_reverse() {
+        let text = parse_markup("[reverse]Inverted[/reverse]").unwrap();
+        assert_eq!(text.to_plain_text(), "Inverted");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert!(style.has_attr(StyleFlags::REVERSE));
+    }
+
+    #[test]
+    fn parse_strikethrough() {
+        let text = parse_markup("[strikethrough]Deleted[/strikethrough]").unwrap();
+        assert_eq!(text.to_plain_text(), "Deleted");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert!(style.has_attr(StyleFlags::STRIKETHROUGH));
+    }
+
+    #[test]
+    fn parse_strikethrough_short_tag() {
+        let text = parse_markup("[s]Deleted[/s]").unwrap();
+        assert_eq!(text.to_plain_text(), "Deleted");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert!(style.has_attr(StyleFlags::STRIKETHROUGH));
+    }
+
+    #[test]
+    fn parse_blink() {
+        let text = parse_markup("[blink]Flashy[/blink]").unwrap();
+        assert_eq!(text.to_plain_text(), "Flashy");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert!(style.has_attr(StyleFlags::BLINK));
+    }
+
+    #[test]
+    fn parse_hidden() {
+        let text = parse_markup("[hidden]Secret[/hidden]").unwrap();
+        assert_eq!(text.to_plain_text(), "Secret");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert!(style.has_attr(StyleFlags::HIDDEN));
+    }
+
+    // =========================================================================
+    // Color/background alias tags
+    // =========================================================================
+
+    #[test]
+    fn parse_color_alias_for_fg() {
+        let text = parse_markup("[color=green]Colored[/color]").unwrap();
+        assert_eq!(text.to_plain_text(), "Colored");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.fg, Some(PackedRgba::rgb(0, 255, 0)));
+    }
+
+    #[test]
+    fn parse_background_alias_for_bg() {
+        let text = parse_markup("[background=yellow]Highlighted[/background]").unwrap();
+        assert_eq!(text.to_plain_text(), "Highlighted");
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.bg, Some(PackedRgba::rgb(255, 255, 0)));
+    }
+
+    // =========================================================================
+    // Unknown tag passthrough
+    // =========================================================================
+
+    #[test]
+    fn parse_unknown_tag_no_style() {
+        let text = parse_markup("[custom]text[/custom]").unwrap();
+        assert_eq!(text.to_plain_text(), "text");
+        // Unknown tags apply no style (Style::new() delta)
+        let span = &text.lines()[0].spans()[0];
+        assert!(
+            span.style.is_none() || span.style.unwrap().is_empty(),
+            "unknown tag should not apply any style"
+        );
+    }
+
+    // =========================================================================
+    // Depth limit
+    // =========================================================================
+
+    #[test]
+    fn error_depth_limit_exceeded() {
+        // 51 nested bold tags should exceed the limit of 50
+        let mut input = String::new();
+        for _ in 0..51 {
+            input.push_str("[bold]");
+        }
+        input.push_str("deep");
+        for _ in 0..51 {
+            input.push_str("[/bold]");
+        }
+        let result = parse_markup(&input);
+        assert!(
+            matches!(result, Err(MarkupError::DepthLimitExceeded { .. })),
+            "51 nested tags should exceed depth limit"
+        );
+    }
+
+    #[test]
+    fn parse_at_depth_limit_ok() {
+        // Exactly 50 nested tags should be fine
+        let mut input = String::new();
+        for _ in 0..50 {
+            input.push_str("[bold]");
+        }
+        input.push_str("deep");
+        for _ in 0..50 {
+            input.push_str("[/bold]");
+        }
+        let result = parse_markup(&input);
+        assert!(result.is_ok(), "exactly 50 nested tags should succeed");
+    }
+
+    // =========================================================================
+    // MarkupError Display
+    // =========================================================================
+
+    #[test]
+    fn error_display_unmatched_tag_with_expected() {
+        let err = MarkupError::UnmatchedTag {
+            expected: Some("bold".into()),
+            found: "italic".into(),
+            position: 10,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("position 10"));
+        assert!(msg.contains("[/bold]"));
+        assert!(msg.contains("[/italic]"));
+    }
+
+    #[test]
+    fn error_display_unmatched_tag_no_expected() {
+        let err = MarkupError::UnmatchedTag {
+            expected: None,
+            found: "bold".into(),
+            position: 5,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("position 5"));
+        assert!(msg.contains("[/bold]"));
+        assert!(msg.contains("no matching"));
+    }
+
+    #[test]
+    fn error_display_unclosed_tag() {
+        let err = MarkupError::UnclosedTag {
+            tag: "italic".into(),
+            position: 0,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("[italic]"));
+        assert!(msg.contains("position 0"));
+    }
+
+    #[test]
+    fn error_display_invalid_color() {
+        let err = MarkupError::InvalidColor {
+            value: "nope".into(),
+            position: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("nope"));
+        assert!(msg.contains("position 3"));
+    }
+
+    #[test]
+    fn error_display_invalid_attribute() {
+        let err = MarkupError::InvalidAttribute {
+            name: "fg".into(),
+            position: 7,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("fg"));
+        assert!(msg.contains("position 7"));
+    }
+
+    #[test]
+    fn error_display_nested_link() {
+        let err = MarkupError::NestedLinkNotAllowed { position: 20 };
+        let msg = err.to_string();
+        assert!(msg.contains("nested"));
+        assert!(msg.contains("position 20"));
+    }
+
+    #[test]
+    fn error_display_empty_tag() {
+        let err = MarkupError::EmptyTag { position: 4 };
+        let msg = err.to_string();
+        assert!(msg.contains("empty"));
+        assert!(msg.contains("position 4"));
+    }
+
+    #[test]
+    fn error_display_malformed_tag() {
+        let err = MarkupError::MalformedTag { position: 15 };
+        let msg = err.to_string();
+        assert!(msg.contains("malformed"));
+        assert!(msg.contains("position 15"));
+    }
+
+    #[test]
+    fn error_display_depth_limit() {
+        let err = MarkupError::DepthLimitExceeded { position: 100 };
+        let msg = err.to_string();
+        assert!(msg.contains("depth"));
+        assert!(msg.contains("position 100"));
+    }
+
+    // =========================================================================
+    // Hex color edge cases
+    // =========================================================================
+
+    #[test]
+    fn error_hex_invalid_chars() {
+        let result = parse_markup("[fg=#gghhii]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn error_hex_wrong_length_2() {
+        let result = parse_markup("[fg=#ff]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn error_hex_wrong_length_4() {
+        let result = parse_markup("[fg=#ffff]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn error_hex_wrong_length_5() {
+        let result = parse_markup("[fg=#fffff]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    // =========================================================================
+    // RGB function edge cases
+    // =========================================================================
+
+    #[test]
+    fn error_rgb_too_few_args() {
+        let result = parse_markup("[fg=rgb(255,128)]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn error_rgb_too_many_args() {
+        let result = parse_markup("[fg=rgb(255,128,0,1)]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn error_rgb_overflow_value() {
+        let result = parse_markup("[fg=rgb(999,0,0)]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn error_rgb_negative_value() {
+        let result = parse_markup("[fg=rgb(-1,0,0)]text[/fg]");
+        assert!(matches!(result, Err(MarkupError::InvalidColor { .. })));
+    }
+
+    #[test]
+    fn parse_rgb_with_spaces() {
+        let text = parse_markup("[fg=rgb( 10 , 20 , 30 )]text[/fg]").unwrap();
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.fg, Some(PackedRgba::rgb(10, 20, 30)));
+    }
+
+    #[test]
+    fn parse_rgb_boundary_values() {
+        let text = parse_markup("[fg=rgb(0,0,0)]min[/fg]").unwrap();
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.fg, Some(PackedRgba::rgb(0, 0, 0)));
+
+        let text = parse_markup("[fg=rgb(255,255,255)]max[/fg]").unwrap();
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.fg, Some(PackedRgba::rgb(255, 255, 255)));
+    }
+
+    // =========================================================================
+    // Newline in tag
+    // =========================================================================
+
+    #[test]
+    fn parse_newline_in_tag_treated_as_literal() {
+        // Newline inside a tag breaks the tag → [ and content become literal text.
+        // The newline itself is consumed by the iterator but not included in output.
+        // The ] after the newline is a regular character.
+        let text = parse_markup("Hello [bold\n]world").unwrap();
+        assert_eq!(text.to_plain_text(), "Hello [bold]world");
+    }
+
+    // =========================================================================
+    // Empty closing tag [/]
+    // =========================================================================
+
+    #[test]
+    fn error_empty_closing_tag() {
+        let result = parse_markup("[bold]text[/]");
+        assert!(matches!(result, Err(MarkupError::EmptyTag { .. })));
+    }
+
+    // =========================================================================
+    // Backslash edge cases
+    // =========================================================================
+
+    #[test]
+    fn parse_backslash_before_non_escapable() {
+        // \a is not an escape → backslash is kept as-is
+        let text = parse_markup(r"Hello \a world").unwrap();
+        assert_eq!(text.to_plain_text(), "Hello \\a world");
+    }
+
+    #[test]
+    fn parse_trailing_backslash() {
+        let text = parse_markup(r"Hello\").unwrap();
+        assert_eq!(text.to_plain_text(), "Hello\\");
+    }
+
+    #[test]
+    fn parse_escape_closing_bracket() {
+        let text = parse_markup(r"Hello \] world").unwrap();
+        assert_eq!(text.to_plain_text(), "Hello ] world");
+    }
+
+    // =========================================================================
+    // Named color variants and aliases
+    // =========================================================================
+
+    #[test]
+    fn parse_bright_color_variants() {
+        let bright_colors = [
+            ("bright_black", PackedRgba::rgb(128, 128, 128)),
+            ("bright_red", PackedRgba::rgb(255, 85, 85)),
+            ("bright_green", PackedRgba::rgb(85, 255, 85)),
+            ("bright_yellow", PackedRgba::rgb(255, 255, 85)),
+            ("bright_blue", PackedRgba::rgb(85, 85, 255)),
+            ("bright_magenta", PackedRgba::rgb(255, 85, 255)),
+            ("bright_cyan", PackedRgba::rgb(85, 255, 255)),
+            ("bright_white", PackedRgba::rgb(255, 255, 255)),
+        ];
+        for (name, expected) in bright_colors {
+            let input = format!("[fg={name}]text[/fg]");
+            let text = parse_markup(&input).unwrap();
+            let style = text.lines()[0].spans()[0].style.unwrap();
+            assert_eq!(style.fg, Some(expected), "color mismatch for {name}");
+        }
+    }
+
+    #[test]
+    fn parse_gray_grey_aliases() {
+        let text1 = parse_markup("[fg=gray]text[/fg]").unwrap();
+        let text2 = parse_markup("[fg=grey]text[/fg]").unwrap();
+        let c1 = text1.lines()[0].spans()[0].style.unwrap().fg;
+        let c2 = text2.lines()[0].spans()[0].style.unwrap().fg;
+        assert_eq!(c1, c2, "gray and grey should be the same color");
+        assert_eq!(c1, Some(PackedRgba::rgb(128, 128, 128)));
+    }
+
+    #[test]
+    fn parse_purple_alias_for_magenta() {
+        let text1 = parse_markup("[fg=magenta]text[/fg]").unwrap();
+        let text2 = parse_markup("[fg=purple]text[/fg]").unwrap();
+        let c1 = text1.lines()[0].spans()[0].style.unwrap().fg;
+        let c2 = text2.lines()[0].spans()[0].style.unwrap().fg;
+        assert_eq!(c1, c2, "magenta and purple should be the same color");
+    }
+
+    #[test]
+    fn parse_aqua_fuchsia_colors() {
+        let text = parse_markup("[fg=aqua]text[/fg]").unwrap();
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.fg, Some(PackedRgba::rgb(0, 255, 255)));
+
+        let text = parse_markup("[fg=fuchsia]text[/fg]").unwrap();
+        let style = text.lines()[0].spans()[0].style.unwrap();
+        assert_eq!(style.fg, Some(PackedRgba::rgb(255, 0, 255)));
+    }
+
+    // =========================================================================
+    // Link edge cases
+    // =========================================================================
+
+    #[test]
+    fn parse_link_without_url() {
+        // [link] without =value should still parse (url is None)
+        let text = parse_markup("[link]Click[/link]").unwrap();
+        assert_eq!(text.to_plain_text(), "Click");
+        let span = &text.lines()[0].spans()[0];
+        assert!(
+            span.link.is_none(),
+            "link without value should have None URL"
+        );
+        // Should still have underline style
+        let style = span.style.unwrap();
+        assert!(style.has_attr(StyleFlags::UNDERLINE));
+    }
+
+    // =========================================================================
+    // Tag with equals but empty value
+    // =========================================================================
+
+    #[test]
+    fn error_fg_with_empty_value() {
+        let result = parse_markup("[fg=]text[/fg]");
+        assert!(
+            result.is_err(),
+            "fg with empty value should produce an error"
+        );
+    }
+
+    #[test]
+    fn error_bg_without_value() {
+        let result = parse_markup("[bg]text[/bg]");
+        assert!(matches!(result, Err(MarkupError::InvalidAttribute { .. })));
+    }
+
+    // =========================================================================
+    // MarkupError is std::error::Error
+    // =========================================================================
+
+    #[test]
+    fn markup_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(MarkupError::EmptyTag { position: 0 });
+        assert!(!err.to_string().is_empty());
+    }
 }
