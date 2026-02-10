@@ -2,7 +2,7 @@
 
 //! Code Explorer screen — SQLite C source with syntax highlighting and search.
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 
 use ftui_core::event::{Event, KeyCode, KeyEventKind, Modifiers, MouseButton, MouseEventKind};
 use ftui_core::geometry::Rect;
@@ -235,8 +235,8 @@ pub struct CodeExplorer {
     scroll_offset: usize,
     /// Viewport height in lines.
     viewport_height: Cell<u16>,
-    /// Syntax highlighter with C language support.
-    highlighter: SyntaxHighlighter,
+    /// Syntax highlighter with C language support (initialized on first render/use).
+    highlighter: OnceCell<SyntaxHighlighter>,
     /// Search input.
     search_input: TextInput,
     /// Whether search bar is active.
@@ -251,8 +251,8 @@ pub struct CodeExplorer {
     match_density: Vec<f64>,
     /// Current match index.
     current_match: usize,
-    /// File metadata as JSON string.
-    metadata_json: String,
+    /// File metadata as JSON string (initialized on first sidebar render).
+    metadata_json: OnceCell<String>,
     /// Animation tick counter.
     tick_count: u64,
     /// Animation time (seconds).
@@ -287,27 +287,13 @@ impl Default for CodeExplorer {
 impl CodeExplorer {
     pub fn new() -> Self {
         let lines: Vec<&'static str> = SQLITE_SOURCE.lines().collect();
-        let line_count = lines.len();
-        let byte_size = SQLITE_SOURCE.len() as u64;
-
-        let mut highlighter = SyntaxHighlighter::new();
-        highlighter.register_tokenizer(Box::new(c_tokenizer()));
-        highlighter.set_theme(theme::syntax_theme());
-
-        let metadata_json = format!(
-            "{{\n  \"filename\": \"sqlite3.c\",\n  \"lines\": {},\n  \"size\": \"{}\",\n  \"size_bytes\": {},\n  \"language\": \"C\",\n  \"description\": \"SQLite amalgamation\"\n}}",
-            line_count,
-            filesize::decimal(byte_size),
-            byte_size,
-        );
-
         let hotspots = Self::build_hotspots(&lines);
 
         Self {
             lines,
             scroll_offset: 0,
             viewport_height: Cell::new(30),
-            highlighter,
+            highlighter: OnceCell::new(),
             search_input: TextInput::new()
                 .with_placeholder("Search code... (/ to focus)")
                 .with_style(
@@ -329,7 +315,7 @@ impl CodeExplorer {
             search_matches: Vec::new(),
             match_density: Vec::new(),
             current_match: 0,
-            metadata_json,
+            metadata_json: OnceCell::new(),
             tick_count: 0,
             time: 0.0,
             hotspots,
@@ -349,7 +335,9 @@ impl CodeExplorer {
     }
 
     pub fn apply_theme(&mut self) {
-        self.highlighter.set_theme(theme::syntax_theme());
+        if let Some(highlighter) = self.highlighter.get_mut() {
+            highlighter.set_theme(theme::syntax_theme());
+        }
         let input_style = Style::new()
             .fg(theme::fg::PRIMARY)
             .bg(theme::alpha::SURFACE);
@@ -364,6 +352,30 @@ impl CodeExplorer {
             .clone()
             .with_style(input_style)
             .with_placeholder_style(placeholder_style);
+    }
+
+    fn highlighter(&self) -> &SyntaxHighlighter {
+        self.highlighter.get_or_init(|| {
+            let mut highlighter = SyntaxHighlighter::new();
+            highlighter.register_tokenizer(Box::new(c_tokenizer()));
+            highlighter.set_theme(theme::syntax_theme());
+            highlighter
+        })
+    }
+
+    fn metadata_json(&self) -> &str {
+        self.metadata_json
+            .get_or_init(|| Self::build_metadata_json(self.lines.len(), SQLITE_SOURCE.len() as u64))
+            .as_str()
+    }
+
+    fn build_metadata_json(line_count: usize, byte_size: u64) -> String {
+        format!(
+            "{{\n  \"filename\": \"sqlite3.c\",\n  \"lines\": {},\n  \"size\": \"{}\",\n  \"size_bytes\": {},\n  \"language\": \"C\",\n  \"description\": \"SQLite amalgamation\"\n}}",
+            line_count,
+            filesize::decimal(byte_size),
+            byte_size,
+        )
     }
 
     fn total_lines(&self) -> usize {
@@ -1225,7 +1237,7 @@ impl CodeExplorer {
 
             if !is_any_match || query.is_empty() {
                 // Syntax-highlighted line
-                let highlighted = self.highlighter.highlight(line, "c");
+                let highlighted = self.highlighter().highlight(line, "c");
                 Paragraph::new(highlighted).render(content_area, frame);
                 continue;
             }
@@ -1496,7 +1508,7 @@ impl CodeExplorer {
             ));
         let json_inner = json_block.inner(rows[0]);
         json_block.render(rows[0], frame);
-        let json_view = JsonView::new(&self.metadata_json)
+        let json_view = JsonView::new(self.metadata_json())
             .with_indent(2)
             .with_key_style(Style::new().fg(theme::accent::PRIMARY))
             .with_string_style(Style::new().fg(theme::accent::SUCCESS))
@@ -1672,7 +1684,7 @@ impl CodeExplorer {
             let progress = ((self.time * 0.6).sin() * 0.5 + 0.5).clamp(0.0, 1.0);
             let visible_chars = (total_chars as f64 * progress) as usize;
             let typed = truncate_to_grapheme_count(&preview, visible_chars);
-            let highlighted = self.highlighter.highlight(&typed, "sql");
+            let highlighted = self.highlighter().highlight(&typed, "sql");
             Paragraph::new(highlighted).render(studio_inner, frame);
         }
 
@@ -2270,9 +2282,29 @@ mod tests {
     #[test]
     fn code_explorer_json_metadata() {
         let ce = CodeExplorer::new();
-        assert!(ce.metadata_json.contains("\"filename\": \"sqlite3.c\""));
-        assert!(ce.metadata_json.contains("\"language\": \"C\""));
-        assert!(ce.metadata_json.contains("\"lines\":"));
+        let metadata_json = ce.metadata_json();
+        assert!(metadata_json.contains("\"filename\": \"sqlite3.c\""));
+        assert!(metadata_json.contains("\"language\": \"C\""));
+        assert!(metadata_json.contains("\"lines\":"));
+    }
+
+    #[test]
+    fn code_explorer_heavy_fields_are_lazily_initialized() {
+        let mut ce = CodeExplorer::new();
+        assert!(ce.highlighter.get().is_none());
+        assert!(ce.metadata_json.get().is_none());
+
+        ce.apply_theme();
+        assert!(
+            ce.highlighter.get().is_none(),
+            "theme apply should not force highlighter initialization"
+        );
+
+        assert!(ce.metadata_json().contains("\"filename\": \"sqlite3.c\""));
+        assert!(ce.metadata_json.get().is_some());
+
+        ce.highlighter();
+        assert!(ce.highlighter.get().is_some());
     }
 
     #[test]
