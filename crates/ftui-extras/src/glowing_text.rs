@@ -162,7 +162,7 @@ impl GlowingText {
             let mut cell = Cell::new(content);
             cell.fg = color;
             cell.attrs = attrs;
-            frame.buffer.set(px, y, cell);
+            frame.buffer.set_fast(px, y, cell);
 
             px = px.saturating_add(w as u16);
         }

@@ -407,7 +407,7 @@ fn draw_line(frame: &mut Frame, x: u16, y: u16, text: &str, style: Style, width:
         let cell_x = x.saturating_add(col as u16);
         let mut cell = Cell::new(content);
         apply_style(&mut cell, style);
-        frame.buffer.set(cell_x, y, cell);
+        frame.buffer.set_fast(cell_x, y, cell);
         col += w;
     }
     // Fill remaining with spaces
@@ -415,7 +415,7 @@ fn draw_line(frame: &mut Frame, x: u16, y: u16, text: &str, style: Style, width:
         let cell_x = x.saturating_add(col as u16);
         let mut cell = Cell::from_char(' ');
         apply_style(&mut cell, style);
-        frame.buffer.set(cell_x, y, cell);
+        frame.buffer.set_fast(cell_x, y, cell);
         col += 1;
     }
 }

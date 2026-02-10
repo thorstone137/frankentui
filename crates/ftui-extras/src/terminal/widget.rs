@@ -248,7 +248,7 @@ impl StatefulWidget for TerminalEmulator {
                         }
                         let buf_x = area.x + x as u16;
                         let buf_cell = self.convert_cell(term_cell);
-                        frame.buffer.set(buf_x, buf_y, buf_cell);
+                        frame.buffer.set_fast(buf_x, buf_y, buf_cell);
                     }
                 }
             }
@@ -262,7 +262,7 @@ impl StatefulWidget for TerminalEmulator {
                         let buf_x = area.x + x;
                         let buf_y = area.y + grid_start_y + y;
                         let buf_cell = self.convert_cell(term_cell);
-                        frame.buffer.set(buf_x, buf_y, buf_cell);
+                        frame.buffer.set_fast(buf_x, buf_y, buf_cell);
                     }
                 }
             }
@@ -274,7 +274,7 @@ impl StatefulWidget for TerminalEmulator {
                         let buf_x = area.x + x;
                         let buf_y = area.y + y;
                         let buf_cell = self.convert_cell(term_cell);
-                        frame.buffer.set(buf_x, buf_y, buf_cell);
+                        frame.buffer.set_fast(buf_x, buf_y, buf_cell);
                     }
                 }
             }
@@ -298,7 +298,7 @@ impl Widget for TerminalEmulator {
         let empty = BufferCell::from_char(' ');
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
-                frame.buffer.set(x, y, empty);
+                frame.buffer.set_fast(x, y, empty);
             }
         }
     }

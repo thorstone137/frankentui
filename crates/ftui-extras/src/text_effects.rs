@@ -4337,7 +4337,7 @@ impl StyledText {
                         {
                             let mut cell = Cell::new(content);
                             cell.fg = glow_color;
-                            frame.buffer.set(glow_x as u16, glow_y as u16, cell);
+                            frame.buffer.set_fast(glow_x as u16, glow_y as u16, cell);
                         }
                     }
                 }
@@ -4364,7 +4364,7 @@ impl StyledText {
                 {
                     let mut cell = Cell::new(content);
                     cell.fg = shadow_color;
-                    frame.buffer.set(shadow_x, shadow_y, cell);
+                    frame.buffer.set_fast(shadow_x, shadow_y, cell);
                 }
             }
         }
@@ -4426,7 +4426,9 @@ impl StyledText {
                         {
                             let mut cell = Cell::new(content);
                             cell.fg = outline_color;
-                            frame.buffer.set(outline_x as u16, outline_y as u16, cell);
+                            frame
+                                .buffer
+                                .set_fast(outline_x as u16, outline_y as u16, cell);
                         }
                     }
                 }
@@ -4480,7 +4482,7 @@ impl StyledText {
                 flags = flags.union(CellStyleFlags::UNDERLINE);
             }
             cell.attrs = CellAttrs::new(flags, 0);
-            frame.buffer.set(final_x, final_y, cell);
+            frame.buffer.set_fast(final_x, final_y, cell);
         }
 
         // Render cursor if visible
@@ -9560,7 +9562,7 @@ impl AsciiArtText {
                 if grapheme != " " {
                     cell.fg = color;
                 }
-                frame.buffer.set(px, py, cell);
+                frame.buffer.set_fast(px, py, cell);
 
                 col = col.saturating_add(w);
             }
@@ -10015,7 +10017,7 @@ impl StyledMultiLine {
             if let Some(bg) = self.bg_color {
                 cell.bg = bg;
             }
-            frame.buffer.set(px, py, cell);
+            frame.buffer.set_fast(px, py, cell);
             col = col.saturating_add(width);
         }
     }

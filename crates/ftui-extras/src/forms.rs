@@ -1442,8 +1442,9 @@ fn draw_str(frame: &mut Frame, x: u16, y: u16, s: &str, style: Style, max_width:
         let mut cell = Cell::new(cell_content);
         apply_style(&mut cell, style);
 
-        // Use set() which handles multi-width characters (atomic writes)
-        frame.buffer.set(x.saturating_add(col), y, cell);
+        // set_fast() skips scissor/opacity/compositing checks for common
+        // single-width opaque cells; falls back to set() otherwise.
+        frame.buffer.set_fast(x.saturating_add(col), y, cell);
 
         col = col.saturating_add(w);
     }

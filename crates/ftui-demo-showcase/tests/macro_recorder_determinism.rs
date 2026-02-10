@@ -131,6 +131,10 @@ fn capture_macro_events() -> (tracing::dispatcher::DefaultGuard, Arc<Mutex<Vec<S
     let events = log.events.clone();
     let subscriber = tracing_subscriber::registry().with(log);
     let guard = tracing::subscriber::set_default(subscriber);
+    // Ensure callsite interest is re-evaluated now that a subscriber is installed.
+    // This touches global tracing state; all tests in this file use #[serial] to
+    // avoid parallel interest cache churn.
+    tracing::callsite::rebuild_interest_cache();
     (guard, events)
 }
 
@@ -139,6 +143,7 @@ fn capture_macro_events() -> (tracing::dispatcher::DefaultGuard, Arc<Mutex<Vec<S
 // ===========================================================================
 
 #[test]
+#[serial]
 fn fixed_fixture_preserves_event_order() {
     let m = fixture("order", &[('a', 10), ('b', 20), ('c', 30), ('d', 40)]);
     let mut pb = MacroPlayback::new(m);
@@ -164,6 +169,7 @@ fn fixed_fixture_preserves_event_order() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn multi_replay_produces_identical_streams() {
     let m = fixture(
         "determinism",
@@ -188,6 +194,7 @@ fn multi_replay_produces_identical_streams() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn speed_scaled_replay_preserves_events() {
     let m = fixture("speed", &[('x', 100), ('y', 200), ('z', 300)]);
 
@@ -215,6 +222,7 @@ fn speed_scaled_replay_preserves_events() {
 }
 
 #[test]
+#[serial]
 fn speed_2x_halves_effective_timing() {
     let m = fixture("speed2x", &[('a', 0), ('b', 100)]);
 
@@ -242,6 +250,7 @@ fn speed_2x_halves_effective_timing() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn timing_drift_within_tolerance() {
     // Events at known cumulative times: 0, 100, 300, 600, 1000ms
     let m = fixture(
@@ -316,6 +325,7 @@ fn tracing_emits_macro_events_in_order() {
 }
 
 #[test]
+#[serial]
 fn timing_drift_with_fine_step() {
     let m = fixture("fine", &[('a', 0), ('b', 50), ('c', 50), ('d', 100)]);
     let step_ms = 1;
@@ -343,6 +353,7 @@ fn timing_drift_with_fine_step() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn loop_determinism_consistent_counts() {
     let m = fixture("loop", &[('a', 10), ('b', 10)]);
     // total_duration = 20ms, 2 events per loop
@@ -368,6 +379,7 @@ fn loop_determinism_consistent_counts() {
 }
 
 #[test]
+#[serial]
 fn loop_preserves_event_order() {
     let m = fixture("loop_order", &[('a', 10), ('b', 10), ('c', 10)]);
     let mut pb = MacroPlayback::new(m).with_looping(true);
@@ -398,6 +410,7 @@ fn loop_preserves_event_order() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn zero_delay_fires_all_immediately() {
     let m = InputMacro::from_events("zero", vec![key('a'), key('b'), key('c'), key('d')]);
     let mut pb = MacroPlayback::new(m);
@@ -421,6 +434,7 @@ fn zero_delay_fires_all_immediately() {
 }
 
 #[test]
+#[serial]
 fn zero_delay_loop_does_not_infinite_loop() {
     let m = InputMacro::from_events("zero_loop", vec![key('a'), key('b')]);
     let mut pb = MacroPlayback::new(m).with_looping(true);
@@ -439,6 +453,7 @@ fn zero_delay_loop_does_not_infinite_loop() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn advance_granularity_independence() {
     let m = fixture("granularity", &[('a', 0), ('b', 30), ('c', 70), ('d', 100)]);
 
@@ -470,6 +485,7 @@ fn advance_granularity_independence() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn reset_produces_identical_replay() {
     let m = fixture("reset", &[('a', 10), ('b', 20), ('c', 30)]);
     let mut pb = MacroPlayback::new(m);
@@ -491,6 +507,7 @@ fn reset_produces_identical_replay() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn large_delta_does_not_skip_events() {
     let m = fixture(
         "large_delta",
@@ -514,6 +531,7 @@ fn large_delta_does_not_skip_events() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn zero_speed_freezes_playback() {
     let m = fixture("freeze", &[('a', 0), ('b', 100)]);
     let mut pb = MacroPlayback::new(m).with_speed(0.0);
@@ -524,6 +542,7 @@ fn zero_speed_freezes_playback() {
 }
 
 #[test]
+#[serial]
 fn negative_speed_normalizes_to_zero() {
     let m = fixture("negative", &[('a', 0), ('b', 100)]);
     let mut pb = MacroPlayback::new(m).with_speed(-1.0);
@@ -534,6 +553,7 @@ fn negative_speed_normalizes_to_zero() {
 }
 
 #[test]
+#[serial]
 fn nan_speed_normalizes_to_1x() {
     let m = fixture("nan", &[('a', 50), ('b', 50)]);
     let mut pb = MacroPlayback::new(m).with_speed(f64::NAN);
@@ -544,6 +564,7 @@ fn nan_speed_normalizes_to_1x() {
 }
 
 #[test]
+#[serial]
 fn inf_speed_normalizes_to_1x() {
     let m = fixture("inf", &[('a', 50), ('b', 50)]);
     let mut pb = MacroPlayback::new(m).with_speed(f64::INFINITY);
@@ -557,6 +578,7 @@ fn inf_speed_normalizes_to_1x() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn empty_macro_is_immediately_done() {
     let m = InputMacro::from_events("empty", vec![]);
     let mut pb = MacroPlayback::new(m);
@@ -566,6 +588,7 @@ fn empty_macro_is_immediately_done() {
 }
 
 #[test]
+#[serial]
 fn empty_macro_loop_is_done() {
     let m = InputMacro::from_events("empty_loop", vec![]);
     let mut pb = MacroPlayback::new(m).with_looping(true);
@@ -579,6 +602,7 @@ fn empty_macro_loop_is_done() {
 // ===========================================================================
 
 #[test]
+#[serial]
 fn cumulative_timing_is_monotonic() {
     let m = fixture(
         "monotonic",

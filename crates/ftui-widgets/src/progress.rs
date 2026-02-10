@@ -505,11 +505,9 @@ mod tests {
     use ftui_render::grapheme_pool::GraphemePool;
 
     fn cell_at(frame: &Frame, x: u16, y: u16) -> Cell {
-        frame
-            .buffer
-            .get(x, y)
-            .copied()
-            .unwrap_or_else(|| panic!("test cell should exist at ({x},{y})"))
+        let cell = frame.buffer.get(x, y).copied();
+        assert!(cell.is_some(), "test cell should exist at ({x},{y})");
+        cell.unwrap()
     }
 
     // --- Builder tests ---
