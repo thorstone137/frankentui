@@ -872,4 +872,838 @@ mod tests {
         let changes: Vec<_> = parse_sgr(&[39, 49]).collect();
         assert_eq!(changes, vec![SgrChange::FgDefault, SgrChange::BgDefault]);
     }
+
+    // ── DCS (Device Control String) tests ───────────────────────────────
+
+    /// Extended handler that also records DCS events.
+    #[derive(Default)]
+    #[allow(clippy::type_complexity)]
+    struct DcsTestHandler {
+        printed: Vec<char>,
+        hook_calls: Vec<(Vec<i64>, Vec<u8>, char)>,
+        put_bytes: Vec<u8>,
+        unhook_count: usize,
+    }
+
+    impl AnsiHandler for DcsTestHandler {
+        fn print(&mut self, c: char) {
+            self.printed.push(c);
+        }
+        fn execute(&mut self, _byte: u8) {}
+        fn csi_dispatch(&mut self, _params: &[i64], _intermediates: &[u8], _c: char) {}
+        fn osc_dispatch(&mut self, _params: &[&[u8]]) {}
+        fn esc_dispatch(&mut self, _intermediates: &[u8], _c: char) {}
+        fn hook(&mut self, params: &[i64], intermediates: &[u8], c: char) {
+            self.hook_calls
+                .push((params.to_vec(), intermediates.to_vec(), c));
+        }
+        fn put(&mut self, byte: u8) {
+            self.put_bytes.push(byte);
+        }
+        fn unhook(&mut self) {
+            self.unhook_count += 1;
+        }
+    }
+
+    #[test]
+    fn dcs_hook_put_unhook_roundtrip() {
+        let mut parser = AnsiParser::new();
+        let mut handler = DcsTestHandler::default();
+
+        // DCS q (sixel): ESC P q <data> ESC backslash
+        parser.parse(b"\x1bPq", &mut handler);
+        assert_eq!(handler.hook_calls.len(), 1);
+        assert_eq!(handler.hook_calls[0].2, 'q');
+
+        // Send data bytes
+        parser.parse(b"#0;2;0;0;0", &mut handler);
+        assert!(!handler.put_bytes.is_empty());
+
+        // End DCS with ST (ESC \)
+        parser.parse(b"\x1b\\", &mut handler);
+        assert_eq!(handler.unhook_count, 1);
+    }
+
+    #[test]
+    fn dcs_with_params() {
+        let mut parser = AnsiParser::new();
+        let mut handler = DcsTestHandler::default();
+
+        // DCS with params: ESC P 1;2 q
+        parser.parse(b"\x1bP1;2q", &mut handler);
+        assert_eq!(handler.hook_calls.len(), 1);
+        assert_eq!(handler.hook_calls[0].0, vec![1, 2]);
+        assert_eq!(handler.hook_calls[0].2, 'q');
+    }
+
+    // ── ESC sequence variant tests ──────────────────────────────────────
+
+    #[test]
+    fn esc_restore_cursor() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC 8 - restore cursor
+        parser.parse(b"\x1b8", &mut handler);
+
+        let esc_calls = handler.esc_calls.borrow();
+        assert_eq!(esc_calls.len(), 1);
+        assert_eq!(esc_calls[0].1, '8');
+    }
+
+    #[test]
+    fn esc_index_down() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC D - index (move down, scroll if needed)
+        parser.parse(b"\x1bD", &mut handler);
+
+        let esc_calls = handler.esc_calls.borrow();
+        assert_eq!(esc_calls.len(), 1);
+        assert_eq!(esc_calls[0].1, 'D');
+        assert!(esc_calls[0].0.is_empty());
+    }
+
+    #[test]
+    fn esc_reverse_index() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC M - reverse index (move up, scroll if needed)
+        parser.parse(b"\x1bM", &mut handler);
+
+        let esc_calls = handler.esc_calls.borrow();
+        assert_eq!(esc_calls.len(), 1);
+        assert_eq!(esc_calls[0].1, 'M');
+    }
+
+    #[test]
+    fn esc_full_reset() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC c - full reset (RIS)
+        parser.parse(b"\x1bc", &mut handler);
+
+        let esc_calls = handler.esc_calls.borrow();
+        assert_eq!(esc_calls.len(), 1);
+        assert_eq!(esc_calls[0].1, 'c');
+    }
+
+    #[test]
+    fn multiple_esc_sequences() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // Save cursor, then restore cursor
+        parser.parse(b"\x1b7\x1b8", &mut handler);
+
+        let esc_calls = handler.esc_calls.borrow();
+        assert_eq!(esc_calls.len(), 2);
+        assert_eq!(esc_calls[0].1, '7');
+        assert_eq!(esc_calls[1].1, '8');
+    }
+
+    // ── CSI sequence variant tests ──────────────────────────────────────
+
+    #[test]
+    fn csi_cursor_down() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"\x1b[3B", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![3]);
+        assert_eq!(csi_calls[0].2, 'B');
+    }
+
+    #[test]
+    fn csi_cursor_forward() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"\x1b[7C", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![7]);
+        assert_eq!(csi_calls[0].2, 'C');
+    }
+
+    #[test]
+    fn csi_cursor_back() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"\x1b[2D", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![2]);
+        assert_eq!(csi_calls[0].2, 'D');
+    }
+
+    #[test]
+    fn csi_erase_display() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ 2 J - erase entire display
+        parser.parse(b"\x1b[2J", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![2]);
+        assert_eq!(csi_calls[0].2, 'J');
+    }
+
+    #[test]
+    fn csi_erase_line() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ K - erase from cursor to end of line (default 0)
+        parser.parse(b"\x1b[K", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].2, 'K');
+    }
+
+    #[test]
+    fn csi_no_params_defaults() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ H - cursor home (no params = 1;1)
+        parser.parse(b"\x1b[H", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].2, 'H');
+        // vte delivers an empty or default param set
+    }
+
+    #[test]
+    fn csi_alt_screen_enable() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ ? 1049 h - enable alt screen
+        parser.parse(b"\x1b[?1049h", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![1049]);
+        assert_eq!(csi_calls[0].1, vec![b'?']);
+        assert_eq!(csi_calls[0].2, 'h');
+    }
+
+    #[test]
+    fn csi_alt_screen_disable() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ ? 1049 l - disable alt screen
+        parser.parse(b"\x1b[?1049l", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![1049]);
+        assert_eq!(csi_calls[0].1, vec![b'?']);
+        assert_eq!(csi_calls[0].2, 'l');
+    }
+
+    #[test]
+    fn csi_bracketed_paste_mode() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ ? 2004 h - enable bracketed paste
+        parser.parse(b"\x1b[?2004h", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+        assert_eq!(csi_calls[0].0, vec![2004]);
+        assert_eq!(csi_calls[0].1, vec![b'?']);
+        assert_eq!(csi_calls[0].2, 'h');
+    }
+
+    #[test]
+    fn multiple_csi_in_one_parse() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // Cursor up, then cursor down, then erase line
+        parser.parse(b"\x1b[5A\x1b[3B\x1b[K", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 3);
+        assert_eq!(csi_calls[0].2, 'A');
+        assert_eq!(csi_calls[1].2, 'B');
+        assert_eq!(csi_calls[2].2, 'K');
+    }
+
+    // ── SGR individual attribute tests ──────────────────────────────────
+
+    #[test]
+    fn sgr_dim() {
+        let changes: Vec<_> = parse_sgr(&[2]).collect();
+        assert_eq!(changes, vec![SgrChange::Dim(true)]);
+    }
+
+    #[test]
+    fn sgr_underline() {
+        let changes: Vec<_> = parse_sgr(&[4]).collect();
+        assert_eq!(changes, vec![SgrChange::Underline(true)]);
+    }
+
+    #[test]
+    fn sgr_blink() {
+        let changes: Vec<_> = parse_sgr(&[5]).collect();
+        assert_eq!(changes, vec![SgrChange::Blink(true)]);
+    }
+
+    #[test]
+    fn sgr_reverse() {
+        let changes: Vec<_> = parse_sgr(&[7]).collect();
+        assert_eq!(changes, vec![SgrChange::Reverse(true)]);
+    }
+
+    #[test]
+    fn sgr_hidden() {
+        let changes: Vec<_> = parse_sgr(&[8]).collect();
+        assert_eq!(changes, vec![SgrChange::Hidden(true)]);
+    }
+
+    #[test]
+    fn sgr_strikethrough() {
+        let changes: Vec<_> = parse_sgr(&[9]).collect();
+        assert_eq!(changes, vec![SgrChange::Strikethrough(true)]);
+    }
+
+    #[test]
+    fn sgr_normal_intensity_resets_bold() {
+        // SGR 22 resets both bold and dim, but implementation returns Bold(false)
+        let changes: Vec<_> = parse_sgr(&[22]).collect();
+        assert_eq!(changes, vec![SgrChange::Bold(false)]);
+    }
+
+    #[test]
+    fn sgr_no_italic() {
+        let changes: Vec<_> = parse_sgr(&[23]).collect();
+        assert_eq!(changes, vec![SgrChange::Italic(false)]);
+    }
+
+    #[test]
+    fn sgr_no_underline() {
+        let changes: Vec<_> = parse_sgr(&[24]).collect();
+        assert_eq!(changes, vec![SgrChange::Underline(false)]);
+    }
+
+    #[test]
+    fn sgr_no_blink() {
+        let changes: Vec<_> = parse_sgr(&[25]).collect();
+        assert_eq!(changes, vec![SgrChange::Blink(false)]);
+    }
+
+    #[test]
+    fn sgr_no_reverse() {
+        let changes: Vec<_> = parse_sgr(&[27]).collect();
+        assert_eq!(changes, vec![SgrChange::Reverse(false)]);
+    }
+
+    #[test]
+    fn sgr_no_hidden() {
+        let changes: Vec<_> = parse_sgr(&[28]).collect();
+        assert_eq!(changes, vec![SgrChange::Hidden(false)]);
+    }
+
+    #[test]
+    fn sgr_no_strikethrough() {
+        let changes: Vec<_> = parse_sgr(&[29]).collect();
+        assert_eq!(changes, vec![SgrChange::Strikethrough(false)]);
+    }
+
+    // ── SGR all standard colors ─────────────────────────────────────────
+
+    #[test]
+    fn sgr_all_standard_fg_colors() {
+        for code in 30..=37 {
+            let changes: Vec<_> = parse_sgr(&[code]).collect();
+            assert_eq!(
+                changes,
+                vec![SgrChange::FgAnsi((code - 30) as u8)],
+                "failed for SGR {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn sgr_all_standard_bg_colors() {
+        for code in 40..=47 {
+            let changes: Vec<_> = parse_sgr(&[code]).collect();
+            assert_eq!(
+                changes,
+                vec![SgrChange::BgAnsi((code - 40) as u8)],
+                "failed for SGR {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn sgr_all_bright_fg_colors() {
+        for code in 90..=97 {
+            let changes: Vec<_> = parse_sgr(&[code]).collect();
+            assert_eq!(
+                changes,
+                vec![SgrChange::FgBrightAnsi((code - 90) as u8)],
+                "failed for SGR {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn sgr_all_bright_bg_colors() {
+        for code in 100..=107 {
+            let changes: Vec<_> = parse_sgr(&[code]).collect();
+            assert_eq!(
+                changes,
+                vec![SgrChange::BgBrightAnsi((code - 100) as u8)],
+                "failed for SGR {code}"
+            );
+        }
+    }
+
+    // ── SGR extended color edge cases ───────────────────────────────────
+
+    #[test]
+    fn sgr_extended_fg_unknown_mode_skipped() {
+        // 38;9 is not a valid color mode (only 2 and 5 are)
+        let changes: Vec<_> = parse_sgr(&[38, 9]).collect();
+        assert!(
+            changes.is_empty(),
+            "unknown extended mode should be skipped"
+        );
+    }
+
+    #[test]
+    fn sgr_extended_bg_unknown_mode_skipped() {
+        // 48;9 is not a valid bg color mode
+        let changes: Vec<_> = parse_sgr(&[48, 9]).collect();
+        assert!(
+            changes.is_empty(),
+            "unknown extended bg mode should be skipped"
+        );
+    }
+
+    #[test]
+    fn sgr_extended_fg_truncated_256() {
+        // 38;5 without the color index - next_param returns None
+        let changes: Vec<_> = parse_sgr(&[38, 5]).collect();
+        assert!(
+            changes.is_empty(),
+            "truncated 256-color should yield nothing"
+        );
+    }
+
+    #[test]
+    fn sgr_extended_fg_truncated_rgb_partial() {
+        // 38;2;100;150 missing the B component
+        let changes: Vec<_> = parse_sgr(&[38, 2, 100, 150]).collect();
+        assert!(changes.is_empty(), "truncated RGB should yield nothing");
+    }
+
+    #[test]
+    fn sgr_extended_fg_truncated_mode_only() {
+        // 38 with no mode byte at all
+        let changes: Vec<_> = parse_sgr(&[38]).collect();
+        assert!(changes.is_empty(), "38 alone should yield nothing");
+    }
+
+    #[test]
+    fn sgr_extended_bg_truncated_256() {
+        // 48;5 without color index
+        let changes: Vec<_> = parse_sgr(&[48, 5]).collect();
+        assert!(
+            changes.is_empty(),
+            "truncated bg 256-color should yield nothing"
+        );
+    }
+
+    #[test]
+    fn sgr_extended_bg_truncated_rgb_partial() {
+        // 48;2;50;100 missing B component
+        let changes: Vec<_> = parse_sgr(&[48, 2, 50, 100]).collect();
+        assert!(changes.is_empty(), "truncated bg RGB should yield nothing");
+    }
+
+    #[test]
+    fn sgr_extended_bg_truncated_mode_only() {
+        // 48 with no mode byte
+        let changes: Vec<_> = parse_sgr(&[48]).collect();
+        assert!(changes.is_empty(), "48 alone should yield nothing");
+    }
+
+    #[test]
+    fn sgr_unknown_params_skipped() {
+        // 6, 10, 50, 99 are not recognized SGR codes
+        let changes: Vec<_> = parse_sgr(&[6, 10, 50, 99]).collect();
+        assert!(changes.is_empty(), "unknown SGR params should be skipped");
+    }
+
+    #[test]
+    fn sgr_unknown_interspersed_with_valid() {
+        // Unknown (6), bold (1), unknown (99), italic (3)
+        let changes: Vec<_> = parse_sgr(&[6, 1, 99, 3]).collect();
+        assert_eq!(
+            changes,
+            vec![SgrChange::Bold(true), SgrChange::Italic(true)]
+        );
+    }
+
+    #[test]
+    fn sgr_extended_fg_followed_by_valid() {
+        // 38;5;196 then bold
+        let changes: Vec<_> = parse_sgr(&[38, 5, 196, 1]).collect();
+        assert_eq!(changes, vec![SgrChange::Fg256(196), SgrChange::Bold(true)]);
+    }
+
+    #[test]
+    fn sgr_extended_bg_followed_by_valid() {
+        // bg RGB then fg default
+        let changes: Vec<_> = parse_sgr(&[48, 2, 10, 20, 30, 39]).collect();
+        assert_eq!(
+            changes,
+            vec![SgrChange::BgRgb(10, 20, 30), SgrChange::FgDefault]
+        );
+    }
+
+    // ── Parser edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_empty_input() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"", &mut handler);
+
+        assert!(handler.printed.borrow().is_empty());
+        assert!(handler.executed.borrow().is_empty());
+        assert!(handler.csi_calls.borrow().is_empty());
+        assert!(handler.osc_calls.borrow().is_empty());
+        assert!(handler.esc_calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn parse_only_control_codes() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"\n\r\t\x07\x08", &mut handler);
+
+        assert!(handler.printed.borrow().is_empty());
+        let executed: Vec<u8> = handler.executed.borrow().clone();
+        assert_eq!(executed, vec![b'\n', b'\r', b'\t', 0x07, 0x08]);
+    }
+
+    #[test]
+    fn parse_bell_control_code() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"\x07", &mut handler);
+
+        let executed: Vec<u8> = handler.executed.borrow().clone();
+        assert_eq!(executed, vec![0x07]);
+    }
+
+    #[test]
+    fn parse_backspace_control_code() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        parser.parse(b"\x08", &mut handler);
+
+        let executed: Vec<u8> = handler.executed.borrow().clone();
+        assert_eq!(executed, vec![0x08]);
+    }
+
+    #[test]
+    fn parse_osc_with_st_terminator() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // OSC 2 ; title ST (ESC \)
+        parser.parse(b"\x1b]2;Window Title\x1b\\", &mut handler);
+
+        let osc_calls = handler.osc_calls.borrow();
+        assert_eq!(osc_calls.len(), 1);
+        assert_eq!(osc_calls[0][0], b"2");
+        assert_eq!(osc_calls[0][1], b"Window Title");
+    }
+
+    #[test]
+    fn parse_multiple_parse_calls_state_persists() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // First call: text
+        parser.parse(b"AB", &mut handler);
+        // Second call: more text
+        parser.parse(b"CD", &mut handler);
+
+        let printed: Vec<char> = handler.printed.borrow().clone();
+        assert_eq!(printed, vec!['A', 'B', 'C', 'D']);
+    }
+
+    #[test]
+    fn parse_sequence_split_across_calls() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // Split ESC [ 31 m across two calls
+        parser.parse(b"\x1b[3", &mut handler);
+        assert!(handler.csi_calls.borrow().is_empty());
+
+        parser.parse(b"1m", &mut handler);
+        assert_eq!(handler.csi_calls.borrow().len(), 1);
+        assert_eq!(handler.csi_calls.borrow()[0].0, vec![31]);
+        assert_eq!(handler.csi_calls.borrow()[0].2, 'm');
+    }
+
+    #[test]
+    fn parser_default_impl() {
+        let parser = AnsiParser::default();
+        // Just verify it constructs without error
+        let debug = format!("{parser:?}");
+        assert!(debug.contains("AnsiParser"));
+    }
+
+    #[test]
+    fn parser_debug_impl() {
+        let parser = AnsiParser::new();
+        let debug = format!("{parser:?}");
+        assert!(debug.contains("AnsiParser"));
+    }
+
+    #[test]
+    fn reset_discards_partial_sequence() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // Start incomplete CSI
+        parser.parse(b"\x1b[", &mut handler);
+
+        // Reset discards it
+        parser.reset();
+
+        // Plain text should work normally
+        parser.parse(b"Hello", &mut handler);
+        let printed: Vec<char> = handler.printed.borrow().clone();
+        assert_eq!(printed, vec!['H', 'e', 'l', 'l', 'o']);
+        assert!(handler.csi_calls.borrow().is_empty());
+    }
+
+    // ── SGR constant value tests ────────────────────────────────────────
+
+    #[test]
+    fn sgr_constants_are_correct() {
+        assert_eq!(sgr::RESET, 0);
+        assert_eq!(sgr::BOLD, 1);
+        assert_eq!(sgr::DIM, 2);
+        assert_eq!(sgr::ITALIC, 3);
+        assert_eq!(sgr::UNDERLINE, 4);
+        assert_eq!(sgr::BLINK, 5);
+        assert_eq!(sgr::REVERSE, 7);
+        assert_eq!(sgr::HIDDEN, 8);
+        assert_eq!(sgr::STRIKETHROUGH, 9);
+
+        assert_eq!(sgr::NORMAL_INTENSITY, 22);
+        assert_eq!(sgr::NO_ITALIC, 23);
+        assert_eq!(sgr::NO_UNDERLINE, 24);
+        assert_eq!(sgr::NO_BLINK, 25);
+        assert_eq!(sgr::NO_REVERSE, 27);
+        assert_eq!(sgr::NO_HIDDEN, 28);
+        assert_eq!(sgr::NO_STRIKETHROUGH, 29);
+    }
+
+    #[test]
+    fn sgr_fg_color_constants() {
+        assert_eq!(sgr::FG_BLACK, 30);
+        assert_eq!(sgr::FG_RED, 31);
+        assert_eq!(sgr::FG_GREEN, 32);
+        assert_eq!(sgr::FG_YELLOW, 33);
+        assert_eq!(sgr::FG_BLUE, 34);
+        assert_eq!(sgr::FG_MAGENTA, 35);
+        assert_eq!(sgr::FG_CYAN, 36);
+        assert_eq!(sgr::FG_WHITE, 37);
+        assert_eq!(sgr::FG_EXTENDED, 38);
+        assert_eq!(sgr::FG_DEFAULT, 39);
+    }
+
+    #[test]
+    fn sgr_bg_color_constants() {
+        assert_eq!(sgr::BG_BLACK, 40);
+        assert_eq!(sgr::BG_RED, 41);
+        assert_eq!(sgr::BG_GREEN, 42);
+        assert_eq!(sgr::BG_YELLOW, 43);
+        assert_eq!(sgr::BG_BLUE, 44);
+        assert_eq!(sgr::BG_MAGENTA, 45);
+        assert_eq!(sgr::BG_CYAN, 46);
+        assert_eq!(sgr::BG_WHITE, 47);
+        assert_eq!(sgr::BG_EXTENDED, 48);
+        assert_eq!(sgr::BG_DEFAULT, 49);
+    }
+
+    #[test]
+    fn sgr_bright_color_constants() {
+        assert_eq!(sgr::FG_BRIGHT_BLACK, 90);
+        assert_eq!(sgr::FG_BRIGHT_RED, 91);
+        assert_eq!(sgr::FG_BRIGHT_GREEN, 92);
+        assert_eq!(sgr::FG_BRIGHT_YELLOW, 93);
+        assert_eq!(sgr::FG_BRIGHT_BLUE, 94);
+        assert_eq!(sgr::FG_BRIGHT_MAGENTA, 95);
+        assert_eq!(sgr::FG_BRIGHT_CYAN, 96);
+        assert_eq!(sgr::FG_BRIGHT_WHITE, 97);
+
+        assert_eq!(sgr::BG_BRIGHT_BLACK, 100);
+        assert_eq!(sgr::BG_BRIGHT_RED, 101);
+        assert_eq!(sgr::BG_BRIGHT_GREEN, 102);
+        assert_eq!(sgr::BG_BRIGHT_YELLOW, 103);
+        assert_eq!(sgr::BG_BRIGHT_BLUE, 104);
+        assert_eq!(sgr::BG_BRIGHT_MAGENTA, 105);
+        assert_eq!(sgr::BG_BRIGHT_CYAN, 106);
+        assert_eq!(sgr::BG_BRIGHT_WHITE, 107);
+    }
+
+    #[test]
+    fn sgr_color_mode_constants() {
+        assert_eq!(sgr::COLOR_256, 5);
+        assert_eq!(sgr::COLOR_RGB, 2);
+    }
+
+    // ── DEC mode constant tests ─────────────────────────────────────────
+
+    #[test]
+    fn dec_mode_constants_are_correct() {
+        assert_eq!(dec_mode::CURSOR_VISIBLE, 25);
+        assert_eq!(dec_mode::ALT_SCREEN, 1049);
+        assert_eq!(dec_mode::ALT_SCREEN_NO_CLEAR, 1047);
+        assert_eq!(dec_mode::SAVE_CURSOR, 1048);
+        assert_eq!(dec_mode::MOUSE_TRACKING, 1000);
+        assert_eq!(dec_mode::MOUSE_BUTTON, 1002);
+        assert_eq!(dec_mode::MOUSE_ANY, 1003);
+        assert_eq!(dec_mode::MOUSE_SGR, 1006);
+        assert_eq!(dec_mode::FOCUS, 1004);
+        assert_eq!(dec_mode::BRACKETED_PASTE, 2004);
+    }
+
+    // ── SgrChange trait coverage ────────────────────────────────────────
+
+    #[test]
+    fn sgr_change_debug_format() {
+        let change = SgrChange::Bold(true);
+        let debug = format!("{change:?}");
+        assert!(debug.contains("Bold"));
+    }
+
+    #[test]
+    fn sgr_change_clone_eq() {
+        let a = SgrChange::FgRgb(100, 150, 200);
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sgr_change_ne() {
+        assert_ne!(SgrChange::Bold(true), SgrChange::Bold(false));
+        assert_ne!(SgrChange::FgAnsi(1), SgrChange::FgAnsi(2));
+        assert_ne!(SgrChange::FgDefault, SgrChange::BgDefault);
+    }
+
+    // ── Full roundtrip: parse ANSI then interpret SGR ───────────────────
+
+    #[test]
+    fn roundtrip_parse_then_sgr() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // Bold red text with reset
+        parser.parse(b"\x1b[1;31mRed\x1b[0m", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 2);
+
+        // Interpret the first SGR
+        let sgr_changes: Vec<_> = parse_sgr(&csi_calls[0].0).collect();
+        assert_eq!(
+            sgr_changes,
+            vec![SgrChange::Bold(true), SgrChange::FgAnsi(1)]
+        );
+
+        // Interpret the reset
+        let reset_changes: Vec<_> = parse_sgr(&csi_calls[1].0).collect();
+        assert_eq!(reset_changes, vec![SgrChange::Reset]);
+    }
+
+    #[test]
+    fn roundtrip_256_color() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ 38;5;208 m - 256-color orange foreground
+        parser.parse(b"\x1b[38;5;208m", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+
+        let sgr_changes: Vec<_> = parse_sgr(&csi_calls[0].0).collect();
+        assert_eq!(sgr_changes, vec![SgrChange::Fg256(208)]);
+    }
+
+    #[test]
+    fn roundtrip_rgb_color() {
+        let mut parser = AnsiParser::new();
+        let mut handler = TestHandler::default();
+
+        // ESC [ 48;2;255;128;0 m - RGB orange background
+        parser.parse(b"\x1b[48;2;255;128;0m", &mut handler);
+
+        let csi_calls = handler.csi_calls.borrow();
+        assert_eq!(csi_calls.len(), 1);
+
+        let sgr_changes: Vec<_> = parse_sgr(&csi_calls[0].0).collect();
+        assert_eq!(sgr_changes, vec![SgrChange::BgRgb(255, 128, 0)]);
+    }
+
+    #[test]
+    fn sgr_all_attribute_set_then_reset() {
+        // Set every attribute, then reset each one
+        let changes: Vec<_> =
+            parse_sgr(&[1, 2, 3, 4, 5, 7, 8, 9, 22, 23, 24, 25, 27, 28, 29]).collect();
+        assert_eq!(
+            changes,
+            vec![
+                SgrChange::Bold(true),
+                SgrChange::Dim(true),
+                SgrChange::Italic(true),
+                SgrChange::Underline(true),
+                SgrChange::Blink(true),
+                SgrChange::Reverse(true),
+                SgrChange::Hidden(true),
+                SgrChange::Strikethrough(true),
+                SgrChange::Bold(false), // 22 resets bold
+                SgrChange::Italic(false),
+                SgrChange::Underline(false),
+                SgrChange::Blink(false),
+                SgrChange::Reverse(false),
+                SgrChange::Hidden(false),
+                SgrChange::Strikethrough(false),
+            ]
+        );
+    }
 }

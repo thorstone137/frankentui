@@ -1754,7 +1754,7 @@ mod tests {
             bounds_max: 1.0,
             radius_min: 0.20,
             radius_max: 0.20,
-            ..MetaballsParams::default()
+            ..Default::default()
         };
 
         let mut adapter = MetaballsCanvasAdapter::with_params(params);

@@ -1772,4 +1772,675 @@ mod tests {
         assert!(!PlasmaPalette::Cyberpunk.is_theme_derived());
         assert!(!PlasmaPalette::Galaxy.is_theme_derived());
     }
+
+    // =========================================================================
+    // Reduced Quality Reference Formula (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn reduced_quality_matches_4_component_formula() {
+        // Reduced quality uses v1, v2, v3, v6 (4 components).
+        // Verify the rendered output matches the expected formula.
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::new(PlasmaPalette::Sunset);
+        let ctx = FxContext {
+            width: 11,
+            height: 7,
+            frame: 3,
+            time_seconds: 2.345,
+            quality: FxQuality::Reduced,
+            theme: &theme,
+        };
+        let mut out = vec![PackedRgba::TRANSPARENT; ctx.len()];
+        fx.render(ctx, &mut out);
+
+        let w = ctx.width as f64;
+        let h = ctx.height as f64;
+        let time = ctx.time_seconds;
+        let breath = 0.85 + 0.15 * (time * 0.3).sin();
+
+        for dy in 0..ctx.height {
+            for dx in 0..ctx.width {
+                let idx = dy as usize * ctx.width as usize + dx as usize;
+                let x = (dx as f64 / w) * 6.0;
+                let y = (dy as f64 / h) * 6.0;
+
+                let v1 = (x * 1.5 + time).sin();
+                let v2 = (y * 1.8 + time * 0.8).sin();
+                let v3 = ((x + y) * 1.2 + time * 0.6).sin();
+                let v6 = ((x * 2.0).sin() * (y * 2.0).cos() + time * 0.5).sin();
+                let value = (v1 + v2 + v3 + v6) / 4.0;
+                let wave = ((value * breath) + 1.0) / 2.0;
+                let expected = PlasmaPalette::sunset(wave.clamp(0.0, 1.0));
+
+                assert_eq!(
+                    out[idx], expected,
+                    "reduced quality mismatch at ({dx}, {dy})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reduced_quality_differs_from_full_and_minimal() {
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::new(PlasmaPalette::Ocean);
+        let base = FxContext {
+            width: 10,
+            height: 6,
+            frame: 5,
+            time_seconds: 1.5,
+            quality: FxQuality::Full,
+            theme: &theme,
+        };
+
+        let mut out_full = vec![PackedRgba::TRANSPARENT; base.len()];
+        fx.render(base, &mut out_full);
+
+        let ctx_reduced = FxContext {
+            quality: FxQuality::Reduced,
+            ..base
+        };
+        let mut out_reduced = vec![PackedRgba::TRANSPARENT; base.len()];
+        fx.render(ctx_reduced, &mut out_reduced);
+
+        let ctx_minimal = FxContext {
+            quality: FxQuality::Minimal,
+            ..base
+        };
+        let mut out_minimal = vec![PackedRgba::TRANSPARENT; base.len()];
+        fx.render(ctx_minimal, &mut out_minimal);
+
+        assert_ne!(out_full, out_reduced, "Full should differ from Reduced");
+        assert_ne!(
+            out_reduced, out_minimal,
+            "Reduced should differ from Minimal"
+        );
+    }
+
+    // =========================================================================
+    // HSV Edge Cases (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn hsv_secondary_colors() {
+        // Yellow = 60 degrees
+        let yellow = PlasmaPalette::hsv_to_rgb(60.0, 1.0, 1.0);
+        assert!(yellow.r() > 200, "Yellow should have high R: {}", yellow.r());
+        assert!(yellow.g() > 200, "Yellow should have high G: {}", yellow.g());
+        assert!(yellow.b() < 30, "Yellow should have low B: {}", yellow.b());
+
+        // Cyan = 180 degrees
+        let cyan = PlasmaPalette::hsv_to_rgb(180.0, 1.0, 1.0);
+        assert!(cyan.r() < 10, "Cyan should have low R: {}", cyan.r());
+        assert!(cyan.g() > 200, "Cyan should have high G: {}", cyan.g());
+        assert!(cyan.b() > 200, "Cyan should have high B: {}", cyan.b());
+
+        // Magenta = 300 degrees
+        let magenta = PlasmaPalette::hsv_to_rgb(300.0, 1.0, 1.0);
+        assert!(
+            magenta.r() > 200,
+            "Magenta should have high R: {}",
+            magenta.r()
+        );
+        assert!(
+            magenta.g() < 10,
+            "Magenta should have low G: {}",
+            magenta.g()
+        );
+        assert!(
+            magenta.b() > 200,
+            "Magenta should have high B: {}",
+            magenta.b()
+        );
+    }
+
+    #[test]
+    fn hsv_hue_wrapping_at_360() {
+        // Hue 360 should wrap to the same as hue 0 (red)
+        let at_0 = PlasmaPalette::hsv_to_rgb(0.0, 1.0, 1.0);
+        let at_360 = PlasmaPalette::hsv_to_rgb(360.0, 1.0, 1.0);
+        assert_eq!(at_0, at_360, "360 degrees should wrap to 0 degrees");
+
+        // Hue 720 should also wrap to red
+        let at_720 = PlasmaPalette::hsv_to_rgb(720.0, 1.0, 1.0);
+        assert_eq!(at_0, at_720, "720 degrees should wrap to 0 degrees");
+    }
+
+    #[test]
+    fn hsv_zero_saturation_gives_gray() {
+        // With S=0, all hues should produce the same gray
+        let gray1 = PlasmaPalette::hsv_to_rgb(0.0, 0.0, 0.5);
+        let gray2 = PlasmaPalette::hsv_to_rgb(120.0, 0.0, 0.5);
+        let gray3 = PlasmaPalette::hsv_to_rgb(240.0, 0.0, 0.5);
+        assert_eq!(gray1, gray2, "S=0 should produce identical grays");
+        assert_eq!(gray2, gray3, "S=0 should produce identical grays");
+        // All channels should be equal (gray)
+        assert_eq!(gray1.r(), gray1.g());
+        assert_eq!(gray1.g(), gray1.b());
+    }
+
+    #[test]
+    fn hsv_zero_value_gives_black() {
+        // V=0 should give black regardless of hue or saturation
+        let black1 = PlasmaPalette::hsv_to_rgb(0.0, 1.0, 0.0);
+        let black2 = PlasmaPalette::hsv_to_rgb(180.0, 0.5, 0.0);
+        assert_eq!(black1, PackedRgba::rgb(0, 0, 0));
+        assert_eq!(black2, PackedRgba::rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn hsv_full_saturation_full_value_covers_all_sextants() {
+        // Walk through all 6 sextants of the HSV color wheel
+        let hues = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0];
+        let mut previous = PackedRgba::rgb(0, 0, 0);
+        for (i, &hue) in hues.iter().enumerate() {
+            let color = PlasmaPalette::hsv_to_rgb(hue, 1.0, 1.0);
+            if i > 0 {
+                assert_ne!(
+                    color, previous,
+                    "HSV sextant at hue={hue} should differ from previous"
+                );
+            }
+            previous = color;
+        }
+    }
+
+    // =========================================================================
+    // Scratch Geometry Caching (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn scratch_geometry_cached_on_same_dimensions() {
+        // Rendering at the same size twice should reuse geometry (no recompute).
+        // Verify by checking determinism and that output is identical.
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::new(PlasmaPalette::Sunset);
+        let ctx = FxContext {
+            width: 12,
+            height: 8,
+            frame: 0,
+            time_seconds: 1.0,
+            quality: FxQuality::Full,
+            theme: &theme,
+        };
+
+        let mut out1 = vec![PackedRgba::TRANSPARENT; ctx.len()];
+        fx.render(ctx, &mut out1);
+
+        // Same dimensions, different frame/time
+        let ctx2 = FxContext {
+            frame: 1,
+            time_seconds: 2.0,
+            ..ctx
+        };
+        let mut out2 = vec![PackedRgba::TRANSPARENT; ctx2.len()];
+        fx.render(ctx2, &mut out2);
+
+        // Outputs should differ (different time) but both should be valid
+        assert_ne!(out1, out2, "Different times should produce different output");
+
+        // Re-render at original time to verify scratch wasn't corrupted
+        let mut out3 = vec![PackedRgba::TRANSPARENT; ctx.len()];
+        fx.render(ctx, &mut out3);
+        assert_eq!(out1, out3, "Re-render at same params should match original");
+    }
+
+    #[test]
+    fn scratch_geometry_recomputes_on_resize() {
+        // Rendering at different sizes should produce different outputs because
+        // geometry is recomputed for new dimensions.
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::new(PlasmaPalette::Sunset);
+
+        let ctx_small = FxContext {
+            width: 8,
+            height: 4,
+            frame: 0,
+            time_seconds: 1.0,
+            quality: FxQuality::Full,
+            theme: &theme,
+        };
+        let mut out_small = vec![PackedRgba::TRANSPARENT; ctx_small.len()];
+        fx.render(ctx_small, &mut out_small);
+
+        let ctx_large = FxContext {
+            width: 16,
+            height: 8,
+            frame: 0,
+            time_seconds: 1.0,
+            quality: FxQuality::Full,
+            theme: &theme,
+        };
+        let mut out_large = vec![PackedRgba::TRANSPARENT; ctx_large.len()];
+        fx.render(ctx_large, &mut out_large);
+
+        // Different sizes, so output arrays differ in length at minimum
+        assert_ne!(out_small.len(), out_large.len());
+
+        // Re-render small to verify geometry was recomputed properly
+        let mut out_small2 = vec![PackedRgba::TRANSPARENT; ctx_small.len()];
+        fx.render(ctx_small, &mut out_small2);
+        assert_eq!(
+            out_small, out_small2,
+            "Switching back to original size should produce same output"
+        );
+    }
+
+    // =========================================================================
+    // Palette Segment Boundary Tests (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn fire_palette_segment_boundaries() {
+        // Fire has 5 segments at boundaries: 0.0, 0.2, 0.4, 0.6, 0.8, 1.0
+        let theme = ThemeInputs::default_dark();
+        let fire = PlasmaPalette::Fire;
+
+        // Start should be near black
+        let start = fire.color_at(0.0, &theme);
+        assert!(
+            start.r() < 10 && start.g() < 10 && start.b() < 10,
+            "Fire start should be near black: ({}, {}, {})",
+            start.r(),
+            start.g(),
+            start.b()
+        );
+
+        // End should be near white-yellow
+        let end = fire.color_at(1.0, &theme);
+        assert!(
+            end.r() > 200 && end.g() > 200 && end.b() > 150,
+            "Fire end should be light: ({}, {}, {})",
+            end.r(),
+            end.g(),
+            end.b()
+        );
+
+        // Monotonically increasing brightness across segments
+        let mut prev_lum = 0u32;
+        for i in 0..=10 {
+            let t = i as f64 / 10.0;
+            let c = fire.color_at(t, &theme);
+            let lum = c.r() as u32 * 299 + c.g() as u32 * 587 + c.b() as u32 * 114;
+            assert!(
+                lum >= prev_lum,
+                "Fire brightness should increase: at t={t}, lum={lum} < prev={prev_lum}"
+            );
+            prev_lum = lum;
+        }
+    }
+
+    #[test]
+    fn galaxy_palette_segment_boundaries() {
+        // Galaxy: deep space -> indigo -> magenta -> light -> white-ish
+        // 4 segments at: 0.0, 0.3, 0.6, 0.85, 1.0
+        let theme = ThemeInputs::default_dark();
+        let galaxy = PlasmaPalette::Galaxy;
+
+        // Start should be very dark
+        let start = galaxy.color_at(0.0, &theme);
+        let start_lum = start.r() as u32 + start.g() as u32 + start.b() as u32;
+        assert!(
+            start_lum < 30,
+            "Galaxy start should be near-black: lum={}",
+            start_lum
+        );
+
+        // End should be bright
+        let end = galaxy.color_at(1.0, &theme);
+        let end_lum = end.r() as u32 + end.g() as u32 + end.b() as u32;
+        assert!(
+            end_lum > 600,
+            "Galaxy end should be bright: lum={}",
+            end_lum
+        );
+
+        // Mid-point should have a purple/magenta hue
+        let mid = galaxy.color_at(0.6, &theme);
+        assert!(
+            mid.r() > mid.g(),
+            "Galaxy mid should have magenta (R > G): r={}, g={}",
+            mid.r(),
+            mid.g()
+        );
+    }
+
+    #[test]
+    fn neon_palette_full_hue_cycle() {
+        // Neon maps t in [0,1] to the full HSV hue cycle [0, 360].
+        // At 6 evenly spaced points, we should see R, Y, G, C, B, M.
+        let theme = ThemeInputs::default_dark();
+        let neon = PlasmaPalette::Neon;
+
+        // t=0 ~ red, t=1/6 ~ yellow, t=2/6 ~ green, etc.
+        let red = neon.color_at(0.0, &theme);
+        assert!(
+            red.r() > 200 && red.g() < 50,
+            "Neon at t=0 should be red-ish"
+        );
+
+        let green = neon.color_at(1.0 / 3.0, &theme);
+        assert!(
+            green.g() > 200 && green.r() < 50,
+            "Neon at t=1/3 should be green-ish: r={} g={}",
+            green.r(),
+            green.g()
+        );
+
+        let blue = neon.color_at(2.0 / 3.0, &theme);
+        assert!(
+            blue.b() > 200 && blue.g() < 50,
+            "Neon at t=2/3 should be blue-ish: g={} b={}",
+            blue.g(),
+            blue.b()
+        );
+    }
+
+    #[test]
+    fn sunset_palette_endpoint_colors() {
+        let theme = ThemeInputs::default_dark();
+        let sunset = PlasmaPalette::Sunset;
+
+        // Start: deep purple (high R and B, low G)
+        let start = sunset.color_at(0.0, &theme);
+        assert!(
+            start.b() > start.g(),
+            "Sunset start should be purple-ish: g={} b={}",
+            start.g(),
+            start.b()
+        );
+
+        // End: yellow (high R and G)
+        let end = sunset.color_at(1.0, &theme);
+        assert!(end.r() > 200, "Sunset end should have high R");
+        assert!(end.g() > 200, "Sunset end should have high G");
+    }
+
+    #[test]
+    fn ocean_palette_endpoint_colors() {
+        let theme = ThemeInputs::default_dark();
+        let ocean = PlasmaPalette::Ocean;
+
+        // Start: deep blue
+        let start = ocean.color_at(0.0, &theme);
+        assert!(
+            start.b() > start.r() && start.b() > start.g(),
+            "Ocean start should be blue: r={} g={} b={}",
+            start.r(),
+            start.g(),
+            start.b()
+        );
+
+        // End: seafoam (high G, moderate B, some R)
+        let end = ocean.color_at(1.0, &theme);
+        assert!(
+            end.g() > 200,
+            "Ocean end should be seafoam with high G: g={}",
+            end.g()
+        );
+    }
+
+    // =========================================================================
+    // Lerp Midpoint Accuracy (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn lerp_rgb_midpoint_accuracy() {
+        // At t=0.5, the result should be near the average of the endpoints
+        let a = (0, 0, 0);
+        let b = (200, 100, 50);
+        let mid = PlasmaPalette::lerp_rgb(a, b, 0.5);
+        // Allow +/- 1 for fixed-point rounding
+        assert!((mid.0 as i32 - 100).abs() <= 1, "R midpoint: {}", mid.0);
+        assert!((mid.1 as i32 - 50).abs() <= 1, "G midpoint: {}", mid.1);
+        assert!((mid.2 as i32 - 25).abs() <= 1, "B midpoint: {}", mid.2);
+    }
+
+    #[test]
+    fn lerp_color_midpoint_accuracy() {
+        let a = PackedRgba::rgb(0, 0, 0);
+        let b = PackedRgba::rgb(200, 100, 50);
+        let mid = PlasmaPalette::lerp_color(a, b, 0.5);
+        assert!(
+            (mid.r() as i32 - 100).abs() <= 1,
+            "R midpoint: {}",
+            mid.r()
+        );
+        assert!(
+            (mid.g() as i32 - 50).abs() <= 1,
+            "G midpoint: {}",
+            mid.g()
+        );
+        assert!(
+            (mid.b() as i32 - 25).abs() <= 1,
+            "B midpoint: {}",
+            mid.b()
+        );
+    }
+
+    #[test]
+    fn lerp_rgb_clamping_at_boundaries() {
+        // t values beyond [0, 1] should be clamped
+        let a = (50, 100, 150);
+        let b = (200, 210, 220);
+        let below = PlasmaPalette::lerp_rgb(a, b, -1.0);
+        let above = PlasmaPalette::lerp_rgb(a, b, 2.0);
+        assert_eq!(below, a, "t < 0 should clamp to start");
+        assert_eq!(above, b, "t > 1 should clamp to end");
+    }
+
+    // =========================================================================
+    // Breathing Envelope (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn breathing_envelope_modulates_wave() {
+        // The breathing envelope is: 0.85 + 0.15 * sin(time * 0.3)
+        // At time=0, sin(0)=0 => breath=0.85
+        // At time=pi/(2*0.3)~=5.236, sin(pi/2)=1 => breath=1.0
+        // Verify that outputs differ between these time points.
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::new(PlasmaPalette::Sunset);
+
+        let ctx1 = FxContext {
+            width: 6,
+            height: 4,
+            frame: 0,
+            time_seconds: 0.0, // breath = 0.85
+            quality: FxQuality::Full,
+            theme: &theme,
+        };
+        let mut out1 = vec![PackedRgba::TRANSPARENT; ctx1.len()];
+        fx.render(ctx1, &mut out1);
+
+        let ctx2 = FxContext {
+            time_seconds: std::f64::consts::FRAC_PI_2 / 0.3, // breath = 1.0
+            ..ctx1
+        };
+        let mut out2 = vec![PackedRgba::TRANSPARENT; ctx2.len()];
+        fx.render(ctx2, &mut out2);
+
+        // Different breath values should produce different outputs
+        assert_ne!(
+            out1, out2,
+            "Different breathing phases should produce different output"
+        );
+    }
+
+    // =========================================================================
+    // Extreme Time Values (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn extreme_time_values_do_not_panic() {
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::default();
+        let mut out = vec![PackedRgba::TRANSPARENT; 64];
+
+        for &time in &[0.0, 0.001, 100.0, 10_000.0, 1e6, f64::MIN_POSITIVE] {
+            let ctx = FxContext {
+                width: 8,
+                height: 8,
+                frame: 0,
+                time_seconds: time,
+                quality: FxQuality::Full,
+                theme: &theme,
+            };
+            fx.render(ctx, &mut out);
+            // Should not panic and should produce some non-transparent pixels
+            let filled = out
+                .iter()
+                .filter(|c| **c != PackedRgba::TRANSPARENT)
+                .count();
+            assert!(filled > 0, "time={time}: should produce output");
+        }
+    }
+
+    #[test]
+    fn wave_extreme_inputs_in_valid_range() {
+        // Test plasma_wave with extreme but valid inputs
+        for &time in &[0.0, 1e3, 1e6] {
+            for &nx in &[0.0, 0.5, 1.0] {
+                for &ny in &[0.0, 0.5, 1.0] {
+                    let v = plasma_wave(nx, ny, time);
+                    assert!(
+                        (0.0..=1.0).contains(&v),
+                        "plasma_wave({nx}, {ny}, {time}) = {v} out of [0,1]"
+                    );
+                    let v_low = plasma_wave_low(nx, ny, time);
+                    assert!(
+                        (0.0..=1.0).contains(&v_low),
+                        "plasma_wave_low({nx}, {ny}, {time}) = {v_low} out of [0,1]"
+                    );
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Aurora/Ember with Custom Theme Slots (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn aurora_uses_custom_theme_slots_when_non_transparent() {
+        // Create a theme with custom accent_slots to verify the non-fallback path
+        let mut theme = ThemeInputs::default_dark();
+        theme.accent_slots[0] = PackedRgba::rgb(100, 50, 200); // Custom purple
+        theme.accent_slots[1] = PackedRgba::rgb(50, 255, 100); // Custom green
+
+        let aurora_custom = PlasmaPalette::Aurora.color_at(0.5, &theme);
+
+        // Now test with transparent slots (fallback path)
+        let mut theme_fallback = ThemeInputs::default_dark();
+        theme_fallback.accent_slots[0] = PackedRgba::TRANSPARENT;
+        theme_fallback.accent_slots[1] = PackedRgba::TRANSPARENT;
+
+        let aurora_fallback = PlasmaPalette::Aurora.color_at(0.5, &theme_fallback);
+
+        // Custom and fallback should produce different colors at the same t
+        assert_ne!(
+            aurora_custom, aurora_fallback,
+            "Aurora with custom slots should differ from fallback"
+        );
+    }
+
+    #[test]
+    fn ember_uses_custom_theme_slots_when_non_transparent() {
+        let mut theme = ThemeInputs::default_dark();
+        theme.accent_slots[2] = PackedRgba::rgb(255, 0, 0); // Custom red
+        theme.accent_slots[3] = PackedRgba::rgb(255, 255, 0); // Custom yellow
+
+        let ember_custom = PlasmaPalette::Ember.color_at(0.5, &theme);
+
+        let mut theme_fallback = ThemeInputs::default_dark();
+        theme_fallback.accent_slots[2] = PackedRgba::TRANSPARENT;
+        theme_fallback.accent_slots[3] = PackedRgba::TRANSPARENT;
+
+        let ember_fallback = PlasmaPalette::Ember.color_at(0.5, &theme_fallback);
+
+        assert_ne!(
+            ember_custom, ember_fallback,
+            "Ember with custom slots should differ from fallback"
+        );
+    }
+
+    // =========================================================================
+    // PlasmaFx Clone and Debug (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn plasma_fx_clone_produces_identical_output() {
+        let theme = ThemeInputs::default_dark();
+        let mut fx1 = PlasmaFx::new(PlasmaPalette::Cyberpunk);
+
+        // Warm up the scratch buffer
+        let ctx = FxContext {
+            width: 10,
+            height: 6,
+            frame: 0,
+            time_seconds: 1.0,
+            quality: FxQuality::Full,
+            theme: &theme,
+        };
+        let mut out1 = vec![PackedRgba::TRANSPARENT; ctx.len()];
+        fx1.render(ctx, &mut out1);
+
+        // Clone and render again
+        let mut fx2 = fx1.clone();
+        let mut out2 = vec![PackedRgba::TRANSPARENT; ctx.len()];
+        fx2.render(ctx, &mut out2);
+
+        assert_eq!(out1, out2, "Clone should produce identical render output");
+    }
+
+    #[test]
+    fn plasma_fx_debug_includes_palette() {
+        let fx = PlasmaFx::new(PlasmaPalette::Galaxy);
+        let debug = format!("{fx:?}");
+        assert!(
+            debug.contains("Galaxy"),
+            "Debug output should mention palette: {debug}"
+        );
+    }
+
+    // =========================================================================
+    // Minimal Quality Reference Formula (bd-50ltp)
+    // =========================================================================
+
+    #[test]
+    fn minimal_quality_matches_3_component_formula() {
+        // Minimal quality uses v1, v2, v3 (3 components) without breathing envelope.
+        let theme = ThemeInputs::default_dark();
+        let mut fx = PlasmaFx::new(PlasmaPalette::Ocean);
+        let ctx = FxContext {
+            width: 9,
+            height: 5,
+            frame: 2,
+            time_seconds: 0.789,
+            quality: FxQuality::Minimal,
+            theme: &theme,
+        };
+        let mut out = vec![PackedRgba::TRANSPARENT; ctx.len()];
+        fx.render(ctx, &mut out);
+
+        let w = ctx.width as f64;
+        let h = ctx.height as f64;
+        let time = ctx.time_seconds;
+
+        for dy in 0..ctx.height {
+            for dx in 0..ctx.width {
+                let idx = dy as usize * ctx.width as usize + dx as usize;
+                let nx = dx as f64 / w;
+                let ny = dy as f64 / h;
+                let expected =
+                    PlasmaPalette::ocean(plasma_wave_low(nx, ny, time).clamp(0.0, 1.0));
+
+                assert_eq!(
+                    out[idx], expected,
+                    "minimal quality mismatch at ({dx}, {dy})"
+                );
+            }
+        }
+    }
 }
