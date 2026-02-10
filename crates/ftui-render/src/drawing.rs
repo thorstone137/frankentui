@@ -866,4 +866,379 @@ mod tests {
         assert_eq!(char_at(&buf, 1, 1), Some('┌'));
         assert_eq!(char_at(&buf, 8, 4), Some('┘'));
     }
+
+    // --- BorderChars trait coverage ---
+
+    #[test]
+    fn border_chars_debug_clone_copy_eq() {
+        let a = BorderChars::SQUARE;
+        let dbg = format!("{:?}", a);
+        assert!(dbg.contains("BorderChars"), "Debug: {dbg}");
+        let copied: BorderChars = a; // Copy
+        assert_eq!(a, copied);
+        assert_ne!(a, BorderChars::ROUNDED);
+        assert_ne!(BorderChars::DOUBLE, BorderChars::HEAVY);
+    }
+
+    #[test]
+    fn border_chars_double_characters() {
+        let d = BorderChars::DOUBLE;
+        assert_eq!(d.top_left, '╔');
+        assert_eq!(d.top_right, '╗');
+        assert_eq!(d.bottom_left, '╚');
+        assert_eq!(d.bottom_right, '╝');
+        assert_eq!(d.horizontal, '═');
+        assert_eq!(d.vertical, '║');
+    }
+
+    #[test]
+    fn border_chars_heavy_characters() {
+        let h = BorderChars::HEAVY;
+        assert_eq!(h.top_left, '┏');
+        assert_eq!(h.top_right, '┓');
+        assert_eq!(h.bottom_left, '┗');
+        assert_eq!(h.bottom_right, '┛');
+        assert_eq!(h.horizontal, '━');
+        assert_eq!(h.vertical, '┃');
+    }
+
+    #[test]
+    fn border_chars_ascii_characters() {
+        let a = BorderChars::ASCII;
+        assert_eq!(a.top_left, '+');
+        assert_eq!(a.top_right, '+');
+        assert_eq!(a.bottom_left, '+');
+        assert_eq!(a.bottom_right, '+');
+        assert_eq!(a.horizontal, '-');
+        assert_eq!(a.vertical, '|');
+    }
+
+    // --- draw_rect_outline edge cases ---
+
+    #[test]
+    fn rect_outline_empty_rect() {
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_rect_outline(Rect::new(0, 0, 0, 0), Cell::from_char('#'));
+        // Nothing drawn
+        assert!(buf.get(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rect_outline_1xn_tall() {
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_rect_outline(Rect::new(1, 0, 1, 4), Cell::from_char('#'));
+        // Width=1: only top and bottom, no left/right separation
+        assert_eq!(char_at(&buf, 1, 0), Some('#'));
+        assert_eq!(char_at(&buf, 1, 3), Some('#'));
+        // Left side (excluding corners) when height > 2
+        assert_eq!(char_at(&buf, 1, 1), Some('#'));
+        assert_eq!(char_at(&buf, 1, 2), Some('#'));
+    }
+
+    #[test]
+    fn rect_outline_nx1_wide() {
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_rect_outline(Rect::new(0, 1, 4, 1), Cell::from_char('#'));
+        // Height=1: only top row
+        for x in 0..4 {
+            assert_eq!(char_at(&buf, x, 1), Some('#'));
+        }
+        // Nothing below
+        assert!(buf.get(0, 2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rect_outline_3x3() {
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_rect_outline(Rect::new(0, 0, 3, 3), Cell::from_char('#'));
+        // All border cells filled
+        for &(x, y) in &[
+            (0, 0),
+            (1, 0),
+            (2, 0),
+            (0, 1),
+            (2, 1),
+            (0, 2),
+            (1, 2),
+            (2, 2),
+        ] {
+            assert_eq!(char_at(&buf, x, y), Some('#'), "({x},{y})");
+        }
+        // Interior empty
+        assert!(buf.get(1, 1).unwrap().is_empty());
+    }
+
+    // --- draw_border edge cases ---
+
+    #[test]
+    fn draw_border_1x3_narrow() {
+        // Width=1, height=3: top-left corner, vertical edge, bottom-left corner
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_border(
+            Rect::new(1, 0, 1, 3),
+            BorderChars::SQUARE,
+            Cell::from_char(' '),
+        );
+        assert_eq!(char_at(&buf, 1, 0), Some('┌'));
+        assert_eq!(char_at(&buf, 1, 1), Some('│'));
+        assert_eq!(char_at(&buf, 1, 2), Some('└'));
+    }
+
+    #[test]
+    fn draw_border_3x1_flat() {
+        // Width=3, height=1: only top row with corners + horizontal
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_border(
+            Rect::new(0, 0, 3, 1),
+            BorderChars::SQUARE,
+            Cell::from_char(' '),
+        );
+        assert_eq!(char_at(&buf, 0, 0), Some('┌'));
+        assert_eq!(char_at(&buf, 1, 0), Some('─'));
+        assert_eq!(char_at(&buf, 2, 0), Some('┐'));
+    }
+
+    #[test]
+    fn draw_border_2x1() {
+        // Width=2, height=1: top-left and top-right corners only
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_border(
+            Rect::new(0, 0, 2, 1),
+            BorderChars::SQUARE,
+            Cell::from_char(' '),
+        );
+        assert_eq!(char_at(&buf, 0, 0), Some('┌'));
+        assert_eq!(char_at(&buf, 1, 0), Some('┐'));
+    }
+
+    #[test]
+    fn draw_border_1x2() {
+        // Width=1, height=2: top-left and bottom-left (no right column)
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_border(
+            Rect::new(0, 0, 1, 2),
+            BorderChars::SQUARE,
+            Cell::from_char(' '),
+        );
+        assert_eq!(char_at(&buf, 0, 0), Some('┌'));
+        assert_eq!(char_at(&buf, 0, 1), Some('└'));
+    }
+
+    // --- draw_box edge cases ---
+
+    #[test]
+    fn draw_box_3x3_minimal_interior() {
+        let mut buf = Buffer::new(5, 5);
+        let border = Cell::from_char(' ');
+        let fill = Cell::from_char('.');
+        buf.draw_box(Rect::new(0, 0, 3, 3), BorderChars::SQUARE, border, fill);
+        // Border corners
+        assert_eq!(char_at(&buf, 0, 0), Some('┌'));
+        assert_eq!(char_at(&buf, 2, 2), Some('┘'));
+        // Interior: 1 cell
+        assert_eq!(char_at(&buf, 1, 1), Some('.'));
+    }
+
+    #[test]
+    fn draw_box_1x1() {
+        let mut buf = Buffer::new(5, 5);
+        let border = Cell::from_char(' ');
+        let fill = Cell::from_char('X');
+        buf.draw_box(Rect::new(1, 1, 1, 1), BorderChars::SQUARE, border, fill);
+        // Only corner drawn, no fill
+        assert_eq!(char_at(&buf, 1, 1), Some('┌'));
+    }
+
+    #[test]
+    fn draw_box_border_overwrites_fill() {
+        // Ensure border is drawn on top of fill
+        let mut buf = Buffer::new(5, 5);
+        let border = Cell::from_char(' ').with_fg(PackedRgba::rgb(255, 0, 0));
+        let fill = Cell::from_char('.').with_fg(PackedRgba::rgb(0, 255, 0));
+        buf.draw_box(Rect::new(0, 0, 4, 4), BorderChars::SQUARE, border, fill);
+        // Corner should have border style, not fill
+        assert_eq!(char_at(&buf, 0, 0), Some('┌'));
+        assert_eq!(buf.get(0, 0).unwrap().fg, PackedRgba::rgb(255, 0, 0));
+        // Interior should have fill style
+        assert_eq!(char_at(&buf, 1, 1), Some('.'));
+        assert_eq!(buf.get(1, 1).unwrap().fg, PackedRgba::rgb(0, 255, 0));
+    }
+
+    // --- paint_area edge cases ---
+
+    #[test]
+    fn paint_area_sets_both_fg_and_bg() {
+        let mut buf = Buffer::new(3, 3);
+        buf.set(1, 1, Cell::from_char('X'));
+        buf.paint_area(
+            Rect::new(0, 0, 3, 3),
+            Some(PackedRgba::rgb(100, 200, 50)),
+            Some(PackedRgba::rgb(10, 20, 30)),
+        );
+        let cell = buf.get(1, 1).unwrap();
+        assert_eq!(cell.content.as_char(), Some('X'));
+        assert_eq!(cell.fg, PackedRgba::rgb(100, 200, 50));
+        assert_eq!(cell.bg, PackedRgba::rgb(10, 20, 30));
+    }
+
+    #[test]
+    fn paint_area_beyond_buffer() {
+        let mut buf = Buffer::new(3, 3);
+        // Rect extends past buffer — should silently handle via get_mut returning None
+        buf.paint_area(
+            Rect::new(0, 0, 100, 100),
+            Some(PackedRgba::rgb(255, 0, 0)),
+            None,
+        );
+        // Only cells within buffer should be painted
+        assert_eq!(buf.get(0, 0).unwrap().fg, PackedRgba::rgb(255, 0, 0));
+        assert_eq!(buf.get(2, 2).unwrap().fg, PackedRgba::rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn paint_area_no_colors() {
+        let mut buf = Buffer::new(3, 1);
+        let cell = Cell::from_char('A').with_fg(PackedRgba::rgb(10, 20, 30));
+        buf.set(0, 0, cell);
+        // Paint with neither fg nor bg — nothing changes
+        buf.paint_area(Rect::new(0, 0, 3, 1), None, None);
+        assert_eq!(buf.get(0, 0).unwrap().fg, PackedRgba::rgb(10, 20, 30));
+    }
+
+    // --- print_text edge cases ---
+
+    #[test]
+    fn print_text_max_x_zero() {
+        let mut buf = Buffer::new(10, 1);
+        let end_x = buf.print_text_clipped(0, 0, "Hello", Cell::from_char(' '), 0);
+        assert_eq!(end_x, 0);
+        assert!(buf.get(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn print_text_start_past_max_x() {
+        let mut buf = Buffer::new(10, 1);
+        let end_x = buf.print_text_clipped(5, 0, "Hello", Cell::from_char(' '), 3);
+        assert_eq!(end_x, 5); // cx starts at 5 >= max_x=3, immediately breaks
+    }
+
+    #[test]
+    fn print_text_single_char() {
+        let mut buf = Buffer::new(10, 1);
+        let end_x = buf.print_text(0, 0, "X", Cell::from_char(' '));
+        assert_eq!(end_x, 1);
+        assert_eq!(char_at(&buf, 0, 0), Some('X'));
+    }
+
+    // --- Horizontal/vertical line edge cases ---
+
+    #[test]
+    fn horizontal_line_at_buffer_bottom() {
+        let mut buf = Buffer::new(5, 3);
+        buf.draw_horizontal_line(0, 2, 5, Cell::from_char('='));
+        for x in 0..5 {
+            assert_eq!(char_at(&buf, x, 2), Some('='));
+        }
+    }
+
+    #[test]
+    fn vertical_line_at_buffer_right_edge() {
+        let mut buf = Buffer::new(5, 5);
+        buf.draw_vertical_line(4, 0, 5, Cell::from_char('|'));
+        for y in 0..5 {
+            assert_eq!(char_at(&buf, 4, y), Some('|'));
+        }
+    }
+
+    #[test]
+    fn horizontal_line_exceeds_buffer() {
+        // Line extends beyond buffer width; set() should silently clip
+        let mut buf = Buffer::new(3, 1);
+        buf.draw_horizontal_line(0, 0, 100, Cell::from_char('-'));
+        for x in 0..3 {
+            assert_eq!(char_at(&buf, x, 0), Some('-'));
+        }
+    }
+
+    #[test]
+    fn vertical_line_exceeds_buffer() {
+        let mut buf = Buffer::new(1, 3);
+        buf.draw_vertical_line(0, 0, 100, Cell::from_char('|'));
+        for y in 0..3 {
+            assert_eq!(char_at(&buf, 0, y), Some('|'));
+        }
+    }
+
+    // --- Scissor + drawing ops ---
+
+    #[test]
+    fn rect_filled_clipped_by_scissor() {
+        let mut buf = Buffer::new(10, 10);
+        buf.push_scissor(Rect::new(2, 2, 3, 3));
+        buf.draw_rect_filled(Rect::new(0, 0, 10, 10), Cell::from_char('#'));
+        // Inside scissor
+        assert_eq!(char_at(&buf, 2, 2), Some('#'));
+        assert_eq!(char_at(&buf, 4, 4), Some('#'));
+        // Outside scissor
+        assert!(buf.get(0, 0).unwrap().is_empty());
+        assert!(buf.get(5, 5).unwrap().is_empty());
+        buf.pop_scissor();
+    }
+
+    #[test]
+    fn vertical_line_clipped_by_scissor() {
+        let mut buf = Buffer::new(5, 10);
+        buf.push_scissor(Rect::new(0, 2, 5, 3));
+        buf.draw_vertical_line(2, 0, 10, Cell::from_char('|'));
+        // Inside scissor
+        assert_eq!(char_at(&buf, 2, 2), Some('|'));
+        assert_eq!(char_at(&buf, 2, 4), Some('|'));
+        // Outside scissor
+        assert!(buf.get(2, 0).unwrap().is_empty());
+        assert!(buf.get(2, 5).unwrap().is_empty());
+        buf.pop_scissor();
+    }
+
+    // --- 1x1 buffer stress ---
+
+    #[test]
+    fn drawing_on_1x1_buffer() {
+        let mut buf = Buffer::new(1, 1);
+        buf.draw_horizontal_line(0, 0, 1, Cell::from_char('H'));
+        assert_eq!(char_at(&buf, 0, 0), Some('H'));
+
+        buf.clear();
+        buf.draw_vertical_line(0, 0, 1, Cell::from_char('V'));
+        assert_eq!(char_at(&buf, 0, 0), Some('V'));
+
+        buf.clear();
+        buf.draw_rect_outline(Rect::new(0, 0, 1, 1), Cell::from_char('O'));
+        assert_eq!(char_at(&buf, 0, 0), Some('O'));
+
+        buf.clear();
+        buf.draw_rect_filled(Rect::new(0, 0, 1, 1), Cell::from_char('F'));
+        assert_eq!(char_at(&buf, 0, 0), Some('F'));
+
+        buf.clear();
+        buf.draw_border(
+            Rect::new(0, 0, 1, 1),
+            BorderChars::SQUARE,
+            Cell::from_char(' '),
+        );
+        assert_eq!(char_at(&buf, 0, 0), Some('┌'));
+
+        buf.clear();
+        buf.draw_box(
+            Rect::new(0, 0, 1, 1),
+            BorderChars::ASCII,
+            Cell::from_char(' '),
+            Cell::from_char('.'),
+        );
+        assert_eq!(char_at(&buf, 0, 0), Some('+'));
+
+        buf.clear();
+        let end = buf.print_text(0, 0, "X", Cell::from_char(' '));
+        assert_eq!(end, 1);
+        assert_eq!(char_at(&buf, 0, 0), Some('X'));
+    }
 }
