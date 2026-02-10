@@ -1162,6 +1162,306 @@ mod tests {
         assert_eq!(p.cell_size(), (2, 2));
     }
 
+    // --- Additional edge case tests (bd-rlzf3) ---
+
+    #[test]
+    fn mode_default_is_braille() {
+        assert_eq!(Mode::default(), Mode::Braille);
+    }
+
+    #[test]
+    fn ensure_size_grow_only() {
+        let mut p = Painter::new(10, 10, Mode::Braille);
+        let initial_cap = p.pixels.capacity();
+
+        // Grow
+        p.ensure_size(20, 20, Mode::Braille);
+        assert_eq!(p.size(), (20, 20));
+        assert!(p.pixels.len() >= 400);
+
+        // "Shrink" — logical size changes but buffer doesn't shrink
+        p.ensure_size(5, 5, Mode::Braille);
+        assert_eq!(p.size(), (5, 5));
+        assert!(
+            p.pixels.capacity() >= initial_cap,
+            "buffer should not shrink"
+        );
+    }
+
+    #[test]
+    fn ensure_for_area_sets_correct_dimensions() {
+        let mut p = Painter::new(1, 1, Mode::Braille);
+        let area = Rect::new(0, 0, 10, 5);
+        p.ensure_for_area(area, Mode::Braille);
+        assert_eq!(p.size(), (20, 20)); // 10*2, 5*4
+    }
+
+    #[test]
+    fn buffer_len_matches_dimensions() {
+        let p = Painter::new(10, 20, Mode::Braille);
+        assert_eq!(p.buffer_len(), 200);
+    }
+
+    #[test]
+    fn polygon_filled_fewer_than_3_points_noop() {
+        let mut p = Painter::new(10, 10, Mode::Braille);
+        p.polygon_filled(&[]);
+        p.polygon_filled(&[(5, 5)]);
+        p.polygon_filled(&[(0, 0), (5, 5)]);
+        // None of these should set any pixels
+        for y in 0..10 {
+            for x in 0..10 {
+                assert!(!p.get(x, y));
+            }
+        }
+    }
+
+    #[test]
+    fn polygon_filled_triangle() {
+        let mut p = Painter::new(20, 20, Mode::Braille);
+        p.polygon_filled(&[(10, 0), (0, 19), (19, 19)]);
+        // Interior point should be filled
+        assert!(p.get(10, 10));
+        // Top vertex should be filled
+        assert!(p.get(10, 0));
+    }
+
+    #[test]
+    fn point_in_convex_polygon_inside() {
+        let tri = [(0, 0), (10, 0), (5, 10)];
+        assert!(point_in_convex_polygon(5, 3, &tri));
+    }
+
+    #[test]
+    fn point_in_convex_polygon_outside() {
+        let tri = [(0, 0), (10, 0), (5, 10)];
+        assert!(!point_in_convex_polygon(0, 10, &tri));
+    }
+
+    #[test]
+    fn point_in_convex_polygon_on_edge() {
+        let tri = [(0, 0), (10, 0), (5, 10)];
+        // Point on an edge — cross product is 0, so it counts as inside
+        assert!(point_in_convex_polygon(5, 0, &tri));
+    }
+
+    #[test]
+    fn clear_generation_wraparound() {
+        let mut p = Painter::new(4, 4, Mode::Braille);
+        // Set generation close to MAX to trigger wraparound
+        p.generation = u32::MAX;
+        p.point(1, 1);
+        assert!(p.get(1, 1));
+
+        // Clear should handle the wraparound
+        p.clear();
+        assert!(!p.get(1, 1));
+        assert_eq!(p.generation, 1); // reset to 1
+    }
+
+    #[test]
+    fn set_color_at_index_in_bounds_works() {
+        let mut p = Painter::new(4, 4, Mode::Braille);
+        p.mark_full_coverage();
+        let red = PackedRgba::rgb(255, 0, 0);
+        p.set_color_at_index_in_bounds(5, red);
+        assert_eq!(p.colors[5], Some(red));
+    }
+
+    #[test]
+    fn point_colored_at_index_in_bounds_works() {
+        let mut p = Painter::new(4, 4, Mode::Braille);
+        let green = PackedRgba::rgb(0, 255, 0);
+        p.point_colored_at_index_in_bounds(3, green);
+        assert!(p.get(3, 0)); // index 3 = (3, 0) for width=4
+        assert_eq!(p.colors[3], Some(green));
+    }
+
+    #[test]
+    fn canvas_ref_renders() {
+        let mut painter = Painter::new(4, 8, Mode::Braille);
+        for y in 0..4 {
+            for x in 0..2 {
+                painter.point(x, y);
+            }
+        }
+
+        let canvas_ref = CanvasRef::from_painter(&painter);
+        let area = Rect::new(0, 0, 2, 2);
+        let mut pool = GraphemePool::new();
+        let mut frame = Frame::new(2, 2, &mut pool);
+        canvas_ref.render(area, &mut frame);
+
+        let cell = frame.buffer.get(0, 0).unwrap();
+        assert_eq!(cell.content.as_char(), Some('\u{28FF}'));
+    }
+
+    #[test]
+    fn canvas_style_builder() {
+        let painter = Painter::new(4, 8, Mode::Braille);
+        let style = Style::new().fg(PackedRgba::rgb(255, 0, 0));
+        let canvas = Canvas::from_painter(&painter).style(style);
+        assert_eq!(canvas.style.fg, Some(PackedRgba::rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn canvas_ref_style_builder() {
+        let painter = Painter::new(4, 8, Mode::Braille);
+        let style = Style::new().fg(PackedRgba::rgb(0, 255, 0));
+        let canvas_ref = CanvasRef::from_painter(&painter).style(style);
+        assert_eq!(canvas_ref.style.fg, Some(PackedRgba::rgb(0, 255, 0)));
+    }
+
+    #[test]
+    fn rect_zero_dimensions_noop() {
+        let mut p = Painter::new(10, 10, Mode::Braille);
+        p.rect(2, 2, 0, 5);
+        p.rect(2, 2, 5, 0);
+        p.rect(2, 2, -1, 5);
+        for y in 0..10 {
+            for x in 0..10 {
+                assert!(!p.get(x, y));
+            }
+        }
+    }
+
+    #[test]
+    fn circle_negative_radius_sets_center() {
+        let mut p = Painter::new(10, 10, Mode::Braille);
+        p.circle(5, 5, -1);
+        assert!(p.get(5, 5));
+        // Adjacent should not be set
+        assert!(!p.get(4, 5));
+        assert!(!p.get(6, 5));
+    }
+
+    #[test]
+    fn multiple_clear_cycles() {
+        let mut p = Painter::new(10, 10, Mode::Braille);
+        for cycle in 0..5 {
+            p.point(cycle, cycle);
+            assert!(p.get(cycle, cycle));
+            p.clear();
+            assert!(!p.get(cycle, cycle), "cycle {cycle}: should be cleared");
+        }
+    }
+
+    #[test]
+    fn painter_clone() {
+        let mut p = Painter::new(10, 10, Mode::Braille);
+        p.point(3, 3);
+        let cloned = p.clone();
+        assert!(cloned.get(3, 3));
+        assert_eq!(p.size(), cloned.size());
+    }
+
+    #[test]
+    fn painter_debug() {
+        let p = Painter::new(4, 4, Mode::Braille);
+        let dbg = format!("{p:?}");
+        assert!(dbg.contains("Painter"));
+    }
+
+    #[test]
+    fn canvas_debug() {
+        let painter = Painter::new(4, 4, Mode::Braille);
+        let canvas = Canvas::from_painter(&painter);
+        let dbg = format!("{canvas:?}");
+        assert!(dbg.contains("Canvas"));
+    }
+
+    #[test]
+    fn block_all_16_combinations() {
+        // Test all 16 possible 2x2 patterns
+        let patterns: [(bool, bool, bool, bool, char); 16] = [
+            (false, false, false, false, ' '),
+            (true, false, false, false, '▘'),
+            (false, true, false, false, '▝'),
+            (true, true, false, false, '▀'),
+            (false, false, true, false, '▖'),
+            (true, false, true, false, '▌'),
+            (false, true, true, false, '▞'),
+            (true, true, true, false, '▛'),
+            (false, false, false, true, '▗'),
+            (true, false, false, true, '▚'),
+            (false, true, false, true, '▐'),
+            (true, true, false, true, '▜'),
+            (false, false, true, true, '▄'),
+            (true, false, true, true, '▙'),
+            (false, true, true, true, '▟'),
+            (true, true, true, true, '█'),
+        ];
+
+        for &(tl, tr, bl, br, expected) in &patterns {
+            let mut p = Painter::new(2, 2, Mode::Block);
+            if tl {
+                p.point(0, 0);
+            }
+            if tr {
+                p.point(1, 0);
+            }
+            if bl {
+                p.point(0, 1);
+            }
+            if br {
+                p.point(1, 1);
+            }
+            let (ch, _, _) = p.block_cell(0, 0);
+            assert_eq!(
+                ch, expected,
+                "pattern tl={tl} tr={tr} bl={bl} br={br}: expected {expected:?}, got {ch:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn halfblock_both_colored() {
+        let mut p = Painter::new(1, 2, Mode::HalfBlock);
+        let red = PackedRgba::rgb(255, 0, 0);
+        let blue = PackedRgba::rgb(0, 0, 255);
+        p.point_colored(0, 0, red);
+        p.point_colored(0, 1, blue);
+        let (ch, fg, bg) = p.halfblock_cell(0, 0);
+        assert_eq!(ch, '▀');
+        assert_eq!(fg, Some(red));
+        assert_eq!(bg, Some(blue));
+    }
+
+    #[test]
+    fn point_clears_stale_color() {
+        let mut p = Painter::new(4, 4, Mode::Braille);
+        let red = PackedRgba::rgb(255, 0, 0);
+        p.point_colored(1, 1, red);
+        assert_eq!(p.colors[p.index(1, 1).unwrap()], Some(red));
+
+        // Setting an uncolored point should clear the color
+        p.point(1, 1);
+        assert_eq!(p.colors[p.index(1, 1).unwrap()], None);
+    }
+
+    #[test]
+    fn cell_size_for_all_modes() {
+        // Exact division
+        let p_braille = Painter::new(20, 20, Mode::Braille);
+        assert_eq!(p_braille.cell_size(), (10, 5)); // 20/2, 20/4
+
+        let p_block = Painter::new(20, 20, Mode::Block);
+        assert_eq!(p_block.cell_size(), (10, 10)); // 20/2, 20/2
+
+        let p_half = Painter::new(20, 20, Mode::HalfBlock);
+        assert_eq!(p_half.cell_size(), (20, 10)); // 20/1, 20/2
+    }
+
+    #[test]
+    fn index_returns_none_for_out_of_bounds() {
+        let p = Painter::new(10, 10, Mode::Braille);
+        assert!(p.index(-1, 0).is_none());
+        assert!(p.index(0, -1).is_none());
+        assert!(p.index(10, 0).is_none());
+        assert!(p.index(0, 10).is_none());
+        assert!(p.index(5, 5).is_some());
+    }
+
     // -----------------------------------------------------------------------
     // Metaball Canvas Adapter Tests (visual-fx feature)
     // -----------------------------------------------------------------------
