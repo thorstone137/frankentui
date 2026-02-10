@@ -78,7 +78,7 @@ impl<'a> Badge<'a> {
             if x >= max_x {
                 break;
             }
-            frame.buffer.set(x, y, cell);
+            frame.buffer.set_fast(x, y, cell);
             x = x.saturating_add(1);
         }
         x

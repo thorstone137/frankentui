@@ -122,7 +122,7 @@ impl<'a> Widget for ProgressBar<'a> {
                 if cell_x < bar_area.right() {
                     let mut cell = Cell::from_char(fill_char);
                     crate::apply_style(&mut cell, gauge_style);
-                    frame.buffer.set(cell_x, y, cell);
+                    frame.buffer.set_fast(cell_x, y, cell);
                 }
             }
         }
@@ -463,7 +463,7 @@ impl Widget for MiniBar {
                     cell.fg = color;
                 }
             }
-            frame.buffer.set(x, area.y, cell);
+            frame.buffer.set_fast(x, area.y, cell);
         }
 
         if render_percent {

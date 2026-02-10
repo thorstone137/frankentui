@@ -218,7 +218,7 @@ fn clear_area(frame: &mut Frame, area: Rect) {
     let blank = Cell::from_char(' ');
     for y in area.y..area.y.saturating_add(area.height) {
         for x in area.x..area.x.saturating_add(area.width) {
-            frame.buffer.set(x, y, blank);
+            frame.buffer.set_fast(x, y, blank);
         }
     }
 }
@@ -237,7 +237,7 @@ fn render_error_fallback(frame: &mut Frame, area: Rect, error: &CapturedError) {
         if area.width >= 1 && area.height >= 1 {
             let mut cell = Cell::from_char('!');
             apply_style(&mut cell, error_style);
-            frame.buffer.set(area.x, area.y, cell);
+            frame.buffer.set_fast(area.x, area.y, cell);
         }
         return;
     }
@@ -258,7 +258,7 @@ fn render_error_fallback(frame: &mut Frame, area: Rect, error: &CapturedError) {
         };
         let mut cell = Cell::from_char(c);
         apply_style(&mut cell, border_style);
-        frame.buffer.set(x, top, cell);
+        frame.buffer.set_fast(x, top, cell);
     }
 
     // Bottom border
@@ -273,7 +273,7 @@ fn render_error_fallback(frame: &mut Frame, area: Rect, error: &CapturedError) {
             };
             let mut cell = Cell::from_char(c);
             apply_style(&mut cell, border_style);
-            frame.buffer.set(x, bottom, cell);
+            frame.buffer.set_fast(x, bottom, cell);
         }
     }
 
@@ -282,11 +282,11 @@ fn render_error_fallback(frame: &mut Frame, area: Rect, error: &CapturedError) {
         for y in (top + 1)..bottom {
             let mut cell_l = Cell::from_char('│');
             apply_style(&mut cell_l, border_style);
-            frame.buffer.set(left, y, cell_l);
+            frame.buffer.set_fast(left, y, cell_l);
 
             let mut cell_r = Cell::from_char('│');
             apply_style(&mut cell_r, border_style);
-            frame.buffer.set(right, y, cell_r);
+            frame.buffer.set_fast(right, y, cell_r);
         }
     }
 

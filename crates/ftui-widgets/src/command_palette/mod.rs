@@ -1174,7 +1174,7 @@ impl CommandPalette {
                     cell.fg = cat_fg;
                     cell.bg = row_bg;
                     cell.attrs = row_attrs;
-                    frame.buffer.set(col, y, cell);
+                    frame.buffer.set_fast(col, y, cell);
                     col = col.saturating_add(w as u16);
                 }
             }
@@ -1230,7 +1230,7 @@ impl CommandPalette {
                 cell.fg = if is_match { highlight_fg } else { row_fg };
                 cell.bg = row_bg;
                 cell.attrs = row_attrs;
-                frame.buffer.set(col, y, cell);
+                frame.buffer.set_fast(col, y, cell);
 
                 col = col.saturating_add(w as u16);
                 title_used_width += w;
@@ -1285,7 +1285,7 @@ impl CommandPalette {
                         cell.fg = desc_fg;
                         cell.bg = row_bg;
                         cell.attrs = row_attrs;
-                        frame.buffer.set(col, y, cell);
+                        frame.buffer.set_fast(col, y, cell);
                         col = col.saturating_add(w as u16);
                         desc_used_width += w;
                     }

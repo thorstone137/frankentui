@@ -250,7 +250,7 @@ impl Widget for Sparkline<'_> {
                 }
             }
 
-            frame.buffer.set(x, y, cell);
+            frame.buffer.set_fast(x, y, cell);
         }
     }
 }

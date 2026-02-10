@@ -277,7 +277,7 @@ impl Widget for StatusLine<'_> {
         for x in area.x..area.right() {
             let mut cell = Cell::from_char(' ');
             apply_style(&mut cell, style);
-            frame.buffer.set(x, area.y, cell);
+            frame.buffer.set_fast(x, area.y, cell);
         }
 
         let width = area.width as usize;

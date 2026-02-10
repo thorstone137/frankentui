@@ -1082,9 +1082,13 @@ mod tests {
         let status = session.wait().expect("wait for child");
         assert!(status.success(), "child test failed: {:?}", status);
 
-        let output = session
+        let _ = session
             .read_until(b"\x1b[?25h", Duration::from_secs(5))
             .expect("expected cursor show sequence");
+        let _ = session
+            .drain_remaining(Duration::from_secs(1))
+            .expect("drain remaining");
+        let output = session.output();
 
         let options = SessionOptions {
             alternate_screen: true,
@@ -1094,7 +1098,7 @@ mod tests {
             kitty_keyboard: true,
         };
         let expectations = CleanupExpectations::for_session(&options);
-        assert_terminal_restored(&output, &expectations)
+        assert_terminal_restored(output, &expectations)
             .expect("terminal cleanup assertions failed");
     }
 
@@ -1138,9 +1142,13 @@ mod tests {
             "panic child should exit with failure status"
         );
 
-        let output = session
+        let _ = session
             .read_until(b"\x1b[?25h", Duration::from_secs(5))
             .expect("expected cursor show sequence");
+        let _ = session
+            .drain_remaining(Duration::from_secs(1))
+            .expect("drain remaining");
+        let output = session.output();
 
         let options = SessionOptions {
             alternate_screen: true,
@@ -1150,7 +1158,7 @@ mod tests {
             kitty_keyboard: true,
         };
         let expectations = CleanupExpectations::for_session(&options);
-        assert_terminal_restored(&output, &expectations)
+        assert_terminal_restored(output, &expectations)
             .expect("terminal cleanup assertions failed");
     }
 
@@ -1192,9 +1200,13 @@ mod tests {
         let status = session.wait().expect("wait for child");
         assert!(status.success(), "exit child should succeed: {:?}", status);
 
-        let output = session
+        let _ = session
             .read_until(b"\x1b[?25h", Duration::from_secs(5))
             .expect("expected cursor show sequence");
+        let _ = session
+            .drain_remaining(Duration::from_secs(1))
+            .expect("drain remaining");
+        let output = session.output();
 
         let options = SessionOptions {
             alternate_screen: true,
@@ -1204,7 +1216,7 @@ mod tests {
             kitty_keyboard: true,
         };
         let expectations = CleanupExpectations::for_session(&options);
-        assert_terminal_restored(&output, &expectations)
+        assert_terminal_restored(output, &expectations)
             .expect("terminal cleanup assertions failed");
     }
 

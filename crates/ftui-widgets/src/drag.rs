@@ -717,20 +717,20 @@ impl<'a> DragPreview<'a> {
         for x in (area.x + 1)..right {
             frame
                 .buffer
-                .set(x, area.y, ftui_render::cell::Cell::from_char('─'));
+                .set_fast(x, area.y, ftui_render::cell::Cell::from_char('─'));
             frame
                 .buffer
-                .set(x, bottom, ftui_render::cell::Cell::from_char('─'));
+                .set_fast(x, bottom, ftui_render::cell::Cell::from_char('─'));
         }
 
         // Vertical edges
         for y in (area.y + 1)..bottom {
             frame
                 .buffer
-                .set(area.x, y, ftui_render::cell::Cell::from_char('│'));
+                .set_fast(area.x, y, ftui_render::cell::Cell::from_char('│'));
             frame
                 .buffer
-                .set(right, y, ftui_render::cell::Cell::from_char('│'));
+                .set_fast(right, y, ftui_render::cell::Cell::from_char('│'));
         }
     }
 }

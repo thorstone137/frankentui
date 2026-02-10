@@ -577,8 +577,9 @@ pub(crate) fn draw_text_span(
         let mut cell = Cell::new(cell_content);
         apply_style(&mut cell, style);
 
-        // Use set() which handles multi-width characters (atomic writes)
-        frame.buffer.set(x, y, cell);
+        // set_fast() skips scissor/opacity/compositing checks for common
+        // single-width opaque cells; falls back to set() otherwise.
+        frame.buffer.set_fast(x, y, cell);
 
         x = x.saturating_add(w as u16);
     }
@@ -669,7 +670,7 @@ pub(crate) fn draw_text_span_scrolled(
             cell.attrs = cell.attrs.with_link(link_id);
         }
 
-        frame.buffer.set(x, y, cell);
+        frame.buffer.set_fast(x, y, cell);
 
         x = x.saturating_add(w as u16);
         visual_pos = next_visual_pos;
