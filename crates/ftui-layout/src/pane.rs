@@ -707,6 +707,564 @@ impl fmt::Display for PaneSemanticInputEventError {
 
 impl std::error::Error for PaneSemanticInputEventError {}
 
+/// Default move threshold (in coordinate units) for transitioning from
+/// `Armed` to `Dragging`.
+pub const PANE_DRAG_RESIZE_DEFAULT_THRESHOLD: u16 = 2;
+
+/// Deterministic pane drag/resize lifecycle state.
+///
+/// ```text
+/// Idle -> Armed -> Dragging -> Idle
+///    \------> Idle (commit/cancel from Armed)
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PaneDragResizeState {
+    Idle,
+    Armed {
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        origin: PanePointerPosition,
+        current: PanePointerPosition,
+        started_sequence: u64,
+    },
+    Dragging {
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        origin: PanePointerPosition,
+        current: PanePointerPosition,
+        started_sequence: u64,
+        drag_started_sequence: u64,
+    },
+}
+
+/// Explicit no-op diagnostics for lifecycle events that are safely ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneDragResizeNoopReason {
+    IdleWithoutActiveDrag,
+    ActiveDragAlreadyInProgress,
+    PointerMismatch,
+    TargetMismatch,
+    ActiveStateDisallowsDiscreteInput,
+    ThresholdNotReached,
+}
+
+/// Transition effect emitted by one lifecycle step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "effect", rename_all = "snake_case")]
+pub enum PaneDragResizeEffect {
+    Armed {
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        origin: PanePointerPosition,
+    },
+    DragStarted {
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        origin: PanePointerPosition,
+        current: PanePointerPosition,
+        total_delta_x: i32,
+        total_delta_y: i32,
+    },
+    DragUpdated {
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        previous: PanePointerPosition,
+        current: PanePointerPosition,
+        delta_x: i32,
+        delta_y: i32,
+        total_delta_x: i32,
+        total_delta_y: i32,
+    },
+    Committed {
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        origin: PanePointerPosition,
+        end: PanePointerPosition,
+        total_delta_x: i32,
+        total_delta_y: i32,
+    },
+    Canceled {
+        target: Option<PaneResizeTarget>,
+        pointer_id: Option<u32>,
+        reason: PaneCancelReason,
+    },
+    KeyboardApplied {
+        target: PaneResizeTarget,
+        direction: PaneResizeDirection,
+        units: u16,
+    },
+    WheelApplied {
+        target: PaneResizeTarget,
+        lines: i16,
+    },
+    Noop {
+        reason: PaneDragResizeNoopReason,
+    },
+}
+
+/// One state-machine transition with deterministic telemetry fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneDragResizeTransition {
+    pub transition_id: u64,
+    pub sequence: u64,
+    pub from: PaneDragResizeState,
+    pub to: PaneDragResizeState,
+    pub effect: PaneDragResizeEffect,
+}
+
+/// Runtime lifecycle machine for pane drag/resize interactions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneDragResizeMachine {
+    state: PaneDragResizeState,
+    drag_threshold: u16,
+    transition_counter: u64,
+}
+
+impl Default for PaneDragResizeMachine {
+    fn default() -> Self {
+        Self {
+            state: PaneDragResizeState::Idle,
+            drag_threshold: PANE_DRAG_RESIZE_DEFAULT_THRESHOLD,
+            transition_counter: 0,
+        }
+    }
+}
+
+impl PaneDragResizeMachine {
+    /// Construct a drag/resize lifecycle machine with explicit threshold.
+    pub fn new(drag_threshold: u16) -> Result<Self, PaneDragResizeMachineError> {
+        if drag_threshold == 0 {
+            return Err(PaneDragResizeMachineError::InvalidDragThreshold {
+                threshold: drag_threshold,
+            });
+        }
+        Ok(Self {
+            state: PaneDragResizeState::Idle,
+            drag_threshold,
+            transition_counter: 0,
+        })
+    }
+
+    /// Current lifecycle state.
+    #[must_use]
+    pub const fn state(&self) -> PaneDragResizeState {
+        self.state
+    }
+
+    /// Configured drag-start threshold.
+    #[must_use]
+    pub const fn drag_threshold(&self) -> u16 {
+        self.drag_threshold
+    }
+
+    /// Apply one semantic pane input event and emit deterministic transition
+    /// diagnostics.
+    pub fn apply_event(
+        &mut self,
+        event: &PaneSemanticInputEvent,
+    ) -> Result<PaneDragResizeTransition, PaneDragResizeMachineError> {
+        event
+            .validate()
+            .map_err(PaneDragResizeMachineError::InvalidEvent)?;
+
+        let from = self.state;
+        let effect = match (self.state, &event.kind) {
+            (
+                PaneDragResizeState::Idle,
+                PaneSemanticInputEventKind::PointerDown {
+                    target,
+                    pointer_id,
+                    position,
+                    ..
+                },
+            ) => {
+                self.state = PaneDragResizeState::Armed {
+                    target: *target,
+                    pointer_id: *pointer_id,
+                    origin: *position,
+                    current: *position,
+                    started_sequence: event.sequence,
+                };
+                PaneDragResizeEffect::Armed {
+                    target: *target,
+                    pointer_id: *pointer_id,
+                    origin: *position,
+                }
+            }
+            (
+                PaneDragResizeState::Idle,
+                PaneSemanticInputEventKind::KeyboardResize {
+                    target,
+                    direction,
+                    units,
+                },
+            ) => PaneDragResizeEffect::KeyboardApplied {
+                target: *target,
+                direction: *direction,
+                units: *units,
+            },
+            (
+                PaneDragResizeState::Idle,
+                PaneSemanticInputEventKind::WheelNudge { target, lines },
+            ) => PaneDragResizeEffect::WheelApplied {
+                target: *target,
+                lines: *lines,
+            },
+            (PaneDragResizeState::Idle, _) => PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::IdleWithoutActiveDrag,
+            },
+            (
+                PaneDragResizeState::Armed {
+                    target,
+                    pointer_id,
+                    origin,
+                    current,
+                    started_sequence,
+                },
+                PaneSemanticInputEventKind::PointerMove {
+                    target: incoming_target,
+                    pointer_id: incoming_pointer_id,
+                    position,
+                    ..
+                },
+            ) => {
+                if *incoming_pointer_id != pointer_id {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::PointerMismatch,
+                    }
+                } else if *incoming_target != target {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Armed {
+                        target,
+                        pointer_id,
+                        origin,
+                        current: *position,
+                        started_sequence,
+                    };
+                    if crossed_drag_threshold(origin, *position, self.drag_threshold) {
+                        self.state = PaneDragResizeState::Dragging {
+                            target,
+                            pointer_id,
+                            origin,
+                            current: *position,
+                            started_sequence,
+                            drag_started_sequence: event.sequence,
+                        };
+                        let (total_delta_x, total_delta_y) = delta(origin, *position);
+                        PaneDragResizeEffect::DragStarted {
+                            target,
+                            pointer_id,
+                            origin,
+                            current: *position,
+                            total_delta_x,
+                            total_delta_y,
+                        }
+                    } else {
+                        PaneDragResizeEffect::Noop {
+                            reason: PaneDragResizeNoopReason::ThresholdNotReached,
+                        }
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Armed {
+                    target,
+                    pointer_id,
+                    origin,
+                    ..
+                },
+                PaneSemanticInputEventKind::PointerUp {
+                    target: incoming_target,
+                    pointer_id: incoming_pointer_id,
+                    position,
+                    ..
+                },
+            ) => {
+                if *incoming_pointer_id != pointer_id {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::PointerMismatch,
+                    }
+                } else if *incoming_target != target {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Idle;
+                    let (total_delta_x, total_delta_y) = delta(origin, *position);
+                    PaneDragResizeEffect::Committed {
+                        target,
+                        pointer_id,
+                        origin,
+                        end: *position,
+                        total_delta_x,
+                        total_delta_y,
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Armed {
+                    target, pointer_id, ..
+                },
+                PaneSemanticInputEventKind::Cancel {
+                    target: incoming_target,
+                    reason,
+                },
+            ) => {
+                if !cancel_target_matches(target, *incoming_target) {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Idle;
+                    PaneDragResizeEffect::Canceled {
+                        target: Some(target),
+                        pointer_id: Some(pointer_id),
+                        reason: *reason,
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Armed {
+                    target, pointer_id, ..
+                },
+                PaneSemanticInputEventKind::Blur {
+                    target: incoming_target,
+                },
+            ) => {
+                if !cancel_target_matches(target, *incoming_target) {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Idle;
+                    PaneDragResizeEffect::Canceled {
+                        target: Some(target),
+                        pointer_id: Some(pointer_id),
+                        reason: PaneCancelReason::Blur,
+                    }
+                }
+            }
+            (PaneDragResizeState::Armed { .. }, PaneSemanticInputEventKind::PointerDown { .. }) => {
+                PaneDragResizeEffect::Noop {
+                    reason: PaneDragResizeNoopReason::ActiveDragAlreadyInProgress,
+                }
+            }
+            (
+                PaneDragResizeState::Armed { .. },
+                PaneSemanticInputEventKind::KeyboardResize { .. }
+                | PaneSemanticInputEventKind::WheelNudge { .. },
+            ) => PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::ActiveStateDisallowsDiscreteInput,
+            },
+            (PaneDragResizeState::Armed { .. }, _) => PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::IdleWithoutActiveDrag,
+            },
+            (
+                PaneDragResizeState::Dragging {
+                    target,
+                    pointer_id,
+                    origin,
+                    current,
+                    started_sequence,
+                    drag_started_sequence,
+                },
+                PaneSemanticInputEventKind::PointerMove {
+                    target: incoming_target,
+                    pointer_id: incoming_pointer_id,
+                    position,
+                    ..
+                },
+            ) => {
+                if *incoming_pointer_id != pointer_id {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::PointerMismatch,
+                    }
+                } else if *incoming_target != target {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    let previous = current;
+                    let (delta_x, delta_y) = delta(previous, *position);
+                    let (total_delta_x, total_delta_y) = delta(origin, *position);
+                    self.state = PaneDragResizeState::Dragging {
+                        target,
+                        pointer_id,
+                        origin,
+                        current: *position,
+                        started_sequence,
+                        drag_started_sequence,
+                    };
+                    PaneDragResizeEffect::DragUpdated {
+                        target,
+                        pointer_id,
+                        previous,
+                        current: *position,
+                        delta_x,
+                        delta_y,
+                        total_delta_x,
+                        total_delta_y,
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Dragging {
+                    target,
+                    pointer_id,
+                    origin,
+                    ..
+                },
+                PaneSemanticInputEventKind::PointerUp {
+                    target: incoming_target,
+                    pointer_id: incoming_pointer_id,
+                    position,
+                    ..
+                },
+            ) => {
+                if *incoming_pointer_id != pointer_id {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::PointerMismatch,
+                    }
+                } else if *incoming_target != target {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Idle;
+                    let (total_delta_x, total_delta_y) = delta(origin, *position);
+                    PaneDragResizeEffect::Committed {
+                        target,
+                        pointer_id,
+                        origin,
+                        end: *position,
+                        total_delta_x,
+                        total_delta_y,
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Dragging {
+                    target, pointer_id, ..
+                },
+                PaneSemanticInputEventKind::Cancel {
+                    target: incoming_target,
+                    reason,
+                },
+            ) => {
+                if !cancel_target_matches(target, *incoming_target) {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Idle;
+                    PaneDragResizeEffect::Canceled {
+                        target: Some(target),
+                        pointer_id: Some(pointer_id),
+                        reason: *reason,
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Dragging {
+                    target, pointer_id, ..
+                },
+                PaneSemanticInputEventKind::Blur {
+                    target: incoming_target,
+                },
+            ) => {
+                if !cancel_target_matches(target, *incoming_target) {
+                    PaneDragResizeEffect::Noop {
+                        reason: PaneDragResizeNoopReason::TargetMismatch,
+                    }
+                } else {
+                    self.state = PaneDragResizeState::Idle;
+                    PaneDragResizeEffect::Canceled {
+                        target: Some(target),
+                        pointer_id: Some(pointer_id),
+                        reason: PaneCancelReason::Blur,
+                    }
+                }
+            }
+            (
+                PaneDragResizeState::Dragging { .. },
+                PaneSemanticInputEventKind::PointerDown { .. },
+            ) => PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::ActiveDragAlreadyInProgress,
+            },
+            (
+                PaneDragResizeState::Dragging { .. },
+                PaneSemanticInputEventKind::KeyboardResize { .. }
+                | PaneSemanticInputEventKind::WheelNudge { .. },
+            ) => PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::ActiveStateDisallowsDiscreteInput,
+            },
+            (PaneDragResizeState::Dragging { .. }, _) => PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::IdleWithoutActiveDrag,
+            },
+        };
+
+        self.transition_counter = self.transition_counter.saturating_add(1);
+        Ok(PaneDragResizeTransition {
+            transition_id: self.transition_counter,
+            sequence: event.sequence,
+            from,
+            to: self.state,
+            effect,
+        })
+    }
+}
+
+/// Lifecycle machine configuration/runtime errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaneDragResizeMachineError {
+    InvalidDragThreshold { threshold: u16 },
+    InvalidEvent(PaneSemanticInputEventError),
+}
+
+impl fmt::Display for PaneDragResizeMachineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDragThreshold { threshold } => {
+                write!(f, "drag threshold must be > 0 (got {threshold})")
+            }
+            Self::InvalidEvent(error) => write!(f, "invalid semantic pane input event: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for PaneDragResizeMachineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        if let Self::InvalidEvent(error) = self {
+            return Some(error);
+        }
+        None
+    }
+}
+
+fn delta(origin: PanePointerPosition, current: PanePointerPosition) -> (i32, i32) {
+    (current.x - origin.x, current.y - origin.y)
+}
+
+fn crossed_drag_threshold(
+    origin: PanePointerPosition,
+    current: PanePointerPosition,
+    threshold: u16,
+) -> bool {
+    let (dx, dy) = delta(origin, current);
+    let threshold = i64::from(threshold);
+    let squared_distance = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+    squared_distance >= threshold * threshold
+}
+
+fn cancel_target_matches(active: PaneResizeTarget, incoming: Option<PaneResizeTarget>) -> bool {
+    incoming.is_none() || incoming == Some(active)
+}
+
 /// Supported structural pane operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -3928,6 +4486,293 @@ mod tests {
         assert_eq!(
             keyboard.validate(),
             Err(PaneSemanticInputEventError::ZeroResizeUnits)
+        );
+    }
+
+    fn pointer_down_event(
+        sequence: u64,
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        x: i32,
+        y: i32,
+    ) -> PaneSemanticInputEvent {
+        PaneSemanticInputEvent::new(
+            sequence,
+            PaneSemanticInputEventKind::PointerDown {
+                target,
+                pointer_id,
+                button: PanePointerButton::Primary,
+                position: PanePointerPosition::new(x, y),
+            },
+        )
+    }
+
+    fn pointer_move_event(
+        sequence: u64,
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        x: i32,
+        y: i32,
+    ) -> PaneSemanticInputEvent {
+        PaneSemanticInputEvent::new(
+            sequence,
+            PaneSemanticInputEventKind::PointerMove {
+                target,
+                pointer_id,
+                position: PanePointerPosition::new(x, y),
+                delta_x: 0,
+                delta_y: 0,
+            },
+        )
+    }
+
+    fn pointer_up_event(
+        sequence: u64,
+        target: PaneResizeTarget,
+        pointer_id: u32,
+        x: i32,
+        y: i32,
+    ) -> PaneSemanticInputEvent {
+        PaneSemanticInputEvent::new(
+            sequence,
+            PaneSemanticInputEventKind::PointerUp {
+                target,
+                pointer_id,
+                button: PanePointerButton::Primary,
+                position: PanePointerPosition::new(x, y),
+            },
+        )
+    }
+
+    #[test]
+    fn drag_resize_machine_full_lifecycle_commit() {
+        let mut machine = PaneDragResizeMachine::default();
+        let target = default_target();
+
+        let down = machine
+            .apply_event(&pointer_down_event(1, target, 10, 10, 4))
+            .expect("down should arm");
+        assert_eq!(down.transition_id, 1);
+        assert_eq!(down.sequence, 1);
+        assert_eq!(machine.state(), down.to);
+        assert!(matches!(
+            down.effect,
+            PaneDragResizeEffect::Armed {
+                target: t,
+                pointer_id: 10,
+                origin: PanePointerPosition { x: 10, y: 4 }
+            } if t == target
+        ));
+
+        let below_threshold = machine
+            .apply_event(&pointer_move_event(2, target, 10, 11, 4))
+            .expect("small move should not start drag");
+        assert_eq!(
+            below_threshold.effect,
+            PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::ThresholdNotReached
+            }
+        );
+        assert!(matches!(machine.state(), PaneDragResizeState::Armed { .. }));
+
+        let drag_start = machine
+            .apply_event(&pointer_move_event(3, target, 10, 13, 4))
+            .expect("large move should start drag");
+        assert!(matches!(
+            drag_start.effect,
+            PaneDragResizeEffect::DragStarted {
+                target: t,
+                pointer_id: 10,
+                total_delta_x: 3,
+                total_delta_y: 0,
+                ..
+            } if t == target
+        ));
+        assert!(matches!(
+            machine.state(),
+            PaneDragResizeState::Dragging { .. }
+        ));
+
+        let drag_update = machine
+            .apply_event(&pointer_move_event(4, target, 10, 15, 6))
+            .expect("drag move should update");
+        assert!(matches!(
+            drag_update.effect,
+            PaneDragResizeEffect::DragUpdated {
+                target: t,
+                pointer_id: 10,
+                delta_x: 2,
+                delta_y: 2,
+                total_delta_x: 5,
+                total_delta_y: 2,
+                ..
+            } if t == target
+        ));
+
+        let commit = machine
+            .apply_event(&pointer_up_event(5, target, 10, 16, 6))
+            .expect("up should commit drag");
+        assert!(matches!(
+            commit.effect,
+            PaneDragResizeEffect::Committed {
+                target: t,
+                pointer_id: 10,
+                total_delta_x: 6,
+                total_delta_y: 2,
+                ..
+            } if t == target
+        ));
+        assert_eq!(machine.state(), PaneDragResizeState::Idle);
+    }
+
+    #[test]
+    fn drag_resize_machine_cancel_and_blur_paths_are_reason_coded() {
+        let target = default_target();
+
+        let mut cancel_machine = PaneDragResizeMachine::default();
+        cancel_machine
+            .apply_event(&pointer_down_event(1, target, 1, 2, 2))
+            .expect("down should arm");
+        let cancel = cancel_machine
+            .apply_event(&PaneSemanticInputEvent::new(
+                2,
+                PaneSemanticInputEventKind::Cancel {
+                    target: Some(target),
+                    reason: PaneCancelReason::FocusLost,
+                },
+            ))
+            .expect("cancel should reset to idle");
+        assert_eq!(cancel_machine.state(), PaneDragResizeState::Idle);
+        assert_eq!(
+            cancel.effect,
+            PaneDragResizeEffect::Canceled {
+                target: Some(target),
+                pointer_id: Some(1),
+                reason: PaneCancelReason::FocusLost
+            }
+        );
+
+        let mut blur_machine = PaneDragResizeMachine::default();
+        blur_machine
+            .apply_event(&pointer_down_event(3, target, 2, 5, 5))
+            .expect("down should arm");
+        blur_machine
+            .apply_event(&pointer_move_event(4, target, 2, 8, 5))
+            .expect("move should start dragging");
+        let blur = blur_machine
+            .apply_event(&PaneSemanticInputEvent::new(
+                5,
+                PaneSemanticInputEventKind::Blur {
+                    target: Some(target),
+                },
+            ))
+            .expect("blur should cancel active drag");
+        assert_eq!(blur_machine.state(), PaneDragResizeState::Idle);
+        assert_eq!(
+            blur.effect,
+            PaneDragResizeEffect::Canceled {
+                target: Some(target),
+                pointer_id: Some(2),
+                reason: PaneCancelReason::Blur
+            }
+        );
+    }
+
+    #[test]
+    fn drag_resize_machine_duplicate_end_and_pointer_mismatch_are_safe_noops() {
+        let mut machine = PaneDragResizeMachine::default();
+        let target = default_target();
+
+        machine
+            .apply_event(&pointer_down_event(1, target, 9, 0, 0))
+            .expect("down should arm");
+
+        let mismatch = machine
+            .apply_event(&pointer_move_event(2, target, 99, 3, 0))
+            .expect("mismatch should be ignored");
+        assert_eq!(
+            mismatch.effect,
+            PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::PointerMismatch
+            }
+        );
+        assert!(matches!(machine.state(), PaneDragResizeState::Armed { .. }));
+
+        machine
+            .apply_event(&pointer_move_event(3, target, 9, 3, 0))
+            .expect("drag should start");
+        machine
+            .apply_event(&pointer_up_event(4, target, 9, 3, 0))
+            .expect("up should commit");
+        assert_eq!(machine.state(), PaneDragResizeState::Idle);
+
+        let duplicate_end = machine
+            .apply_event(&pointer_up_event(5, target, 9, 3, 0))
+            .expect("duplicate end should noop");
+        assert_eq!(
+            duplicate_end.effect,
+            PaneDragResizeEffect::Noop {
+                reason: PaneDragResizeNoopReason::IdleWithoutActiveDrag
+            }
+        );
+    }
+
+    #[test]
+    fn drag_resize_machine_discrete_inputs_in_idle_and_validation_errors() {
+        let mut machine = PaneDragResizeMachine::default();
+        let target = default_target();
+
+        let keyboard = machine
+            .apply_event(&PaneSemanticInputEvent::new(
+                1,
+                PaneSemanticInputEventKind::KeyboardResize {
+                    target,
+                    direction: PaneResizeDirection::Increase,
+                    units: 2,
+                },
+            ))
+            .expect("keyboard resize should apply in idle");
+        assert_eq!(
+            keyboard.effect,
+            PaneDragResizeEffect::KeyboardApplied {
+                target,
+                direction: PaneResizeDirection::Increase,
+                units: 2
+            }
+        );
+        assert_eq!(machine.state(), PaneDragResizeState::Idle);
+
+        let wheel = machine
+            .apply_event(&PaneSemanticInputEvent::new(
+                2,
+                PaneSemanticInputEventKind::WheelNudge { target, lines: -1 },
+            ))
+            .expect("wheel nudge should apply in idle");
+        assert_eq!(
+            wheel.effect,
+            PaneDragResizeEffect::WheelApplied { target, lines: -1 }
+        );
+
+        let invalid_pointer = PaneSemanticInputEvent::new(
+            3,
+            PaneSemanticInputEventKind::PointerDown {
+                target,
+                pointer_id: 0,
+                button: PanePointerButton::Primary,
+                position: PanePointerPosition::new(0, 0),
+            },
+        );
+        let err = machine
+            .apply_event(&invalid_pointer)
+            .expect_err("invalid input should be rejected");
+        assert_eq!(
+            err,
+            PaneDragResizeMachineError::InvalidEvent(PaneSemanticInputEventError::ZeroPointerId)
+        );
+
+        assert_eq!(
+            PaneDragResizeMachine::new(0).expect_err("zero threshold should fail"),
+            PaneDragResizeMachineError::InvalidDragThreshold { threshold: 0 }
         );
     }
 
